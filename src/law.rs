@@ -30,7 +30,7 @@ pub const NODES:[Node;36]=[
     n("吝啬的赐福",2,None,30,"战后奖励三选一改为二选一",14,5,7),
     n("限时 I",3,None,10,"每场战斗限时 3 分钟，超时后每秒失去 2% 生命",15,1,8),
     n("限时 II",3,Some(24),10,"战斗限时缩短为 2 分钟",15,2,8),
-    n("嫉妒的世界",3,None,30,"你喝圣杯瓶时，所有敌人回复 10% 生命",16,3,8),
+    n("嫉妒的世界",3,None,30,"你喝圣杯瓶时，所有敌人回复 8% 生命",16,3,8),
     n("元素庇护 I",0,None,10,"敌人受到魔力、火、雷、圣伤害 -10%，不影响物理伤害",5,1,9),
     n("元素庇护 II",0,Some(27),10,"敌人受到四种元素伤害累计 -20%",5,2,9),
     n("异常耐性 I",0,None,10,"敌人中毒、腐败、出血、冻伤、睡眠、发狂、死亡耐性 +15%，原有免疫不变",6,1,10),
@@ -44,7 +44,7 @@ pub const NODES:[Node;36]=[
 ];
 /// 停用的节点：位置与编号保留（存档、旅程档案与律法码里的位不变），界面不再显示，新开局选不上；
 /// 已经带着它开局的旅程照旧生效。14 孤狼（2026-11-06 移除）
-pub const RETIRED:[usize;1]=[14];
+pub const RETIRED:[usize;2]=[14,35];
 pub const GRADES:[(u32,&str);4]=[(70,"老练"),(140,"艰难"),(210,"噩梦"),(280,"危机")];
 
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq,serde::Serialize,serde::Deserialize)]
@@ -60,7 +60,6 @@ impl Law {
     pub fn affix_budget(self,base:u8,max:u8)->u8 {match self.chain(&[3,4]) {0=>base,1=>(base+2).min(max),_=>max}}
     pub fn elite_affixes(self)->bool {self.has(5)}
     pub fn elite_pressure(self)->bool {self.has(34)}
-    pub fn swift_affixes(self)->bool {self.has(35)}
     /// 词条强化：Boss 词条使用强化后的数值
     pub fn empowered_affixes(self)->bool {self.has(31)}
     /// 精英成双：精英战里精英怪池的精英怎么上场
@@ -199,7 +198,7 @@ mod tests {
         let law=Law::default().toggle(0).toggle(1).toggle(2);assert_eq!(law.score(),60);
         assert_eq!(law.toggle(1),Law::default().toggle(0),"removing a node removes its successors");
         let all=(0..NODES.len()).fold(Law::default(),|l,id|l.toggle(id));
-        assert_eq!(all.score(),560,"everything except the retired lone wolf");assert_eq!(all.grade(),Some("危机"));assert!(all.valid());
+        assert_eq!(all.score(),540,"everything except retired nodes");assert_eq!(all.grade(),Some("危机"));assert!(all.valid());
         assert_eq!(Law::default().grade(),None);assert_eq!(Law::default().toggle(24).toggle(25).toggle(26).toggle(23).grade(),Some("老练"));
         assert!(!Law(1<<1).valid());
     }

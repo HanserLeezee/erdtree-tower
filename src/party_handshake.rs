@@ -1,8 +1,9 @@
 use serde::{Deserialize,Serialize};
 use crate::{party_roster::Roster,RuleResult};
-pub const VERSION:u32=94;
+pub const VERSION:u32=100;
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub enum Payload {
+    Reconnect{session:u64,message:crate::party_reconnect::Message},
     Handshake(Message),
     Report{session:u64,report:crate::party_game::Report},
     Order{session:u64,order:crate::party_game::Order},
@@ -46,6 +47,11 @@ pub struct Handshake {
     compatibility:Option<crate::party_compat::Compatibility>,
 }
 impl Handshake {
+    pub fn restored(roster:Roster,session:u64,seed:u64,dlc:bool,profile:crate::party_compat::Compatibility)->RuleResult<Self> {
+        let mut handshake=Self::new(roster,session,seed)?.with_compatibility(profile)?;
+        handshake.session=Some((session,seed));handshake.committed=true;handshake.party_dlc=Some(dlc);
+        Ok(handshake)
+    }
     pub fn new(roster:Roster,nonce:u64,seed:u64)->RuleResult<Self> {
         if nonce==0||roster.members.len()<2||roster.members.len()>crate::party_roster::MAX_PLAYERS
             ||!roster.members.contains(&roster.local)||!roster.members.contains(&roster.host)

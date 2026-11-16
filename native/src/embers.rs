@@ -349,7 +349,17 @@ pub fn living_spirit(world:&mut WorldChrMan)->bool {
 }
 fn distance(a:[f32;3],b:[f32;3])->f32 {((a[0]-b[0]).powi(2)+(a[1]-b[1]).powi(2)+(a[2]-b[2]).powi(2)).sqrt()}
 /// slot：这场战斗敌人名单里的位置（联机时房主与成员一致，成员发来的敌人侧效果按它找敌人）
-struct Foe {handle:FieldInsHandle,hp:i32,max:i32,pos:[f32;3],alive:bool,boss:bool,rank:u8,slot:u8,hit_at:Option<Instant>}
+struct Foe {handle:FieldInsHandle,hp:i32,max:i32,pos:[f32;3],alive:bool,boss:bool,rank:u8,slot:u8,hit_at:Option<Instant>,participation:Participation}
+#[derive(Default)]
+struct Participation {damaged:bool,settled:bool}
+impl Participation {
+    fn observe(&mut self,mine:bool,damage:i32,died:bool)->bool {
+        self.damaged|=mine&&damage>0;
+        let credit=died&&self.damaged&&!self.settled;
+        self.settled|=died;
+        credit
+    }
+}
 /// 一帧的结果：噬神之蛇的饱食是否要补红瓶、让叠层余烬加层的事件、联机成员要请房主执行的敌人侧效果
 #[derive(Default)]
 pub struct Events {pub feast:bool,pub gains:Vec<Gain>,pub strikes:Vec<Strike>,
@@ -535,12 +545,17 @@ impl Fight {
             let by_bullet=if party&&attacker.is_empty() {bullet_owner_is_mine(pos,&self.bullets)} else {None};
             let mine=!party||if attacker.is_empty() {by_bullet.unwrap_or_else(||nearest_is_mine(pos,&mine_at,&others_at))} else {own.contains(&attacker)};
             let Some(index)=self.foes.iter().position(|f|f.handle==*handle) else {
-                self.foes.push(Foe{handle:*handle,hp:foe_hp,max:foe_max,pos,alive,boss:rank<=1,rank,slot,hit_at:None});continue;
+                self.foes.push(Foe{handle:*handle,hp:foe_hp,max:foe_max,pos,alive,boss:rank<=1,rank,slot,hit_at:None,participation:Default::default()});continue;
             };
             let foe=&mut self.foes[index];
             let before=foe.hp;
             let drop=foe.hp-foe_hp;let lost=(foe.hp-foe_hp.max(0)).max(0);
             let died=foe.alive&&!alive;
+            if !foe.alive&&alive {foe.participation=Default::default();}
+            if foe.participation.observe(mine,lost,died)&&party&&!mine {
+                events.gains.push(Gain::Assist{rank:kill_rank(foe.rank)});
+                super::log(format!("TOWER_EMBER assist handle={handle} rank={} soul credit",foe.rank));
+            }
             let hit=!died&&alive&&buildup_hit(drop,foe_max,foe.hit_at.map(|t|now.duration_since(t)));
             if hit {foe.hit_at=Some(now);}
             (foe.hp,foe.max,foe.pos,foe.alive)=(foe_hp,foe_max,pos,alive);
@@ -716,7 +731,7 @@ impl Fight {
                     let Some(chr)=world.chr_ins_by_handle(&handle) else{continue};
                     let q=chr.modules.physics.position;
                     let alive=chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag();
-                    self.foes.push(Foe{handle,hp:chr.modules.data.hp,max:chr.modules.data.max_hp,pos:[q.0,q.1,q.2],alive,boss:rank<=1,rank,slot,hit_at:None});
+                    self.foes.push(Foe{handle,hp:chr.modules.data.hp,max:chr.modules.data.max_hp,pos:[q.0,q.1,q.2],alive,boss:rank<=1,rank,slot,hit_at:None,participation:Default::default()});
                     self.foes.len()-1
                 },
             };
@@ -786,6 +801,39 @@ fn critical_listener_rejects_other_players_and_noncritical_effects() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stack_updates_preserve_spell_coverage_and_critical_restrictions() {
+        for ember in [Ember::SoulEater,Ember::Godslayer] {
+            let mut row:SP_EFFECT_PARAM_ST=unsafe{std::mem::zeroed()};
+            row.set_mag_param_change(true);row.set_miracle_param_change(true);
+            for level in [1,10,100] {
+                let rates=embers::stack_rates(ember,level).unwrap();
+                write(&mut row,ember,rates);
+                assert!(row.mag_param_change()&&row.miracle_param_change());
+                assert_eq!([row.physics_attack_rate(),row.magic_attack_rate(),row.fire_attack_rate(),row.thunder_attack_rate(),row.dark_attack_rate()],[rates.attack;5]);
+            }
+        }
+        let mut chain:SP_EFFECT_PARAM_ST=unsafe{std::mem::zeroed()};
+        chain.set_state_info(367);chain.set_throw_attack_param_change(true);
+        write(&mut chain,Ember::Chain,embers::stack_rates(Ember::Chain,10).unwrap());
+        assert!(!chain.mag_param_change()&&!chain.miracle_param_change());
+        assert_eq!(chain.state_info(),367);assert!(chain.throw_attack_param_change());
+    }
+    #[test]
+    fn participation_survives_teammate_hits_and_credits_death_once() {
+        let mut credit=super::Participation::default();
+        assert!(!credit.observe(true,1,false));
+        assert!(!credit.observe(false,500,false));
+        assert!(credit.observe(false,100,true));
+        assert!(!credit.observe(false,0,true));
+        let mut spectator=super::Participation::default();
+        assert!(!spectator.observe(true,0,false));
+        assert!(!spectator.observe(true,-100,false));
+        assert!(!spectator.observe(false,100,true));
+        let mut last_hit=super::Participation::default();
+        assert!(last_hit.observe(true,1,true));
+        assert!(!last_hit.observe(true,1,true));
+    }
     #[test]
     fn bulwark_requires_the_actual_guard_weapon_to_be_a_greatshield() {
         use eldenring::cs::{ChrAsmArmStyle as Style,ChrAsmEquipment,ChrAsmEquipmentSlots,ChrAsmHand as Hand};
@@ -906,7 +954,7 @@ mod tests {
         all.extend(Ember::ALL.into_iter().filter_map(slots).flatten());
         let count=all.len();all.sort();all.dedup();assert_eq!(all.len(),count,"effect ids overlap");
         assert!(all.iter().all(|id|(FIRST..FIRST+200).contains(id)),"inside the ember range");
-        assert!(Ember::ALL.into_iter().all(|e|(e.stacking()||e==Ember::Battlemage)==slots(e).is_some()));
+        assert!(Ember::ALL.into_iter().all(|e|(e.stacking()||matches!(e,Ember::Battlemage|Ember::Mind))==slots(e).is_some()));
         assert!(PLAYER_STACKING.iter().all(|e|e.stacking()&&*e!=Ember::SpiritKeeper));
         assert_eq!([0,1,2,3].map(kill_rank),[2,1,1,0]);
     }

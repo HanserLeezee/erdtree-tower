@@ -1,4 +1,5 @@
 use crate::{NodeKind,Run};
+pub mod adaptation;
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
 pub enum Affix {Stalwart,Bulwark,Frenzied,Regenerating,Rot,Envious,Proud,Golden,Reborn,Leeching,Thorned,Swift}
@@ -24,7 +25,7 @@ impl Affix {
             Affix::Golden=>"每 25 秒展开 5 秒金色护盾，受到的伤害 -60%",
             Affix::Reborn=>"生命首次降到 10% 以下时回复至 40%，仅一次",
             Affix::Leeching=>"每次打中你，回复其最大生命 1%",
-            Affix::Thorned=>"受到伤害的 10% 反弹给你，一次最多 200（不会致死）",
+            Affix::Thorned=>"受到伤害的 8% 反弹给你，一次最多 200（不会致死）",
             Affix::Swift=>"动作速度 +10%：出招、收招、移动都更快，压得更紧",
         }
     }
@@ -44,7 +45,7 @@ impl Affix {
 }
 pub const MAX_AFFIXES:usize=3;
 /// 已移除、不再抽到的词条
-pub const RETIRED:[Affix;1]=[Affix::Proud];
+pub const RETIRED:[Affix;2]=[Affix::Proud,Affix::Swift];
 /// 最早的 9 个词条的组合（规则 0）：序号与已生成的血条名称一一对应
 pub const LEGACY_AFFIXES:usize=9;
 pub const BAR_NAME_FIRST:i32=9700000;
@@ -112,17 +113,11 @@ pub fn roll(run:&Run,node:usize)->Vec<Affix> {
     let budget=node_budget(run,node);
     if !run.boss_affixes||budget==0 {return vec![];}
     // 规则 0（旧存档）只用最早的 9 个词条和原来的分组
-    let (count,group):(usize,fn(Affix)->u8)=if run.boss_affix_rules>=1||run.law.swift_affixes() {(Affix::ALL.len(),Affix::group)}else{(LEGACY_AFFIXES,Affix::legacy_group)};
-    // 傲慢的已移除：不再抽到（枚举、组合表与血条名称编号保留，旧组合的序号不变）；再生的第二幕起、吸血的第三幕起才会出现
-    let mut pool:Vec<_>=Affix::ALL[..count].iter().copied().filter(|a|*a!=Affix::Swift&&!RETIRED.contains(a)&&run.act>=a.first_act()).collect();
+    let (count,group):(usize,fn(Affix)->u8)=if run.boss_affix_rules>=1 {(Affix::ALL.len(),Affix::group)}else{(LEGACY_AFFIXES,Affix::legacy_group)};
+    // 停用词条保留枚举和组合编号，避免旧血条名称错位。
+    let mut pool:Vec<_>=Affix::ALL[..count].iter().copied().filter(|a|!RETIRED.contains(a)&&run.act>=a.first_act()).collect();
     pool.sort_by_key(|a|crate::mix(run.seed^(node as u64).wrapping_mul(7919)^(u64::from(run.act)<<40)^a.index() as u64^0xb055_af1c));
     let (mut left,mut chosen)=(budget,Vec::new());
-    let swift=run.law.swift_affixes()&&match run.nodes[node].kind {
-        NodeKind::Boss=>true,
-        NodeKind::Elite=>run.law.elite_affixes()&&crate::mix(run.seed^(node as u64).wrapping_mul(7919)^(u64::from(run.act)<<40)^0x5a1f_25)%4==0,
-        _=>false,
-    };
-    if swift {chosen.push(Affix::Swift);left=left.saturating_sub(Affix::Swift.cost());}
     for affix in pool {
         if chosen.len()==MAX_AFFIXES {break;}
         if affix.cost()<=left&&(group(affix)==0||!chosen.iter().any(|c:&Affix|group(*c)==group(affix))) {left-=affix.cost();chosen.push(affix);}
@@ -142,22 +137,21 @@ mod tests {
     use crate::Class;
     fn boss(run:&Run)->usize {run.nodes.iter().position(|n|n.kind==NodeKind::Boss).unwrap()}
     #[test]
-    fn swift_is_opt_in_guaranteed_for_bosses_and_quarter_of_enabled_elites() {
-        let mut run=Run::new(1,Class::Samurai);let node=boss(&run);let mut hits=0;
-        for seed in 0..1024 {
-            run.seed=seed;run.nodes[node].kind=NodeKind::Boss;run.law=crate::law::Law::default();
-            assert!(!roll(&run,node).contains(&Affix::Swift));
-            run.law=run.law.toggle(35);let affixes=roll(&run,node);
-            assert_eq!(affixes.iter().filter(|a|**a==Affix::Swift).count(),1);
-            assert!(combos().contains(&affixes)&&points(&affixes)<=node_budget(&run,node));
-            run.nodes[node].kind=NodeKind::Elite;assert!(roll(&run,node).is_empty());
-            run.law=run.law.toggle(5);let affixes=roll(&run,node);
-            let expected=crate::mix(seed^(node as u64).wrapping_mul(7919)^(u64::from(run.act)<<40)^0x5a1f_25)%4==0;
-            assert_eq!(affixes.contains(&Affix::Swift),expected);hits+=usize::from(expected);
-            assert!(combos().contains(&affixes));
-        }
-        assert!((210..=300).contains(&hits),"{hits}/1024");
-        let law=crate::law::Law::default().toggle(35);assert_eq!(law.code().len(),9);assert_eq!(crate::law::Law::parse(&law.code()),Some(law));
+    fn swift_is_retired_even_when_old_runs_have_its_law() {
+        assert!(!crate::law::Law::listed(35));
+        assert!(!crate::law::Law::default().toggle(35).has(35));
+        for rules in [0,1] {for act in 1..=3 {for seed in 0..128 {
+            let mut run=Run::new(seed,Class::Samurai);run.act=act;run.boss_affix_rules=rules;
+            run.law=crate::law::Law((1u64<<35)|(1u64<<5));
+            let node=boss(&run);
+            for kind in [NodeKind::Boss,NodeKind::Elite] {
+                run.nodes[node].kind=kind;
+                let affixes=roll(&run,node);
+                assert!(!affixes.contains(&Affix::Swift));
+                assert!(!affixes.is_empty()&&combos().contains(&affixes));
+                assert!(points(&affixes)<=node_budget(&run,node));
+            }
+        }}}
     }
     #[test]
     fn elite_pool_titles_are_unique_and_do_not_overlap_boss_titles() {
@@ -188,7 +182,7 @@ mod tests {
             assert_eq!(bonus_runes(&run,node),[9000,18000,30000][usize::from(act)-1]*15*u32::from(points(&affixes))/100);
             seen.extend(affixes);
         }}
-        assert_eq!(seen.len(),Affix::ALL.len()-RETIRED.len()-1,"Swift requires its law");
+        assert_eq!(seen.len(),Affix::ALL.len()-RETIRED.len());
         assert!(!seen.contains(&Affix::Swift));
         assert!(RETIRED.iter().all(|a|!seen.contains(a)));
         // 再生的第二幕起、吸血的第三幕起

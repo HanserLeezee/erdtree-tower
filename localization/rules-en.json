@@ -45,7 +45,7 @@
   "每 25 秒展开 5 秒金色护盾，受到的伤害 -60%": "Every 25s, gains a golden shield for 5s: damage taken -60%.",
   "生命首次降到 10% 以下时回复至 40%，仅一次": "Once only: when HP first drops below 10%, recovers to 40%.",
   "每次打中你，回复其最大生命 1%": "Each hit against you restores 1% of its max HP.",
-  "受到伤害的 10% 反弹给你，一次最多 200（不会致死）": "Reflects 10% of damage taken to you, capped at 200 per frame. Cannot kill you.",
+  "受到伤害的 8% 反弹给你，一次最多 200（不会致死）": "Reflects 8% of damage taken to you, capped at 200 per frame. Cannot kill you.",
   "动作速度 +10%：出招、收招、移动都更快，压得更紧": "Animation speed +10%: faster attacks, recovery, and movement.",
   "本幕没有问号房": "This act has no event room.",
   "Boss 测试编号无效": "Invalid boss test ID.",

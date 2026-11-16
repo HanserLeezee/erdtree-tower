@@ -22,7 +22,7 @@ struct Tuning {
     /// 黄金律法：护盾间隔（秒）；不屈：回复到最大生命的百分比；傲慢：多久没挨打后触发（秒）
     shield_every:u64,reborn_percent:i64,proud_after:u64,
 }
-const NORMAL:Tuning=Tuning{rot_per_hit:1,leech_permille:10,thorn_percent:10,swift_speed:1.1,shield_every:25,reborn_percent:40,proud_after:8};
+const NORMAL:Tuning=Tuning{rot_per_hit:1,leech_permille:10,thorn_percent:8,swift_speed:1.1,shield_every:25,reborn_percent:40,proud_after:8};
 const STRONG:Tuning=Tuning{rot_per_hit:2,leech_permille:15,thorn_percent:12,swift_speed:1.3,shield_every:25,reborn_percent:60,proud_after:6};
 /// 荆棘：一次反弹最多扣这么多生命（同一帧打出的伤害合算一次）
 const THORN_CAP:i64=200;

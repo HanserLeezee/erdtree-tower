@@ -58,7 +58,7 @@ static class ContractAssets {
         Set(r,"iconId",-1);Set(r,"effectEndurance",-1f);Set(r,"spCategory",0);Set(r,"categoryPriority",0);
         Set(r,"saveCategory",-1);Set(r,"dontDeleteOnDead",0);Set(r,"artsConsumptionRate",1f);
         switch(offset) {
-            case 60: Damage(r,1.3f/0.9f);break;
+            case 60: Damage(r,1.3f);break;
             case 61: Damage(r,0.9f);break;
             case 70: Damage(r,1.15f);Set(r,"staminaRecoverChangeSpeed",5);break;
             case 71: foreach(var kind in new[]{"slash","blow","thrust","neutral"})Set(r,kind+"DamageCutRate",1.1f);break;
@@ -82,7 +82,7 @@ static class ContractAssets {
             foreach(var cell in expected.Cells)if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,actual[cell.Def.InternalName].Value))throw new Exception($"Expanded contract mismatch: {offset} {cell.Def.InternalName}");
         }
         var critical=p.Rows.Single(r=>r.ID==First+60);
-        if(Convert.ToInt32(critical["stateInfo"].Value)!=367||Math.Abs(Convert.ToSingle(critical["physicsAttackRate"].Value)*0.9f-1.3f)>0.00001f)throw new Exception("Execution critical filtering/rate mismatch");
+        if(Convert.ToInt32(critical["stateInfo"].Value)!=367||Math.Abs(Convert.ToSingle(critical["physicsAttackRate"].Value)-1.3f)>0.00001f)throw new Exception("Execution critical filtering/rate mismatch");
     }
     public static void PatchExpanded(string input,string output) {
         if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging output required");

@@ -163,7 +163,7 @@ impl Ember {
         Self::SpiritFeast=>format!("敌人倒下时\n召唤物回复 {SPIRIT_FEAST_HEAL_PERCENT}% 生命\n你回复 {SPIRIT_FEAST_FP_PERCENT}% 专注"),
         Self::SpiritCommand=>format!("召唤物造成的伤害 +{SPIRIT_COMMAND_PERCENT}%\n受到的伤害 -{SPIRIT_COMMAND_PERCENT}%"),
         Self::SpiritTwin=>"每场战斗可以再召唤一次骨灰\n两组召唤物同时在场\n胜利时各组存活则返还骨灰".into(),
-        Self::SoulEater=>format!("击倒得魂：小怪{} 精英{} Boss{}\n每 {SOUL_POINTS} 魂一层，每层攻击 +{SOUL_STEP_PERCENT}%\n层数不设上限，整局保留",SOUL_KILL[0],SOUL_KILL[1],SOUL_KILL[2]),
+        Self::SoulEater=>format!("击倒得魂：小怪{} 精英{} Boss{}\n联机造成过伤害即可参与击杀得魂\n每 {SOUL_POINTS} 魂一层，每层攻击 +{SOUL_STEP_PERCENT}%\n层数不设上限，整局保留",SOUL_KILL[0],SOUL_KILL[1],SOUL_KILL[2]),
         Self::Chain=>format!("每次致命一击叠一层，每关最多 {CHAIN_ROOM_LIMIT} 层\n每层致命一击伤害 +{CHAIN_STEP_PERCENT}%\n总层数不设上限，整局保留"),
         Self::Godslayer=>format!("每赢一场精英战或 Boss 战叠一层\n每层最大生命 +{SLAYER_HP_PERCENT}%、攻击 +{SLAYER_ATTACK_PERCENT}%\n层数不设上限，整局保留"),
         Self::SpiritKeeper=>format!("召唤物在场时击倒敌人叠一层\n每层召唤物伤害 +{KEEPER_ATTACK_PERCENT}%\n受到的伤害 -{KEEPER_CUT_PERCENT}%（逐层乘算）\n层数不设上限，整局保留"),
@@ -272,6 +272,8 @@ pub struct StrikeRequest {pub seq:u32,pub strike:Strike}
 pub enum Gain {
     /// 击倒敌人：rank 0 普通、1 精英、2 Boss；spirit 为召唤物当时在场
     Kill{rank:u8,spirit:bool},
+    /// 联机参与击杀，仅供噬魂者获得魂值。
+    Assist{rank:u8},
     Critical,
     /// 赢下一场精英战或 Boss 战
     Slain,
@@ -344,6 +346,7 @@ impl Stacks {
         let before=*self;
         let has=|e|held.contains(&e);
         match event {
+            Gain::Assist{rank}=>if has(Ember::SoulEater) {self.souls=self.souls.saturating_add(SOUL_KILL[usize::from(rank.min(2))]);},
             Gain::Kill{rank,spirit}=>{
                 if has(Ember::SoulEater) {self.souls=self.souls.saturating_add(SOUL_KILL[usize::from(rank.min(2))]);}
                 if has(Ember::SpiritKeeper)&&spirit {self.keeper=self.keeper.saturating_add(1);}

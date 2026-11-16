@@ -66,7 +66,7 @@ static class LocalizationAssets {
             var relative=$"menu/{quality}/01_common.tpf.dcx";
             var tpf=TPF.Read(Path.Combine(input,relative));var before=tpf.Textures.ToDictionary(t=>t.Name,t=>t.Bytes);
             var changed=new HashSet<string>();
-            foreach(var name in new[]{"title","loading1","loading2","loading3","tips1","tips2"}) {
+            foreach(var name in Directory.GetFiles(textures,"*.dds").Select(Path.GetFileNameWithoutExtension).OrderBy(n=>n,StringComparer.Ordinal)) {
                 string key="SB_TowerTheme_"+name;int index=tpf.Textures.FindIndex(t=>t.Name==key);
                 if(index<0)throw new Exception("Missing theme texture: "+key);
                 var bytes=File.ReadAllBytes(Path.Combine(textures,name+".dds"));var dds=new DDS(bytes);
@@ -77,7 +77,7 @@ static class LocalizationAssets {
             var actual=TPF.Read(target).Textures.ToDictionary(t=>t.Name,t=>t.Bytes);
             if(actual.Count!=before.Count||before.Any(p=>!changed.Contains(p.Key)&&!actual[p.Key].SequenceEqual(p.Value)))throw new Exception("Unrelated UI textures changed");
             foreach(var name in changed)if(!actual[name].SequenceEqual(tpf.Textures.Single(t=>t.Name==name).Bytes))throw new Exception("English theme roundtrip failed");
-            Console.WriteLine($"Verified {quality} English theme: six replacements, all other textures retained");
+            Console.WriteLine($"Verified {quality} English theme: {changed.Count} replacements, all other textures retained");
         }
     }
     public static void Build(string game,string input,string output,string translations) {

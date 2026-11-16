@@ -283,6 +283,10 @@ impl Gate {
     pub fn disconnect(&mut self,id:u64){if let Some(p)=self.peers.iter_mut().find(|p|p.0==id){p.1=None;}}
     /// 队员退出了无缝会话（不是房主）：从队伍里去掉，之后的“全员”判断（出发、开战、胜利、领奖、投票）不再等他
     pub fn remove(&mut self,id:u64)->bool {let before=self.peers.len();self.peers.retain(|p|p.0!=id);self.peers.len()<before}
+    pub fn rejoin(&mut self,id:u64)->bool {
+        if id==0||self.peers.len()>=crate::party_roster::MAX_PLAYERS||self.peers.iter().any(|p|p.0==id){return false;}
+        self.peers.push((id,None));true
+    }
     pub fn report(&mut self,id:u64,report:Report)->RuleResult<()> {
         if report.resume.as_ref().is_some_and(|p|p.visited.len()>64||!(1..=3).contains(&p.act)||p.law.len()>16){return Err("暂存旅程信息无效".into());}
         if report.visited.len()>64||report.act==0||report.act>3||report.epoch!=self.epoch||!report.law.valid(){return Err("队员旅程进度或律法不匹配".into());}

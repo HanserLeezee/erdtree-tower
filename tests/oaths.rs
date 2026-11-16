@@ -126,6 +126,6 @@ fn level_text_matches_the_planned_numbers() {
     assert_eq!(Kind::Feather.boon_at(3),"轻负重时伤害 +30%\n精力恢复 +7 点/秒");
     assert_eq!(Kind::Ascetic.boon_at(3),"胜利恢复最大生命 20%\n最大专注 26%");
     assert_eq!(Kind::Ascetic.boon_at(1),"胜利恢复最大生命 15%\n最大专注 20%");
-    assert_eq!((Kind::Combo.bane_at(),Kind::Guard.bane_at(),Kind::Steel.bane_at()),("受到伤害 +5%","动作精力消耗 +10%","战技伤害 -20%"));
+    for kind in Kind::ALL {assert!(kind.bane().is_empty());assert!(kind.bane_at().is_empty());}
 }
 

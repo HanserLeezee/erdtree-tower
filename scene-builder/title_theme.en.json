@@ -5,19 +5,191 @@
   "tagline": "Choose a path. Take an oath. Ascend.",
   "footer": "Every ascent brings new choices.",
   "loading_title": "The next journey unfolds",
-  "palette": {"background":"101918","mountain":"263a35","stone":"41554a","paper":"d1bd87","gold":"c4a45b","ink":"18231f"},
+  "palette": {
+    "background": "101918",
+    "mountain": "263a35",
+    "stone": "41554a",
+    "paper": "d1bd87",
+    "gold": "c4a45b",
+    "ink": "18231f"
+  },
   "tips": [
-    ["Paths and Choices", "Check your supplies before choosing a route. Elites and shops each have their value."],
-    ["Take an Oath", "Every oath has benefits and a price. Read both before choosing."],
-    ["Weapon Preferences", "Upgrade preferences in the Journey Archive for up to five times the selection weight."],
-    ["Your Build", "Check ember stacks and bonuses in the build panel to plan your growth."],
-    ["Class Legacy", "View class mastery and starting talismans at Roundtable Hold."],
-    ["Armor Transmog", "Mix and match appearances freely. Defense still comes from your equipped armor."],
-    ["Affixes and Skills", "Rarity is only part of a weapon. Choose affixes and skills that suit your playstyle."],
-    ["Challenge the Merchant", "Defeating a merchant has a 30% chance to summon a Bell Bearing Hunter."],
-    ["Moonlight Spring", "Choose one: restore HP, restore FP, or take 800 runes."],
-    ["Scarab Hunt", "Each attempt costs 500 runes. You can try up to three times at each event."],
-    ["Mystery Boxes and Reforging", "Find new equipment in mystery boxes, or reforge your right-hand weapon's affixes."],
-    ["Fellow Travelers", "Before co-op, make sure everyone uses the same mod, resource, and Seamless versions."]
+    [
+      "Paths and Choices",
+      "Check your supplies before choosing a route. Elites and shops each have their value."
+    ],
+    [
+      "Take an Oath",
+      "Oaths now grant benefits without penalties. Deepening also grants a Sacred Tear."
+    ],
+    [
+      "Weapon Preferences",
+      "Upgrade preferences in the Journey Archive for up to five times the selection weight."
+    ],
+    [
+      "Your Build",
+      "Check ember stacks and bonuses in the build panel to plan your growth."
+    ],
+    [
+      "Class Legacy",
+      "View class mastery and starting talismans at Roundtable Hold."
+    ],
+    [
+      "Armor Transmog",
+      "Mix and match appearances freely. Defense still comes from your equipped armor."
+    ],
+    [
+      "Affixes and Skills",
+      "Rarity is only part of a weapon. Choose affixes and skills that suit your playstyle."
+    ],
+    [
+      "Challenge the Merchant",
+      "Defeating a merchant has a 30% chance to summon a Bell Bearing Hunter."
+    ],
+    [
+      "Moonlight Spring",
+      "Choose one: restore HP, restore FP, or take 800 runes."
+    ],
+    [
+      "Scarab Hunt",
+      "Each attempt costs 500 runes. You can try up to three times at each event."
+    ],
+    [
+      "Mystery Boxes and Reforging",
+      "Find new equipment in mystery boxes, or reforge your right-hand weapon's affixes."
+    ],
+    [
+      "Fellow Travelers",
+      "Before co-op, make sure everyone uses the same mod, resource, and Seamless versions."
+    ],
+    [
+      "Soul Snare Pot",
+      "Summoners can attempt a capture by hitting a weakened enemy with a thrown pot."
+    ],
+    [
+      "Capture Timing",
+      "Capture chances rise as enemy HP falls. At 10% HP or less, capture is guaranteed."
+    ],
+    [
+      "Explosive Chests",
+      "Triple Chests may explode. Watch your HP, or move out of the blast area."
+    ],
+    [
+      "Lingering Grace",
+      "Grace also covers solo event explosions. Previously triggered events cannot pay out again."
+    ],
+    [
+      "Shared Kills",
+      "With Soul Eater in co-op, damaging an enemy earns souls even if an ally finishes it."
+    ],
+    [
+      "Godslayer",
+      "Gain one stack per elite or boss victory. In co-op, you do not need the final hit."
+    ],
+    [
+      "Growing Spell Power",
+      "The general damage bonuses from Soul Eater and Godslayer also boost spells."
+    ],
+    [
+      "Execution Chain",
+      "Execution Chain boosts critical attacks, not ordinary attacks or spell hits."
+    ],
+    [
+      "Frenzied Flame",
+      "Consecutive hits build attack power, but taking damage clears the stacks."
+    ],
+    [
+      "A Place to Rest",
+      "Tent grants one free flask refill at each campfire without spending a service use."
+    ],
+    [
+      "Mind over Matter",
+      "Mind over Matter adds maximum HP based on maximum FP."
+    ],
+    [
+      "Glintblade",
+      "The Astrologer ember sends a blade after a spell hit, at most once per cast."
+    ],
+    [
+      "Frost Shackles",
+      "After frostbite triggers, Frost Shackles briefly reduce enemy speed and damage."
+    ],
+    [
+      "Protect Your Summons",
+      "At victory, each summon group is checked separately for surviving members."
+    ],
+    [
+      "Summon Again",
+      "Summoners can call new spirit ashes after all their current spirits have fallen."
+    ],
+    [
+      "Spirit Resonance",
+      "A living summon empowers your own damage through Spirit Resonance, including spells."
+    ],
+    [
+      "Flask Placement",
+      "Flasks can go in your pouch. Arrange your quick items to suit your controls."
+    ],
+    [
+      "Chalice Echo",
+      "Drinking a flask can also briefly increase damage and reduce incoming damage."
+    ],
+    [
+      "An Envious World",
+      "With Envious World enabled, drinking a flask also heals enemies for 8% HP."
+    ],
+    [
+      "Thorned Enemies",
+      "Thorned enemies reflect part of your damage. Keep an eye on your own HP."
+    ],
+    [
+      "Prepare for Danger",
+      "High rewards can mean high risk. Check your flasks and runes before choosing a route."
+    ],
+    [
+      "Class Rewards",
+      "New runs use class-specific ember pools. Another class may receive different options."
+    ],
+    [
+      "Lasting Growth",
+      "Soul Eater and Godslayer stacks last for the run, including after Lingering Grace."
+    ],
+    [
+      "Choose What Fits",
+      "Choose rewards that support your build, rather than judging by rarity alone."
+    ],
+    [
+      "Physick Supplies",
+      "Physicks are stackable consumables. Each use spends one bottle."
+    ],
+    [
+      "Beyond the Limit",
+      "Weapons can still use tower upgrades after reaching their original upgrade cap."
+    ],
+    [
+      "Update Together",
+      "All players should update the mod DLL and scene assets together before co-op."
+    ],
+    [
+      "Read the Affixes",
+      "Affixes can change how a boss fights. Read its effects before committing."
+    ],
+    [
+      "Taking a Break",
+      "Use journey suspension before leaving. Resume the same journey with your party."
+    ],
+    [
+      "Tower Handbook",
+      "Open the launcher Wiki whenever you need a reminder about classes or embers."
+    ]
+  ],
+  "loading_art": [
+    "loading1",
+    "loading2",
+    "loading3",
+    "loading4",
+    "loading5",
+    "loading6",
+    "loading7"
   ]
 }

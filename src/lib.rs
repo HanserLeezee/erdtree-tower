@@ -5,6 +5,7 @@ pub mod suspension;
 pub mod party_rewards;
 pub mod party_link;
 pub mod party_game;
+pub mod party_reconnect;
 pub mod party_law;
 pub mod party_vote;
 pub mod party_roster;

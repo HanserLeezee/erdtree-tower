@@ -383,6 +383,7 @@ struct Runtime {
     party_spirits:Option<((u64,u8,i32),super::spirits::Spirits)>,
     party_scene:Option<PartyScene>,
     party_pending:Option<super::steam_messages::Pending>,
+    reconnect:Option<super::reconnect::Pending>,
     party:Option<super::party::Link>,
     departure:Option<super::party::Departure>,
     party_error:Option<String>,
@@ -472,7 +473,7 @@ fn fresh_runtime()->Runtime {
         party_death_wave:None,
         party_spirits:None,
         party_scene:None,
-        party,party_error,party_pending:None,departure:None,
+        party,party_error,party_pending:None,reconnect:None,departure:None,
         attendant:None,
         hub: None,
         last_save: None,
@@ -828,7 +829,7 @@ fn diagnostic_stall_victory(enabled:bool,authority:bool,elapsed:Duration)->bool 
 // emergency-end paths. Before, those paths skipped ActionGuard::update, so a dialog that had just
 // disabled attacks (disabled_secondary_actions) could leave the player unable to attack for good.
 fn sync_action_guard(state:&mut Runtime,world:&mut WorldChrMan) {
-    let menu_active=state.suspension.prepared.is_some()&&!state.suspension.leave||super::input::capture_actions(state.view.shared_event,super::input::active(),
+    let menu_active=state.reconnect.is_some()||state.suspension.prepared.is_some()&&!state.suspension.leave||super::input::capture_actions(state.view.shared_event,super::input::active(),
         state.room.as_ref().is_some_and(|r|r.dialog_active())
         || state.attendant.as_ref().is_some_and(|r|r.dialog_active())
         || state.hub.as_ref().is_some_and(|h|h.dialog_active()));
@@ -853,7 +854,7 @@ fn party_block_reason(state:&Runtime)->String {
     if state.party.as_ref().is_some_and(|p|p.needs_new_run()){return "上一局已经结束，尚未收到全员存活并返回大赐福的确认。请所有玩家完成结算并回到大赐福。".into();}
     "正在核对本机关键资源与联机配置，完成后等待队伍兼容确认。".into()
 }
-fn tick_auto_party(state:&mut Runtime)->Result<bool,String> {
+fn tick_auto_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Result<bool,String> {
     if state.suspension.returning&&state.suspension.committed.is_some(){return Ok(false);}
     use eldenring::cs::{CSSessionManager,LobbyState};
     if state.departure.is_some(){return Ok(false);}
@@ -861,6 +862,10 @@ fn tick_auto_party(state:&mut Runtime)->Result<bool,String> {
     if super::party::manual_config().is_some()||!super::seamless::active(){return Ok(false);}
     let Ok(session)=(unsafe {CSSessionManager::instance()}) else{return Ok(state.party_pending.is_some());};
     if let Some(link)=state.party.as_ref().filter(|p|p.roster().is_some()) {
+        if !state.suspension.returning&&!state.suspension.requested&&let (Some(hub),Some(run))=(&state.hub,&state.view.run) {
+            if matches!(run.phase,Phase::Dead|Phase::Won){super::reconnect::clear(hub.owner)?;}
+            else{super::reconnect::save(hub.owner,link,run)?;}
+        }
         if !matches!(session.lobby_state,LobbyState::Host|LobbyState::Client) {
             // 房主这边最后一名队员离开后，无缝房间随之关闭：房主按一个人继续这局，不再停队。队员失去房主仍然暂停。
             let alone=link.roster().filter(|r|r.local==r.host).map(|r|erdtree_tower::party_roster::Roster{local:r.local,host:r.host,members:vec![r.host]});
@@ -888,17 +893,57 @@ fn tick_auto_party(state:&mut Runtime)->Result<bool,String> {
                     report(state,format!("{} 已退出联机，旅程继续（剩 {} 人）。",names.join("、"),roster.members.len()));
                     return Ok(false);
                 }
-                return Err("无缝队伍成员已变化，暂停当前旅程同步".into());
+                if state.party.as_mut().is_some_and(|p|p.restore_roster(&roster)) {
+                    super::log("RECONNECT original member returned; awaiting identity and progress confirmation");return Ok(false);
+                }
+                return Err("无缝队伍成员已变化，暂停当前旅程同步（仅支持原客机重连）".into());
             }
         }
         return Ok(false);
     }
     if session.lobby_state==LobbyState::None {
-        state.party_pending=None;
+        state.party_pending=None;state.reconnect=None;
         return Ok(false);
     }
     let Ok(roster)=super::seamless::roster(session) else{return Ok(state.party_pending.is_some());};
     if roster.members.len()<2 {state.party_pending=None;return Ok(false);}
+    if state.reconnect.as_ref().is_some_and(|p|p.roster!=roster){state.reconnect=None;}
+    if roster.local!=roster.host&&state.party_pending.is_none() {
+        if world.main_player.is_none()||game.save_slot<0{return Ok(true);}
+        if state.reconnect.is_none()&&let Some(player)=world.main_player.as_ref() {
+            let owner=(unsafe {player.player_game_data.as_ref()}.character_id,game.save_slot);
+            if let Some((ticket,run))=super::reconnect::load(owner,&roster)? {
+                if state.view.run.is_some(){return Err("请重启游戏、载入原角色后直接加入原房间；重连前不要开始或继续单人旅程".into());}
+                let Some(resources)=resource_check() else{return Ok(true);};
+                if let Some(file)=resources.first(){return Err(format!("重连资源不匹配：{file}"));}
+                let Some(profile)=super::party_compat::profile() else{return Ok(true);};
+                state.reconnect=Some(super::reconnect::Pending::new(roster.clone(),ticket,run,profile.clone()?)?);
+                super::log(format!("RECONNECT started owner={owner:?} host={}",roster.host));
+            }
+        }
+        if let Some(pending)=state.reconnect.as_mut() {
+            if !pending.poll()?{return Ok(true);}
+            let Some(player)=world.main_player.as_ref() else{return Ok(true);};
+            if !pending.landed(i32::from(player.current_block_id),!game.warp_requested&&player.chr_ins.modules.data.hp>0&&player.chr_ins.modules.physics.standing_on_solid_ground){return Ok(true);}
+            let owner=pending.owner;
+            if owner!=(unsafe {player.player_game_data.as_ref()}.character_id,game.save_slot){return Err("重连过程中角色已改变，已停止恢复".into());}
+            if state.hub.is_none(){state.hub=Some(super::hub::Hub::new(owner,unsafe {player.player_game_data.as_ref()}.archetype)?);}
+            let (link,run)=state.reconnect.take().unwrap().finish()?;
+            let saved_fp=std::fs::read_to_string(super::hub::path(owner,"fp")).ok().and_then(|s|s.parse::<i32>().ok());
+            SESSION_PATH.lock().map_err(|_|"存档锁不可用")?.replace(super::hub::path(owner,"json"));
+            state.hub.as_mut().unwrap().reconnected(world);
+            if let Some(player)=world.main_player.as_mut() {
+                let data=&mut player.chr_ins.modules.data;
+                data.hp=data.hp.min((i64::from(data.max_hp)*i64::from(run.hp)/i64::from(run.max_hp.max(1))).max(1) as i32);
+                if let Some(fp)=saved_fp{data.fp=data.fp.min(fp.max(0));}
+            }
+            record_checked(&run)?;
+            state.view.run=Some(run);state.party=Some(link);state.view.room=None;state.identity=None;state.flasks=None;
+            state.command=None;state.view.busy=false;state.view.travelling=false;state.view.ballots.clear();game.save_requested=true;
+            report(state,"已重连原队伍；保留个人进度，离线期间的奖励不补发。");
+            super::log("RECONNECT guest restored at safe map checkpoint");return Ok(false);
+        }
+    }
     if state.party_pending.as_ref().is_some_and(|p|p.roster!=roster){state.party_pending=None;}
     if state.party_pending.is_none() {
         let Some(resources)=resource_check() else{return Ok(true);};
@@ -1095,6 +1140,12 @@ fn retry_run(run:&Run,destination:Option<usize>,solo:bool,handled:bool)->Option<
     let mut next=run.clone();
     if next.phase==Phase::Map {next.enter(destination?).ok()?;}
     next.retry_floor().then_some(next)
+}
+
+fn regional_event_hp(run:&mut Run,hp:i32,max_hp:i32,party:bool) {
+    if run.retry_node.is_some() {return;}
+    run.hp=normalized_hp(hp,max_hp).max(u32::from(party));
+    if hp<=0&&!party&&!run.retry_floor() {run.end_on_death();}
 }
 
 fn retry_departure(since:&mut Option<Instant>,now:Instant,ready:bool)->bool {
@@ -1345,6 +1396,7 @@ fn suspend_snapshot(state:&mut Runtime,world:&WorldChrMan,game:&GameMan)->Result
 fn return_suspended_to_hub(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan,saved:Run)->Result<(),String> {
     let player=world.main_player.as_ref().ok_or("等待角色加载")?;
     let owner=(unsafe {player.player_game_data.as_ref()}.character_id,game.save_slot);
+    super::reconnect::clear(owner)?;
     if state.hub.is_none(){state.hub=Some(super::hub::Hub::new(owner,unsafe {player.player_game_data.as_ref()}.archetype)?);}
     stop_map_combat(state,world);
     if let Some(room)=state.room.take(){room.retire(world);}
@@ -1768,8 +1820,9 @@ fn tick_locked() {
         state.command=None;
         super::log("Journey voluntarily ended; returning party to hub through normal settlement");
     }
+    if state.party.is_none()&&state.reconnect.is_some()&&solo_session(){state.reconnect=None;state.party_error=None;sync_action_guard(&mut state,world);}
     if let Some(error)=state.party_error.clone(){state.view.ready=false;state.command=None;report(&mut state,error);poll_blocked_hub(&mut state,world,game);return;}
-    let party_waiting=match tick_auto_party(&mut state) {
+    let party_waiting=match tick_auto_party(&mut state,world,game) {
         Ok(waiting)=>waiting,
         Err(error)=>{
             if let Some(link)=state.party.as_mut(){link.stop(error.clone());}
@@ -1777,6 +1830,12 @@ fn tick_locked() {
         },
     };
     if party_waiting {state.view.ready=false;state.command=None;}
+    if state.reconnect.is_some() {
+        state.view.ready=false;state.command=None;
+        report(&mut state,"正在恢复原联机旅程，等待房主完成当前房间并回到路线图……");
+        sync_action_guard(&mut state,world);
+        return;
+    }
     if state.party.is_some() {
         if let Err(error)=tick_party(&mut state,world,game){
             if let Some(link)=state.party.as_mut(){link.stop(error.clone());}
@@ -2130,8 +2189,8 @@ fn tick_locked() {
         }
     }
     if state.hub.as_ref().is_some_and(|h|h.active) {
-        state.command=None;state.view.ready=false;state.pad_capture.update(false);
-        super::input::CAPTURE.store(false,std::sync::atomic::Ordering::Relaxed);
+        state.command=None;state.view.ready=false;
+        state.pad_capture.update(super::input::active());
         let mut hub=state.hub.take().unwrap();
         let paused_party=hub.paused&&!solo_session()&&!state.party.as_ref().is_some_and(|p|p.event.pause.resume_ready);
         let blocked=(paused_party||party_waiting||state.party.as_ref().is_some_and(|p|p.needs_new_run())).then(||if paused_party {"等待全员在大赐福载入同一暂存旅程（种子、幕数、路线和律法需一致）。".into()}else{party_block_reason(&state)});
@@ -3418,7 +3477,7 @@ fn sync_merchant_reward(state:&mut Runtime)->Result<(),String> {
     if let Some(kind)=reward {report(state,format!("获得{}！本局后续商店对应商品 +5，全队共享。",erdtree_tower::merchant::NAMES[kind]));}
     Ok(())
 }
-fn tick_merchant(state:&mut Runtime,world:&WorldChrMan,room:&mut super::rooms::Room)->Result<bool,String> {
+fn tick_merchant(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::rooms::Room)->Result<bool,String> {
     let Some(run)=state.view.run.as_ref() else{return Ok(false);};
     let host=state.party.as_ref().is_none_or(|p|p.host());
     if !run.bells.down(run.act,room.node)&&room.merchant_dead(world)
@@ -3445,6 +3504,7 @@ fn tick_merchant(state:&mut Runtime,world:&WorldChrMan,room:&mut super::rooms::R
     super::native_talk::set_flag(room.base()+994,false)?;
     if room.hunter.is_none(){room.hunter=Some(super::map_guards::Guards::merchant()?);}
     let hunter=room.hunter.as_mut().unwrap();hunter.prepare(world)?;
+    hunter.scale_merchant(world,run,room.node)?;
     let mut started=hunter.ready();
     if let Some(link)=state.party.as_mut() {
         if host&&link.event.merchant_phase==0 {link.merchant_phase(1)?;}
@@ -3710,6 +3770,11 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
         Ok(false)
     })();
     if transferred {room.retire(world);return;}
+    if let Some(next)=state.view.run.as_ref().filter(|run|run.retry_node.is_some()&&!state.death_retry).cloned() {
+        state.room=Some(room);
+        begin_death_retry(state,world,next);
+        return;
+    }
     if matches!(result, Ok(true)) {
         settle_portal_ashes(state,world);
         state.event_start=None;
@@ -4016,8 +4081,7 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
         } else if outcome==EventOutcome::Guards {
             room.view.message="宝箱惊醒了守卫，准备迎战！".into();
         }
-        next.hp=normalized_hp(vitals.hp,vitals.max_hp).max(u32::from(state.party.is_some()));
-        if vitals.hp<=0&&state.party.is_none() {next.phase=Phase::Dead;}
+        regional_event_hp(&mut next,vitals.hp,vitals.max_hp,state.party.is_some());
         if next.regional_event.guards {state.event_start=Some(Instant::now());}
         set_flag(45010942,next.regional_event.guards)?;set_flag(45010995,!next.regional_event.guards)?;
         record(&next);state.view.run=Some(next);
@@ -4332,8 +4396,8 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
             }
         }
         spawning |= foe.fight.handle().is_none() && foe.requested.is_some();
-        // 后续波次刚出场的敌人先停 WAVE_GRACE 不出招（只禁攻击等动作，可以移动；敌人由房主或单人这边的 AI 控制）
-        if authority&&!foe.graced&&foe.spawn_gap.later_wave() && let Some(chr)=foe.fight.handle().and_then(|h|world.chr_ins_by_handle_mut(&h)) {
+        // 首波出场后 1 秒、后续波次 WAVE_GRACE 内不出招，由单人或房主控制。
+        if authority&&!foe.graced && let Some(chr)=foe.fight.handle().and_then(|h|world.chr_ins_by_handle_mut(&h)) {
             let started=*foe.grace.get_or_insert_with(Instant::now);
             let holding=foe.spawn_gap.holds_attacks(started.elapsed());
             chr.debug_flags.set_disabled_secondary_actions(holding);
@@ -4877,6 +4941,36 @@ fn request_travel(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lethal_event_damage_uses_grace_and_prevents_duplicate_rewards() {
+        let mut original=Run::new(42,erdtree_tower::Class::Samurai);
+        let id=original.nodes.iter().position(|n|n.kind==erdtree_tower::NodeKind::Event).unwrap();
+        original.debug_jump(id).unwrap();original.enter(id).unwrap();
+        original.regional_event=erdtree_tower::regional_events::Progress{opened:1,..Default::default()};
+        let mut run=original.clone();
+        super::regional_event_hp(&mut run,0,100,false);
+        assert_eq!(run.phase,Phase::Map);
+        assert_eq!(run.retry_node,Some(id));
+        assert_eq!(run.retries,original.retries-1);
+        assert!(run.regional_event.settled);
+        assert!(super::retry_run(&run,None,true,false).is_none());
+        super::regional_event_hp(&mut run,0,100,false);
+        assert_eq!(run.retries,original.retries-1);assert!(run.hp>0);
+        let mut loaded=Run::decode(&run.encode().unwrap()).unwrap();
+        loaded.enter(id).unwrap();
+        assert!(loaded.open_regional_event(0).is_err());
+        loaded.leave_regional_event().unwrap();
+        let mut exhausted=original.clone();exhausted.retries=0;
+        super::regional_event_hp(&mut exhausted,0,100,false);
+        assert_eq!(exhausted.phase,Phase::Dead);assert_eq!(exhausted.retry_node,None);
+        exhausted.validate().unwrap();
+        let mut alive=original.clone();
+        super::regional_event_hp(&mut alive,20,100,false);
+        assert_eq!(alive.phase,original.phase);assert_eq!(alive.retries,original.retries);
+        let mut party=original.clone();
+        super::regional_event_hp(&mut party,0,100,true);
+        assert_eq!(party.phase,original.phase);assert_eq!(party.retries,original.retries);assert_eq!(party.hp,1);
+    }
     #[test]
     fn member_wave_delay_survives_frames_and_resets_for_a_new_encounter() {
         use std::time::Duration as D;

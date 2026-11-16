@@ -115,6 +115,8 @@ impl Flasks {
 
 fn write_targets(data:&mut PlayerGameData,targets:[(ItemId,u32);2])->Result<(),String> {
     let stones_before=super::smith::remaining(data);
+    let quick_layout=data.equipment.equip_item_data.quick_slots.each_ref().map(flask_color);
+    let pouch_layout=data.equipment.equip_item_data.pouch_slots.each_ref().map(flask_color);
     let mut grants = Vec::new();
     for (id,quantity) in targets {
         if !data.equipment.equip_inventory_data.items_data.items().any(|e|e.item_id==id&&e.quantity>0) {
@@ -150,8 +152,10 @@ fn write_targets(data:&mut PlayerGameData,targets:[(ItemId,u32);2])->Result<(),S
         let index=items.find_item_idx(id).ok_or("圣杯瓶快捷栏索引未就绪")? as i32;
         slots.push(EquipDataItem{gaitem_handle:entry.gaitem_handle,index});
     }
-    normalize_slots(&mut data.equipment.equip_item_data.quick_slots,&slots);
+    restore_flask_slots(&mut data.equipment.equip_item_data.quick_slots,&quick_layout,&slots);
+    restore_flask_slots(&mut data.equipment.equip_item_data.pouch_slots,&pouch_layout,&slots);
     sync_slot_ids(&data.equipment.equip_item_data.quick_slots,&mut data.equipment.equipment_entries.quick_tems);
+    sync_slot_ids(&data.equipment.equip_item_data.pouch_slots,&mut data.equipment.equipment_entries.pouch);
     if super::smith::remaining(data)!=stones_before {super::smith::trace(data,||format!("flask_inventory_changed before={stones_before}"),true);}
     Ok(())
 }
@@ -180,23 +184,35 @@ fn obsolete_flask(id:ItemId,targets:&[(ItemId,u32);2])->bool {
         &&!targets.iter().any(|(target,_)|*target==id)
 }
 
-fn normalize_slots(slots:&mut [EquipDataItem;10],targets:&[EquipDataItem]) {
-    for (color,target) in targets.iter().enumerate() {
-        let start=if color==0 {1000}else{1050};
-        let mut first=None;
-        for (index,slot) in slots.iter_mut().enumerate() {
-            let handle=slot.gaitem_handle;
-            if matches!(handle.category(),Ok(GaitemCategory::Goods))&&!handle.is_indexed()&&(start..=start+25).contains(&handle.selector()) {
-                if first.is_none() {first=Some(index);}
-                slot.index=-1;slot.gaitem_handle=unsafe {std::mem::transmute::<u32,GaitemHandle>(u32::MAX)};
-            }
+fn flask_color(slot:&EquipDataItem)->Option<usize> {
+    let handle=slot.gaitem_handle;
+    if slot.index<0||!matches!(handle.category(),Ok(GaitemCategory::Goods))||handle.is_indexed(){return None;}
+    [1000..=1025,1050..=1075].iter().position(|range|range.contains(&handle.selector()))
+}
+
+fn restore_flask_slots(slots:&mut [EquipDataItem],layout:&[Option<usize>],targets:&[EquipDataItem]) {
+    let mut seen=[false;2];
+    for (slot,color) in slots.iter_mut().zip(layout) {
+        let Some(color)=*color else{
+            if flask_color(slot).is_some() {slot.index=-1;slot.gaitem_handle=unsafe {std::mem::transmute::<u32,GaitemHandle>(u32::MAX)};}
+            continue;
+        };
+        let Some(target)=targets.get(color) else{continue;};
+        if !seen[color] {
+            slot.index=target.index;slot.gaitem_handle=target.gaitem_handle;seen[color]=true;
+        } else {
+            slot.index=-1;slot.gaitem_handle=unsafe {std::mem::transmute::<u32,GaitemHandle>(u32::MAX)};
         }
-        let Some(index)=first.or_else(||slots.iter().position(|s|s.index<0)) else {continue;};
-        slots[index].index=target.index;slots[index].gaitem_handle=target.gaitem_handle;
     }
 }
 
-fn sync_slot_ids(slots:&[EquipDataItem;10],ids:&mut [eldenring::cs::OptionalItemId;10]) {
+#[cfg(test)]
+fn normalize_slots(slots:&mut [EquipDataItem;10],targets:&[EquipDataItem]) {
+    let layout=slots.each_ref().map(flask_color);
+    restore_flask_slots(slots,&layout,targets);
+}
+
+fn sync_slot_ids(slots:&[EquipDataItem],ids:&mut [eldenring::cs::OptionalItemId]) {
     let flask=|id:u32|[1000..=1025,1050..=1075].iter().any(|r|r.contains(&id));
     for (slot,id) in slots.iter().zip(ids) {
         let handle=slot.gaitem_handle;
@@ -336,10 +352,10 @@ mod tests {
     }
     #[test]
     fn removed_flasks_do_not_survive_in_equipment_display_ids() {
-        let mut slots=std::array::from_fn(|_|EquipDataItem{gaitem_handle:unsafe {std::mem::transmute::<u32,GaitemHandle>(u32::MAX)},index:-1});
+        let mut slots:[EquipDataItem;10]=std::array::from_fn(|_|EquipDataItem{gaitem_handle:unsafe {std::mem::transmute::<u32,GaitemHandle>(u32::MAX)},index:-1});
         slots[0]=EquipDataItem{gaitem_handle:GaitemHandle::from_parts(1001,GaitemCategory::Goods),index:396};
         slots[2]=EquipDataItem{gaitem_handle:GaitemHandle::from_parts(1051,GaitemCategory::Goods),index:397};
-        let mut ids=std::array::from_fn(|i|goods(if i==9 {300}else{1000+i as u32}).into());
+        let mut ids:[eldenring::cs::OptionalItemId;10]=std::array::from_fn(|i|goods(if i==9 {300}else{1000+i as u32}).into());
         sync_slot_ids(&slots,&mut ids);
         assert_eq!(ids[0].param_id(),Some(1001));assert_eq!(ids[2].param_id(),Some(1051));
         for i in [1,3,4,5,6,7,8]{assert!(!ids[i].is_valid());}
@@ -378,6 +394,37 @@ mod tests {
         let targets=[EquipDataItem{gaitem_handle:GaitemHandle::from_parts(1001,GaitemCategory::Goods),index:50}];
         normalize_slots(&mut slots,&targets);
         for (i,slot) in slots.iter().enumerate(){assert_eq!(slot.index,i as i32);assert_eq!(slot.gaitem_handle.selector(),300+i as u32);}
+    }
+    #[test]
+    fn unequipped_flasks_stay_out_of_empty_quick_slots() {
+        let mut slots=std::array::from_fn(|_|EquipDataItem{gaitem_handle:unsafe {std::mem::transmute::<u32,GaitemHandle>(u32::MAX)},index:-1});
+        let targets=[EquipDataItem{gaitem_handle:GaitemHandle::from_parts(1001,GaitemCategory::Goods),index:50},
+            EquipDataItem{gaitem_handle:GaitemHandle::from_parts(1051,GaitemCategory::Goods),index:51}];
+        normalize_slots(&mut slots,&targets);
+        assert!(slots.iter().all(|s|s.index==-1));
+    }
+    #[test]
+    fn pouch_positions_survive_inventory_replacement_and_upgrades() {
+        let item=|id,index|EquipDataItem{gaitem_handle:GaitemHandle::from_parts(id,GaitemCategory::Goods),index};
+        let empty=||EquipDataItem{gaitem_handle:unsafe {std::mem::transmute::<u32,GaitemHandle>(u32::MAX)},index:-1};
+        let mut pouch=[item(300,10),empty(),item(1001,20),empty(),item(1051,21),empty()];
+        let layout=pouch.each_ref().map(flask_color);
+        for (red,blue) in [(1000,1050),(1001,1051),(1003,1053)] {
+            pouch[2]=empty();pouch[4]=empty();
+            restore_flask_slots(&mut pouch,&layout,&[item(red,30),item(blue,31)]);
+            let mut ids=[eldenring::cs::OptionalItemId::NONE;6];
+            ids[0]=goods(300).into();
+            sync_slot_ids(&pouch,&mut ids);
+            assert_eq!(ids[2].param_id(),Some(red));assert_eq!(ids[4].param_id(),Some(blue));
+            assert_eq!(pouch[2].index,30);assert_eq!(pouch[4].index,31);
+            assert_eq!(pouch[0].index,10);assert_eq!(ids[0].param_id(),Some(300));
+            for i in [1,3,5] {assert_eq!(pouch[i].index,-1);assert!(!ids[i].is_valid());}
+        }
+        let mut quick=[empty(),empty()];
+        let quick_layout=quick.each_ref().map(flask_color);
+        quick[0]=item(1003,30);
+        restore_flask_slots(&mut quick,&quick_layout,&[item(1003,30),item(1053,31)]);
+        assert!(quick.iter().all(|s|s.index==-1),"granting bottles must not auto-equip them");
     }
     #[test]
     fn camp_adds_at_most_two_and_preserves_allocation() {

@@ -54,7 +54,7 @@ impl Fight {
             if !self.applied.contains(handle) {for id in &effects {chr.apply_speffect(*id,false);}self.applied.push(*handle);}
             if drank>0&&law.envy_world() {
                 let data=&mut chr.modules.data;
-                data.hp=(i64::from(data.hp)+i64::from(data.max_hp.max(0))/10*drank.min(32) as i64).min(i64::from(data.max_hp)) as i32;
+                data.hp=(i64::from(data.hp)+i64::from(data.max_hp.max(0))*8/100*drank.min(32) as i64).min(i64::from(data.max_hp)) as i32;
             }
         }
         if drank>0&&law.envy_world() {super::log(format!("TOWER_LAW envy world healed enemies: flask_uses={drank}"));}

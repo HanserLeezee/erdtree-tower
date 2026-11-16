@@ -193,6 +193,10 @@ impl Hub {
     }
     pub fn finish(&mut self) { self.active=true;self.paused=false;self.settled=true;self.reset=true;self.start=false;self.resume=None;self.seed=None;self.law=Default::default();self.warp=WarpGate::default();self.recovery_return=false; }
     pub fn suspended_run(&self)->Option<&Run> {self.resume.as_ref().filter(|_|self.paused)}
+    pub fn reconnected(&mut self,world:&mut WorldChrMan) {
+        if let Some(room)=self.room.take(){room.retire(world);}
+        self.active=false;self.paused=false;self.reset=false;self.start=false;self.resume=None;
+    }
     pub fn pause(&mut self,run:Run) {
         self.active=true;self.paused=true;self.settled=false;self.reset=false;self.start=false;
         self.resume=Some(run);self.warp=WarpGate::default();self.recovery_return=false;self.clock=Instant::now();

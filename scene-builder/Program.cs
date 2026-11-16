@@ -1,6 +1,18 @@
 using SoulsFormats;
 using System.Numerics;
+if(args.Length==4&&args[3]=="hoarah-sfx-inspect") {HoarahSfxAssets.Inspect(args[0],args[1]);return;}
+if(args.Length==4&&args[3]=="hoarah-sfx-test") {HoarahSfxAssets.Test();return;}
+if(args.Length==5&&args[3]=="hoarah-sfx-patch") {HoarahSfxAssets.Patch(args[0],args[2],args[1],args[4]);return;}
+if(args.Length==4&&args[3] is "ember-spell-patch" or "ember-spell-verify") {EmberSpellDamage.Patch(args[2],args[1],args[3]=="ember-spell-verify");return;}
 if(args.Length==4&&args[3]=="golden-shield-patch") {BossAffixAssets.PatchGolden(args[2],args[1]);return;}
+if(args.Length==4&&args[3]=="portal-minimal-patch") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    PortalArchAssets.Patch(args[0],args[2],args[1],true);return;
+}
+if(args.Length==4&&args[3]=="radahn-visibility-patch") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    RadahnVisibility.Patch(args[2],args[1]);return;
+}
 if(args.Length==4&&args[3]=="frost-shackle-patch") {FrostShackleAssets.Patch(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="tent-patch") {TentAssets.Patch(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="capture-patch") {CaptureAssets.Patch(args[2],args[1],args[0]);return;}

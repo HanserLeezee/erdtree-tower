@@ -157,9 +157,9 @@ def loading_art(image, index, config=None):
 def tip_atlases(output, config=None):
     root=Path(__file__).resolve().parents[1]
     tips=(config or json.loads(Path(__file__).with_name('title_theme.json').read_text(encoding='utf-8')))['tips']
-    if len(tips)!=12:
-        raise ValueError('Expected twelve loading tips')
-    for page in range(2):
+    if not tips or len(tips)%6:
+        raise ValueError('Loading tips must fill six-slot atlas pages')
+    for page in range(len(tips)//6):
         atlas=Image.new('RGBA',(1920,1080));draw=ImageDraw.Draw(atlas)
         for slot,(title,body) in enumerate(tips[page*6:page*6+6]):
             for text,size,y,color in [(title,34,15,'#f1e9d5'),(body,25,78,'#d2d6c8')]:
@@ -169,7 +169,7 @@ def tip_atlases(output, config=None):
         atlas.save(output/f'tips{page+1}.dds')
 
 
-def single_tip_cycle(data):
+def single_tip_cycle(data, background_names=None, tip_count=12):
     head,tags=gb.parse(data)
     placed=next(b for c,b in tags if c==26 and b.endswith(b'TowerThemeArtCycle\0'))
     cycle_id=struct.unpack_from('<H',placed,3)[0]
@@ -178,15 +178,24 @@ def single_tip_cycle(data):
     if len(backgrounds)!=3:raise ValueError('Missing loading backgrounds')
     first=gb.max_character(tags)+1
     definitions=[];frames=[]
-    for i in range(12):
+    if background_names is not None:
+        backgrounds=[]
+        for name in background_names:
+            bitmap=first;shape=first+1;first+=2
+            definitions.extend([(1009,external_image(bitmap,'MENU_TowerTheme_'+name,(1920,1080))),
+                                (2,gb.bitmap_shape(shape,bitmap,1920,1080,(1920,1080)))])
+            backgrounds.append(gb.place(1,shape,'TowerThemeArt'+str(len(backgrounds))))
+    if not backgrounds or tip_count<1 or tip_count*240>65535 or first+tip_count*2>65535:
+        raise ValueError('Invalid loading cycle dimensions')
+    for i in range(tip_count):
         bitmap=first+i*2;shape=bitmap+1
         definitions.extend([(1009,external_image(bitmap,f'MENU_TowerTheme_tip{i}',(1920,180))),
                             (2,gb.bitmap_shape(shape,bitmap,1920,180,(1920,180)))])
         if i:frames.extend([(28,struct.pack('<H',1)),(28,struct.pack('<H',2))])
-        frames.extend([(26,backgrounds[i%3]),(26,gb.place(2,shape,'TowerLoadingTip',0,825))])
+        frames.extend([(26,backgrounds[i%len(backgrounds)]),(26,gb.place(2,shape,'TowerLoadingTip',0,825))])
         frames.extend([(1,b'')]*240)
     frames.append((0,b''))
-    replacement=struct.pack('<HH',cycle_id,2880)+b''.join(gb.tag(c,b) for c,b in frames)
+    replacement=struct.pack('<HH',cycle_id,tip_count*240)+b''.join(gb.tag(c,b) for c,b in frames)
     out=[]
     for code,body in tags:
         if code==39 and struct.unpack_from('<H',body)[0]==cycle_id:
@@ -221,10 +230,12 @@ def externalize(data, names):
     return gb.build(head, [(1009, replacements[body]) if code == gb.DEFINE_BITS_JPEG2 else (code, body) for code, body in tags])
 
 
-def write_dds(art, output, config=None):
+def write_dds(art, output, config=None, loading_only=False):
+    config=config or json.loads(Path(__file__).with_name('title_theme.json').read_text(encoding='utf-8'))
+    names=tuple(config.get('loading_art',ART[1:])) if loading_only else ('title',*config.get('loading_art',ART[1:]))
     output.mkdir(parents=True, exist_ok=True)
-    for name in ART:
-        source = next((art / (name + suffix) for suffix in ('.png', '.jpg') if (art / (name + suffix)).exists()), None)
+    for name in names:
+        source = next((art / (name + suffix) for suffix in ('.png', '.jpg', '.webp') if (art / (name + suffix)).exists()), None)
         if source is None:
             raise FileNotFoundError(name)
         with Image.open(source) as image:
@@ -232,7 +243,7 @@ def write_dds(art, output, config=None):
             if name=='title':
                 prepared=title_art(prepared,config)
             else:
-                prepared=loading_art(prepared,ART.index(name)-1,config)
+                prepared=loading_art(prepared,names.index(name)-1,config)
             path = output / (name + '.dds')
             prepared.save(path)
             with Image.open(path) as restored:
@@ -246,23 +257,27 @@ if __name__ == '__main__':
     parser.add_argument('--source', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--art', type=Path, required=True)
+    parser.add_argument('--config',type=Path,default=Path(__file__).with_name('title_theme.json'))
+    parser.add_argument('--loading-only',action='store_true')
     parser.add_argument('--textures-only', action='store_true', help='只重新生成 theme-textures/*.dds（菜单 GFx 已经引用外部贴图时用；主菜单现为原版）')
     args = parser.parse_args()
+    config=json.loads(args.config.read_text(encoding='utf-8'))
     if args.textures_only:
-        write_dds(args.art, args.output / 'theme-textures')
+        write_dds(args.art, args.output / 'theme-textures',config,args.loading_only)
         print('Wrote theme-textures; run title-texture-patch with the same output directory')
         raise SystemExit
     if args.source is None:
         parser.error('--source is required unless --textures-only')
     (args.output / 'menu').mkdir(parents=True, exist_ok=True)
     for filename, names in MOVIES.items():
+        if args.loading_only and filename=='05_000_title.gfx':continue
         data=externalize((args.source / filename).read_bytes(), names)
         if filename=='05_000_title.gfx':
             data=title_underlay(data)
         else:
-            data=single_tip_cycle(loading_underlay(data))
+            data=single_tip_cycle(loading_underlay(data),config.get('loading_art'),len(config['tips']))
         (args.output / 'menu' / filename).write_bytes(data)
     filename = '05_001_title_logo.gfx'
-    (args.output / 'menu' / filename).write_bytes((args.source / filename).read_bytes())
-    write_dds(args.art, args.output / 'theme-textures')
+    if not args.loading_only:(args.output / 'menu' / filename).write_bytes((args.source / filename).read_bytes())
+    write_dds(args.art, args.output / 'theme-textures',config,args.loading_only)
     print('Converted theme images to external references; run title-texture-patch to pack DDS and layouts')
