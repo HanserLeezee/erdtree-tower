@@ -123,6 +123,8 @@ impl Ember {
     // Retained only for old saves and archived runs.
     pub fn retired(self)->bool {matches!(self,Self::Stride|Self::SpiritTwin)}
     pub fn index(self)->usize {match self {Self::Stride=>36,Self::FrostShackle=>37,Self::Tent=>38,Self::Capture=>39,Self::Glintblade=>40,Self::Mind=>41,_=>Self::ALL.iter().position(|e|*e==self).unwrap()}}
+    /// 奖励卡徽记（reward-icons/990000+n）：后来加的几枚有了自己的徽记；游戏原生拾取提示的图标仍按 icon_index 借用（菜单图集要在 Windows 上重建）
+    pub fn emblem_index(self)->usize {match self {Self::FrostShackle|Self::Tent|Self::Capture|Self::Glintblade|Self::Mind=>self.index(),_=>self.icon_index()}}
     pub fn icon_index(self)->usize {match self {Self::FrostShackle=>Self::Frost.index(),Self::Tent=>Self::Echo.index(),Self::Capture=>Self::SpiritCommand.index(),Self::Glintblade=>Self::Glintstone.index(),Self::Mind=>Self::Meditation.index(),_=>self.index()}}
     pub fn name(self)->&'static str {match self {
         Self::FrostShackle=>"寒霜枷锁",
@@ -458,6 +460,11 @@ mod tests {
         assert_eq!(Ember::ALL.iter().map(|e|e.index()).collect::<std::collections::HashSet<_>>().len(),Ember::ALL.len());
         let held:Vec<_>=Ember::ALL.into_iter().filter(|e|*e!=Ember::FrostShackle).collect();
         assert_eq!(offer(1,&held,false,false,None),Some(Ember::FrostShackle));
+    }
+    #[test]
+    fn late_embers_use_their_own_emblems_but_borrow_native_icons() {
+        use super::*;
+        for e in [Ember::FrostShackle,Ember::Tent,Ember::Capture,Ember::Glintblade,Ember::Mind] {assert_eq!(e.emblem_index(),e.index());assert_ne!(e.icon_index(),e.index());}assert_eq!(Ember::Chain.emblem_index(),Ember::Chain.index());
     }
     #[test]
     fn mind_adds_three_times_max_fp_as_a_rate_of_base_hp() {

@@ -302,10 +302,10 @@ fn item_id(run:&Run,reward:&Reward)->Option<u32> {
 const EMBER_EMBLEMS:u32=990000;
 static EMBLEMS_READY:LazyLock<bool>=LazyLock::new(|| {
     let root=crate::LOG_PATH.with_file_name("scene-assets").join("reward-icons");
-    erdtree_tower::embers::Ember::ALL.into_iter().all(|e|std::fs::metadata(root.join(format!("{}.rgba",EMBER_EMBLEMS+e.icon_index() as u32))).is_ok_and(|m|m.len()==160*160*4))
+    erdtree_tower::embers::Ember::ALL.into_iter().all(|e|std::fs::metadata(root.join(format!("{}.rgba",EMBER_EMBLEMS+e.emblem_index() as u32))).is_ok_and(|m|m.len()==160*160*4))
 });
 pub fn ember_icon(ember:erdtree_tower::embers::Ember)->Option<u32> {
-    if *EMBLEMS_READY {return Some(EMBER_EMBLEMS+ember.icon_index() as u32);}
+    if *EMBLEMS_READY {return Some(EMBER_EMBLEMS+ember.emblem_index() as u32);}
     DETAILS.get(&(0x20000000|erdtree_tower::embers::icon_talisman(ember))).map(|detail|detail.icon)
 }
 /// 特殊奖励的卡片图标（scene-builder/extra_reward_icons.py 生成的 990100 起 5 张）：武器强化、圣杯扩容、记忆扩容、卢恩、强化石；

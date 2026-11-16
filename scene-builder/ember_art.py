@@ -3,7 +3,7 @@
 用法：python scene-builder/ember_art.py scene-assets
 读取 scene-assets/ember-art/emblems.png（4 列 × 3 行，Ember::ALL 前 12 项）、emblems-summon.png（2 列 × 2 行，召唤流 4 项）、emblems-twin.png（单个，双生的灵唤铃）、emblems-stack.png（2 列 × 2 行，叠层余烬 4 项）、emblems-mage.png（2 列 × 2 行，法师余烬 4 项）、emblems-footwork.png（单个，黑刀刺客的身法）、emblems-resonance.png（单个，灵唤师的共鸣）、emblems-pouch.png（单个，行商的无底囊）与 emblems-arts.png（单个，战技的精粹），
 透明背景，按 src/embers.rs 中 Ember::ALL 的顺序从左到右、从上到下，
-写出 scene-assets/reward-icons/990000.rgba … 990036.rgba（与原版图标相同的 160×160 RGBA 原始数据）。
+写出 scene-assets/reward-icons/990000.rgba … 990041.rgba（emblems-frostshackle.png：寒霜枷锁 990037；emblems-late.png：帐篷、捕灵壶、魔力辉剑、由心及物，990038–990041）（与原版图标相同的 160×160 RGBA 原始数据）。
 游戏发现全部徽记都在时，奖励卡改用这些徽记；缺任何一张则继续借用原版护符图标。
 """
 from pathlib import Path
@@ -27,12 +27,17 @@ ATLASES = [("emblems.png", 4, 3, ["无声处刑", "鲜血君王的赐福", "永�
            ("emblems-laststand.png", 1, 1, ["红狮子的不退"]),
            ("emblems-martyr.png", 1, 1, ["殉道者的苦修"]),
            ("emblems-mercy.png", 1, 1, ["黄金树的恩泽"]),
-           ("emblems-battlemage.png", 1, 1, ["战斗法师"])]
+           ("emblems-battlemage.png", 1, 1, ["战斗法师"]),
+           # 以下按 Ember::index 指定起点（990036 是已移除的疾行者的轻羽）
+           ("emblems-frostshackle.png", 1, 1, ["寒霜枷锁"], 990037),
+           ("emblems-late.png", 2, 2, ["帐篷", "捕灵壶", "魔力辉剑", "由心及物"], 990038)]
 
 assets = Path(sys.argv[1])
 destination = assets / "reward-icons"
 first = FIRST
-for file, COLUMNS, ROWS, NAMES in ATLASES:
+for file, COLUMNS, ROWS, NAMES, *start in ATLASES:
+    if start:
+        first = start[0]
     source = assets / "ember-art" / file
     with Image.open(source) as atlas:
         atlas = atlas.convert("RGBA")

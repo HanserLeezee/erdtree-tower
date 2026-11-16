@@ -128,3 +128,21 @@ emblems-stride.png prompt (transparent background):
 Production game UI icon on a truly transparent background. Square image with ONE single emblem centered with generous empty transparent padding, no frame, no backdrop. The emblem is a round medallion-like sigil, straight-on flat orthographic, no perspective. Style: premium restrained dark fantasy, Elden Ring inspired, antique gold fine line engraving with a single glowing ember accent color, carved on a small charcoal black weathered metal disc with a thin gold rim; subtle warm inner glow like a smoldering coal, never cartoonish, never glossy plastic. Absolutely NO text, letters, runes, numbers, labels or watermarks.
 Subject: a single long white feather sweeping across the disc with a robed traveler running lightly along its edge, trailing streaks of wind and drifting feather down behind, ember accent pale wind jade green with a thin gold edge.
 Identical style, rim, disc size and lighting to an existing set of ember emblems so it reads as part of the set. Transparent canvas outside the disc.
+
+
+emblems-late.png（帐篷、捕灵壶、魔力辉剑、由心及物 990038–990041）由 gpt-image-2 一次生成（background=transparent，quality high，返回 1254×1254），2 列 × 2 行。
+透明度不超过 8 的像素清成完全透明（接口在圆盘外留了一圈透明度为 1 的红色像素，会让切图时的留白边界算错），其余像素未改动。
+emblems-late.png prompt (transparent background):
+Production game UI icon sprite atlas on a truly transparent background. Square image, EXACT regular grid of 2 columns by 2 rows, FOUR equal square cells, one emblem centered in each cell with generous empty transparent padding, no grid lines, no frames around cells, no backdrop. Every emblem is a round medallion-like sigil of the same size and same visual weight, straight-on flat orthographic, no perspective. Style: premium restrained dark fantasy, Elden Ring inspired, antique gold fine line engraving with a single glowing ember accent color per emblem, carved on a small charcoal black weathered metal disc with a thin gold rim; subtle warm inner glow like a smoldering coal, never cartoonish, never glossy plastic. Absolutely NO text, letters, runes, numbers, labels or watermarks. Layout row-major, left to right, top to bottom:
+1 tent: a small weathered traveller's canvas tent pitched beside a site-of-grace campfire, a sacred tear flask glowing at its entrance, ember accent warm amber-gold.
+2 soul snare pot: a round clay throwing pot with a cord around its neck, its open mouth drawing a struggling ghostly beast spirit inward in a swirling vortex, ember accent spectral teal.
+3 glintblade: a single slender translucent glintstone sword floating point-down above an open hand, trailing a thin line of starlight, ember accent glintstone blue.
+4 mind over matter: a radiant crystal brain-like glintstone mind above a human heart, thin golden veins flowing from the mind down into the heart and filling it, ember accent pale azure turning into crimson.
+All four emblems share identical style, rim, disc size and lighting with an existing set of ember emblems so they read as one set. Transparent canvas outside the discs.
+
+
+emblems-frostshackle.png（寒霜枷锁 990037）由 gpt-image-2 单独生成（background=transparent，quality high，1254×1254），同样清掉透明度不超过 8 的像素。
+emblems-frostshackle.png prompt (transparent background):
+Production game UI icon on a truly transparent background. Square image with ONE single emblem centered with generous empty transparent padding, no frame, no backdrop. The emblem is a round medallion-like sigil, straight-on flat orthographic, no perspective. Style: premium restrained dark fantasy, Elden Ring inspired, antique gold fine line engraving with a single glowing ember accent color, carved on a small charcoal black weathered metal disc with a thin gold rim; subtle inner glow like a smoldering coal, never cartoonish, never glossy plastic. Absolutely NO text, letters, runes, numbers, labels or watermarks.
+Subject: frost shackles: a heavy iron shackle and a short broken chain clamped around a clawed beast's wrist, the iron sheathed in jagged frost crystals, cold mist and small ice shards drifting off it, the claw stiff and slowed, ember accent pale icy blue.
+Identical style, rim, disc size and lighting to an existing set of ember emblems so it reads as part of the set. Transparent canvas outside the disc.
