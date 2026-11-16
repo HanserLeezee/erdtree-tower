@@ -1,8 +1,25 @@
+function Get-TowerNetwork([string]$GameDir) {
+    if ([IO.File]::Exists((Join-Path $GameDir 'OnlineFix64.dll')) -or [IO.File]::Exists((Join-Path $GameDir 'OnlineFix.ini'))) { return 'OnlineFix' }
+    return 'Steam'
+}
+
+function Assert-TowerLaunchNetwork([string]$GameDir, [string]$Network) {
+    if ([IO.File]::Exists((Join-Path $GameDir '.tower-network/pending.json'))) { throw 'Interrupted manual patch operation. Run Restore-A.cmd from the separate patch kit before launching.' }
+    Assert-TowerNetwork $GameDir $Network
+    if ($Network -eq 'OnlineFix') {
+        $bytes = [IO.File]::ReadAllBytes((Join-Path $GameDir 'dlllist.txt'))
+        $canonical = [Text.Encoding]::ASCII.GetBytes('OnlineFix64.dll')
+        if ([Convert]::ToBase64String($bytes) -cne [Convert]::ToBase64String($canonical)) {
+            throw 'B patch list is not ready for this launcher. Run Install-B.cmd from the separate patch kit; the launcher will not change game files.'
+        }
+    }
+}
+
 function Assert-TowerNetwork([string]$GameDir, [string]$Network) {
     if ($Network -notin @('Steam','OnlineFix')) { throw 'Unknown network mode.' }
     if ($Network -eq 'Steam') {
         foreach ($name in @('OnlineFix64.dll','OnlineFix.ini')) {
-            if (Test-Path -LiteralPath (Join-Path $GameDir $name)) { throw 'Official mode cannot use an OnlineFix game directory. Select the separate official Game folder.' }
+            if (Test-Path -LiteralPath (Join-Path $GameDir $name)) { throw 'Selected profile does not match the manually installed patch. Restart the launcher.' }
         }
         return
     }
@@ -13,7 +30,7 @@ function Assert-TowerNetwork([string]$GameDir, [string]$Network) {
     }
     foreach ($name in $hashes.Keys) {
         $file = Join-Path $GameDir $name
-        if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing $name. Select a separate Game directory with the supplied OnlineFix 2.0.3 patch installed." }
+        if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing $name. Install or restore the separate B patch manually." }
         if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ine $hashes[$name]) { throw "Unsupported OnlineFix component: $name. This profile supports the supplied 2.0.3 patch only." }
     }
     $ini = [IO.File]::ReadAllText((Join-Path $GameDir 'OnlineFix.ini'))
@@ -21,7 +38,7 @@ function Assert-TowerNetwork([string]$GameDir, [string]$Network) {
         $entries = [regex]::Matches($ini, '(?mi)^\s*' + $setting[0] + '\s*=\s*([^\r\n;#]+)')
         if ($entries.Count -ne 1 -or $entries[0].Groups[1].Value.Trim() -ne $setting[1]) { throw "Unexpected OnlineFix $($setting[0])." }
     }
-    if (Test-Path -LiteralPath (Join-Path $GameDir 'steam_api64_o.dll')) { throw 'Mixed Steam API proxies detected. Use a separate OnlineFix Game directory without steam_api64_o.dll.' }
+    if (Test-Path -LiteralPath (Join-Path $GameDir 'steam_api64_o.dll')) { throw 'Mixed Steam API proxies detected. Use the separate patch kit to install or restore the original files.' }
     $null = Get-TowerOnlineFixDllList $GameDir
 }
 
@@ -34,32 +51,4 @@ function Get-TowerOnlineFixDllList([string]$GameDir) {
         throw 'Unsupported dlllist.txt. Expected OnlineFix64.dll and optional SeamlessCoop\ersc.dll only.'
     }
     return $entries
-}
-
-function Set-TowerOnlineFixDllList([string]$GameDir) {
-    if (Get-Process eldenring,ersc_launcher -ErrorAction SilentlyContinue) { throw 'Exit the game before preparing the OnlineFix loader.' }
-    Assert-TowerNetwork $GameDir 'OnlineFix'
-    $entries = @(Get-TowerOnlineFixDllList $GameDir)
-    if ($entries.Count -eq 1) { return }
-    $file = Join-Path $GameDir 'dlllist.txt'
-    $backup = $file + '.before-tower.bak'
-    $bytes = [IO.File]::ReadAllBytes($file)
-    if (Test-Path -LiteralPath $backup) {
-        if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($backup)) -cne [Convert]::ToBase64String($bytes)) { throw 'Existing dlllist backup differs; no changes made.' }
-    } else {
-        $stream = [IO.File]::Open($backup, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
-        try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
-    }
-    $temporary = $file + '.tower.tmp'
-    $stream = [IO.File]::Open($temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
-    try {
-        $value = [Text.Encoding]::ASCII.GetBytes("OnlineFix64.dll`r`n")
-        $stream.Write($value, 0, $value.Length)
-    } finally { $stream.Dispose() }
-    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($file)) -cne [Convert]::ToBase64String($bytes)) {
-        [IO.File]::Delete($temporary)
-        throw 'dlllist.txt changed during preparation; no changes applied.'
-    }
-    [IO.File]::Replace($temporary, $file, [NullString]::Value)
-    Write-Host 'OnlineFix proxy enabled; Seamless is loaded once by the tower loader. Original dlllist.txt backed up.'
 }

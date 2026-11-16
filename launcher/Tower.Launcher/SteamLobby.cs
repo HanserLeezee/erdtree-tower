@@ -17,7 +17,7 @@ namespace Tower.Launcher
     sealed class SteamLobby : IDisposable
     {
         public const string AppId = "1245620";
-        const string Tag = "erdtree-tower";
+        const string Tag = "erdtree-tower-g1";
         const int MaxRooms = 500;
         /// <summary>LobbyMatchList_t：k_iSteamMatchmakingCallbacks + 10</summary>
         const int LobbyMatchList = 510;

@@ -21,11 +21,13 @@ import urllib.error
 import urllib.request
 import zipfile
 import re
+import os
 import xml.etree.ElementTree as ET
 from native_build import build_native
 from release_pack import build as build_release
 from resource_filter import include_scene_asset
 from bundle_seamless import stage_component
+from session_gate_build import build_gate, manifest as gate_manifest
 
 LATEST_MANIFEST = 'https://github.com/tamikip/erdtree-tower/releases/latest/download/tower-release.json'
 parser = argparse.ArgumentParser(description='Build the release folder, ZIP and launcher update pack')
@@ -36,6 +38,8 @@ parser.add_argument('--display-version', required=True, help='package version sh
 parser.add_argument('--build-number', type=int, help='explicit monotonically increasing release build')
 parser.add_argument('--upload', action='store_true', help='upload the mirror folder with ossutil afterwards (see upload_mirror.py)')
 parser.add_argument('--local-test', action='store_true', help='build a private test ZIP from local changes; never upload')
+parser.add_argument('--signing-thumbprint', help='trusted code-signing certificate in the Windows personal store; absent means unsigned')
+parser.add_argument('--signing-store', choices=['CurrentUser', 'LocalMachine'], default='CurrentUser')
 parser.add_argument('--slim-game', type=Path, help='build a slim package using this verified local Game directory; first launch reconstructs large assets')
 args = parser.parse_args()
 if args.local_test and args.upload:
@@ -48,6 +52,7 @@ if args.upload:
     upload_mirror.target_from_url(upload_mirror.mirror_url())
 
 project = Path(__file__).resolve().parents[1]
+os.environ['TOWER_PRODUCT_VERSION'] = args.display_version
 from verify_release_sources import require_committed
 if not args.local_test:
     require_committed(project)
@@ -106,10 +111,12 @@ for name in ['scene-assets', 'licenses']:
 copy_tree(source / 'loader/bin', 'loader/bin')
 copy_tree(project / 'loader/yafsml', 'loader/yafsml')
 stage_component(project / 'SeamlessCoop', stage / 'SeamlessCoop', project / 'SeamlessCoop/default.ini')
+copy_file(build_gate(project), 'SeamlessCoop/Tower.SeamlessGate.dll')
+copy_file(project / 'native/vendor/hudhook/vendor/minhook/LICENSE.txt', 'licenses/SessionGate-MinHook.txt')
 copy_file(project / 'SeamlessCoop/README.md', 'SeamlessCoop/README.md')
 for name in ['LICENSE-MIT', 'LICENSE-APACHE']:
     copy_file(source / 'loader' / name, 'loader/' + name)
-for name in ['Start-Tower.ps1', 'Launch-Logged.ps1', 'Tower-Loader.ps1', 'Tower-Network.ps1']:
+for name in ['Start-Tower.ps1', 'Launch-Logged.ps1', 'Tower-Loader.ps1', 'Tower-Network.ps1', 'Tower-SessionGate.ps1', 'Check-TowerNetwork.ps1']:
     copy_file(Path(__file__).parent / name, name)
 copy_file(Path(__file__).parent / '安装教程.md', 'docs/安装教程.md')
 for name in ['ErdtreeTowerLauncher.exe', 'ErdtreeTowerLauncher.exe.config']:
@@ -136,16 +143,23 @@ if args.local_test:
     head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=project).decode().strip()
     patch = subprocess.check_output(['git', 'diff', '--binary', 'HEAD'], cwd=project)
     untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '-z'], cwd=project).decode('utf-8').split('\0')
-    extras = {name: hashlib.sha256((project / name).read_bytes()).hexdigest() for name in untracked if name and (project / name).is_file()}
+    extras = {name: hashlib.sha256((project / name).read_bytes()).hexdigest() for name in untracked
+              if name and not name.startswith(('work/', '.playwright-cli/')) and (project / name).is_file()}
     (stage / 'BUILD-INFO.json').write_text(json.dumps({'localTest': True, 'gitHead': head, 'includesLocalChanges': bool(patch or extras), 'patchSha256': hashlib.sha256(patch).hexdigest(), 'additionalSourceHashes': extras}, ensure_ascii=False, indent=2), encoding='utf-8')
     if args.notes:
         (stage / 'docs/好友测试说明.txt').write_text(args.notes.read_text(encoding='utf-8'), encoding='utf-8-sig')
 if args.slim_game:
     from slim_assets import prepare
     prepare(project, stage, args.slim_game)
+if args.signing_thumbprint:
+    subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-File', str(project / 'distribution/Sign-Tower.ps1'),
+                    '-PackageRoot', str(stage), '-CertificateThumbprint', args.signing_thumbprint, '-Store', args.signing_store], check=True)
+gate_manifest(stage / 'SeamlessCoop')
 files = sorted(p for p in stage.rglob('*') if p.is_file())
 for file in files:
     name = file.relative_to(stage).as_posix()
+    if name.startswith('network-patches/') or file.name in ['OnlineFix64.dll', 'OnlineFix.ini', 'Switch-TowerNetwork.ps1', 'Network-Manual.ps1', 'Network-Files.ps1', 'Install-B.cmd', 'Restore-A.cmd']:
+        raise RuntimeError(f'External patch must not be shipped in the main package: {name}')
     if (file.suffix in ['.log', '.sl2', '.co2', '.ertowercoop', '.ertowerparty', '.party-award', '.appearance'] or
             file.suffix.lower() in ['.pdb', '.bak'] or
             file.name in ['host.json', 'guest.json', 'GamePath.txt', 'GamePath.OnlineFix.txt', 'tower-options.ini', 'tower-debug.enable', 'ersc_settings.ini'] or

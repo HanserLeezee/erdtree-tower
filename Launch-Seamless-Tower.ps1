@@ -1,16 +1,12 @@
-﻿param([string]$GameDir = 'F:\SteamLibrary\steamapps\common\ELDEN RING\Game', [switch]$CheckOnly, [string]$PartyConfig, [ValidateSet('ME3','YAFSML')][string]$Loader='ME3', [ValidateSet('Steam','OnlineFix')][string]$Network='Steam')
+﻿param([string]$GameDir = 'F:\SteamLibrary\steamapps\common\ELDEN RING\Game', [switch]$CheckOnly, [string]$PartyConfig, [ValidateSet('ME3','YAFSML')][string]$Loader='ME3', [ValidateSet('Auto','Steam','OnlineFix')][string]$Network='Auto')
 $ErrorActionPreference = 'Stop'
 $loaderSupport=Join-Path $PSScriptRoot 'Tower-Loader.ps1'
 if(!(Test-Path -LiteralPath $loaderSupport)){$loaderSupport=Join-Path $PSScriptRoot 'distribution/Tower-Loader.ps1'}
 . $loaderSupport
 $networkSupport = Join-Path (Split-Path $loaderSupport) 'Tower-Network.ps1'
 . $networkSupport
-Assert-TowerNetwork $GameDir $Network
-$otherPath = Join-Path $PSScriptRoot $(if ($Network -eq 'OnlineFix') {'GamePath.txt'} else {'GamePath.OnlineFix.txt'})
-if (Test-Path -LiteralPath $otherPath) {
-    $other = [IO.File]::ReadAllText($otherPath).Trim().Trim('"')
-    if ($other -and [IO.Path]::GetFullPath($other).TrimEnd('\') -ieq [IO.Path]::GetFullPath($GameDir).TrimEnd('\')) { throw 'Network modes must use separate game directories.' }
-}
+if ($Network -eq 'Auto') { $Network = Get-TowerNetwork $GameDir }
+Assert-TowerLaunchNetwork $GameDir $Network
 function Assert-TowerLobbyPassword([string]$RoomText, [string]$Settings) {
     $room = $RoomText | ConvertFrom-Json
     $entries = [regex]::Matches($Settings, '(?mi)^[ \t]*cooppassword[ \t]*=[ \t]*([^\r\n;#]*)')
@@ -116,6 +112,9 @@ function Get-TowerPluginSections([string]$PackageRoot) {
 # End extra plugins
 $base = & (Join-Path $PSScriptRoot 'Launch-Preview.ps1') -GameDir $GameDir -Loader $Loader -CheckOnly
 $root = $base.PackageDirectory
+$gateSupport=Join-Path (Split-Path $loaderSupport) 'Tower-SessionGate.ps1'
+. $gateSupport
+Assert-TowerSessionGate $root $Loader
 if ($PartyConfig) {
     $PartyConfig = (Resolve-Path -LiteralPath $PartyConfig -ErrorAction Stop).Path
     if ((Get-Item -LiteralPath $PartyConfig).Length -gt 8192) {throw 'Party configuration is too large.'}
@@ -265,16 +264,19 @@ foreach ($section in @(Get-TowerPluginSections $root)) {
 $config = [regex]::Replace($config,"(?m)^(\s*path\s*=\s*)['""][^'""\r\n]*[\\/]erdtree_tower_\w+\.dll['""]",('${1}'''+$native.Replace('\','/').Replace('$','$$')+''''))
 $config = [regex]::Replace($config,"(?m)^(\s*path\s*=\s*)['""][^'""\r\n]*[\\/]scene-assets['""]",('${1}'''+$assets.Replace('\','/').Replace('$','$$')+''''))
 $config=Add-TowerLanguagePackage $config $root $GameDir
+$config=Add-TowerSessionGate $config
 [IO.File]::WriteAllText($configPath,$config,(New-Object Text.UTF8Encoding($false)))
 $private = Join-Path $runtime 'SeamlessCoop'
 New-Item -ItemType Directory -Path $private -Force | Out-Null
 Copy-Item -LiteralPath $ersc -Destination (Join-Path $private 'ersc.dll') -Force
+Copy-Item -LiteralPath (Join-Path $root 'SeamlessCoop/Tower.SeamlessGate.dll') -Destination $private -Force
 foreach ($directory in @('crashpad','locale')) {
     $source = Join-Path (Split-Path $ersc) $directory
     if (Test-Path -LiteralPath $source -PathType Container) {Copy-Item -LiteralPath $source -Destination $private -Recurse -Force}
 }
 [IO.File]::WriteAllText((Join-Path $private 'ersc_settings.ini'),$modified,[Text.UTF8Encoding]::new($false))
 $environment = @{
+    PATH=($private+';'+$env:PATH)
     ERDTREE_TOWER_PARTY=$PartyConfig
     ERDTREE_TOWER_SEAMLESS_ENTRY='1'; ERDTREE_TOWER_PREVIEW='1'; ERDTREE_TOWER_SEAMLESS_PROBE='0'
     ERDTREE_TOWER_LOG_DIR=$runtime
@@ -293,7 +295,6 @@ try {
         else { [Environment]::SetEnvironmentVariable($key,$environment[$key]) }
     }
     Write-Host "${Loader}: Seamless + tower. Separate save: $saveExtension."
-    if ($Network -eq 'OnlineFix') { Set-TowerOnlineFixDllList $GameDir }
     Invoke-TowerLoader $root $Loader (Join-Path $GameDir 'eldenring.exe') $configPath
 } finally {
     if ($roomGuard) { $roomGuard.Dispose() }

@@ -16,6 +16,7 @@
     <Compile Include="../../distribution/AssetRestore/AssetPatch.cs" Link="AssetPatch.cs" />
     <Compile Include="../../distribution/AssetRestore/IconCodec.cs" Link="IconCodec.cs" />
     <Compile Include="../Tower.Launcher/LaunchResult.cs" Link="LaunchResult.cs" />
+    <Compile Include="../Tower.Launcher/LoggedLaunch.cs" Link="LoggedLaunch.cs" />
     <Compile Include="../Tower.Launcher/LaunchProgress.cs" Link="LaunchProgress.cs" />
     <Compile Include="../Tower.Launcher/ReleaseHistory.cs" Link="ReleaseHistory.cs" />
     <Compile Include="../Tower.Launcher/ModLogs.cs" Link="ModLogs.cs" />
@@ -25,6 +26,7 @@
     <Compile Include="../Tower.Launcher/NetworkProfile.cs" Link="NetworkProfile.cs" />
     <Compile Include="../Tower.Launcher/LobbyWire.cs" Link="LobbyWire.cs" />
     <Compile Include="../Tower.Launcher/HostSettings.cs" Link="HostSettings.cs" />
+    <Compile Include="../Tower.Launcher/AuthorUnlock.cs" Link="AuthorUnlock.cs" />
     <Compile Include="../Tower.Launcher/LauncherWindowSize.cs" Link="LauncherWindowSize.cs" />
     <Compile Include="../Tower.Launcher/LauncherData.cs" Link="LauncherData.cs" />
   </ItemGroup>

@@ -13,6 +13,7 @@ namespace Tower.Launcher
 
         public string Mode { get => Seamless; set { } }
         public string Network { get; set; } = NetworkProfile.Steam;
+        public bool NetworkUnlocked { get; set; }
         public string Loader { get; set; } = Me3;
         /// <summary>优先走哪条下载线路（另一条兜底）</summary>
         public string Route { get; set; } = MirrorFirst;

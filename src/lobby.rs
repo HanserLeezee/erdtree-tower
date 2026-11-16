@@ -11,7 +11,7 @@ pub const FILE:&str="tower-lobby.json";
 pub const STATUS_FILE:&str="tower-lobby-status.txt";
 /// 大厅筛选标记：只列出爬塔的房间
 pub const TAG_KEY:&str="tower";
-pub const TAG:&str="erdtree-tower";
+pub const TAG:&str="erdtree-tower-g1";
 pub const MAX_PLAYERS:u8=6;
 
 #[derive(Debug,Clone,PartialEq,Eq,Deserialize)]
@@ -85,7 +85,7 @@ mod tests {
     fn host_room_files_are_validated_and_become_lobby_data() {
         let public=HostRoom::parse(r#"{"name":"一起爬塔","max":4,"password":"Ab12Cd34Ef56","version":"v104"}"#).unwrap();
         let data=public.data("褪色者",9,"第 2 幕",true,true);assert!(data.contains(&("started","1".into())));assert!(data.contains(&("open","1".into())));
-        assert!(data.contains(&("tower","erdtree-tower".into())));
+        assert!(data.contains(&("tower","erdtree-tower-g1".into())));
         assert!(data.contains(&("players","4".into())),"clamped to the room size");
         assert!(data.contains(&("pwd","Ab12Cd34Ef56".into())));assert!(data.contains(&("lock","0".into())));
         let private=HostRoom::parse("\u{feff}{\"name\":\"私密\",\"max\":2,\"locked\":true,\"salt\":\"0123456789abcdef\",\"version\":\"v104\"}").unwrap();

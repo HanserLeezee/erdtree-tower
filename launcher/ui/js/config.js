@@ -222,8 +222,8 @@ window.HOYO_CONFIG = {
           {
             title: '启动',
             rows: [
-              { type: 'select', key: 'network', label: '联机模式', hint: '分别记住游戏目录；退出游戏后可切换，两种模式的大厅不互通。学习版请选择已安装补丁的目录。', value: '正版无缝', options: ['正版无缝', '学习版无缝（Spacewar）'] },
-              { type: 'select', key: 'loader', label: '加载器', hint: '下次启动生效；两种加载器共用原有存档与联机设置', value: 'ME3', options: ['ME3', 'YAFSML'] },
+              { type: 'static', key: 'network', label: '联机环境', hint: '按游戏目录自动识别。外部补丁需单独手动安装或还原，启动器不替换游戏文件。', value: 'Steam' },
+              { type: 'select', key: 'loader', label: '加载器', hint: '专属联机由 ME3 加载，沿用现有存档与联机设置', value: 'ME3', options: ['ME3'] },
               { type: 'static', label: '游戏目录', key: 'gameDir', value: '（未设置）' },
               { type: 'buttons', label: '目录', items: [{ text: '选择游戏目录…', action: 'chooseGameDir' }] },
             ],

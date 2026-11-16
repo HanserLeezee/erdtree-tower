@@ -6,6 +6,24 @@ namespace Tower.Update.Tests;
 public sealed class NetworkProfileTests
 {
     [Fact]
+    public void DetectsManuallyInstalledPatchWithoutWritingGameFiles()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "tower-detect-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try {
+            Assert.Equal(NetworkProfile.Steam, NetworkProfile.Detect(folder));
+            File.WriteAllText(Path.Combine(folder, "OnlineFix64.dll"), "fixture");
+            Assert.Equal(NetworkProfile.OnlineFix, NetworkProfile.Detect(folder));
+            Assert.Single(Directory.GetFiles(folder));
+            File.Delete(Path.Combine(folder, "OnlineFix64.dll"));
+            File.WriteAllText(Path.Combine(folder, "OnlineFix.ini"), "fixture");
+            Assert.Equal(NetworkProfile.OnlineFix, NetworkProfile.Detect(folder));
+            Assert.Equal("fixture", File.ReadAllText(Path.Combine(folder, "OnlineFix.ini")));
+            Assert.Empty(Directory.GetDirectories(folder));
+        } finally { Directory.Delete(folder, true); }
+    }
+
+    [Fact]
     public void LobbyWorkerWirePreservesRoomIdentityAndAdmissionData()
     {
         var room = new LobbyRoom { Id = ulong.MaxValue, Name = "测试房间", Password = "secret", PasswordFingerprint = "hash", Code = "T1234567890ABCDEF", Players = 2, Max = 6, Open = true, Locked = true, Version = "test" };
@@ -37,10 +55,10 @@ public sealed class NetworkProfileTests
     }
 
     [Fact]
-    public void ProfilesDoNotSharePathFilesOrLobbyApplications()
+    public void ProfilesShareGamePathButKeepLobbyAndRuntimeSeparate()
     {
         Assert.Equal("GamePath.txt", NetworkProfile.PathFile("Steam"));
-        Assert.Equal("GamePath.OnlineFix.txt", NetworkProfile.PathFile("OnlineFix"));
+        Assert.Equal("GamePath.txt", NetworkProfile.PathFile("OnlineFix"));
         Assert.Equal("1245620", NetworkProfile.AppId("Steam"));
         Assert.Equal("480", NetworkProfile.AppId("OnlineFix"));
         Assert.Equal("1245620", NetworkProfile.AppId("invalid"));
@@ -49,11 +67,10 @@ public sealed class NetworkProfileTests
     }
 
     [Fact]
-    public void DirectoryCannotBeSharedAcrossModes()
+    public void LabelsIdentifyAAndBWithoutChangingStoredProfileIds()
     {
-        var path = Path.Combine(Path.GetTempPath(), "tower-network-test");
-        Assert.Throws<InvalidOperationException>(() => NetworkProfile.AssertDifferent(path, path + Path.DirectorySeparatorChar));
-        NetworkProfile.AssertDifferent(path, path + "-other");
-        NetworkProfile.AssertDifferent(path, null);
+        Assert.Equal("Steam", NetworkProfile.Label("Steam"));
+        Assert.Equal("Spacewar（外部补丁）", NetworkProfile.Label("OnlineFix"));
+        Assert.Equal("Steam", NetworkProfile.Normalize("invalid"));
     }
 }

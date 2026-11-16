@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <TowerProductVersion Condition="'$(TowerProductVersion)' == '' and '$(TOWER_PRODUCT_VERSION)' != ''">$(TOWER_PRODUCT_VERSION)</TowerProductVersion>
+    <TowerProductVersion Condition="'$(TowerProductVersion)' == ''">2.1.2</TowerProductVersion>
+    <Company>TamikiP</Company>
+    <Authors>TamikiP</Authors>
+    <Copyright>Copyright © 2026 TamikiP. GPL-3.0-or-later.</Copyright>
+    <RepositoryUrl>https://github.com/tamikip/erdtree-tower</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/tamikip/erdtree-tower</PackageProjectUrl>
+    <Product>黄金树爬塔 / Erdtree Tower</Product>
+    <Version>$(TowerProductVersion)</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+</Project>

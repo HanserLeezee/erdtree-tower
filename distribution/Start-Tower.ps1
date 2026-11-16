@@ -1,7 +1,7 @@
 param(
     [ValidateSet('Solo', 'Seamless')][string]$Mode = 'Seamless',
     [ValidateSet('ME3', 'YAFSML')][string]$Loader = 'ME3',
-    [ValidateSet('Steam', 'OnlineFix')][string]$Network = 'Steam',
+    [ValidateSet('Auto', 'Steam', 'OnlineFix')][string]$Network = 'Auto',
     [string]$GameDir,
     [switch]$CheckOnly,
     [string]$PartyConfig,
@@ -13,7 +13,12 @@ trap {
     if ($ErrorFile) { [IO.File]::WriteAllText($ErrorFile, $_.Exception.Message, (New-Object Text.UTF8Encoding($false))) }
     exit 1
 }
-$pathFile = Join-Path $PSScriptRoot $(if ($Network -eq 'OnlineFix') {'GamePath.OnlineFix.txt'} else {'GamePath.txt'})
+foreach ($module in @('Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility')) {
+    Import-Module ([IO.Path]::Combine($PSHOME,'Modules',$module,($module + '.psd1'))) -ErrorAction Stop
+}
+$ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$pathFile = Join-Path $PSScriptRoot 'GamePath.txt'
 if (-not $GameDir -and (Test-Path -LiteralPath $pathFile)) {
     $GameDir = [IO.File]::ReadAllText($pathFile).Trim()
 }
@@ -26,6 +31,10 @@ if (-not (Test-Path -LiteralPath (Join-Path $GameDir 'eldenring.exe') -PathType 
     throw 'Invalid GameDir: select the Game folder containing eldenring.exe.'
 }
 $GameDir = (Resolve-Path -LiteralPath $GameDir).Path
+if ($Network -eq 'Auto') {
+    . (Join-Path $PSScriptRoot 'Tower-Network.ps1')
+    $Network = Get-TowerNetwork $GameDir
+}
 $launcher = 'Launch-Seamless-Tower.ps1'
 $entry = Join-Path $PSScriptRoot $launcher
 $options = @{GameDir=$GameDir;Loader=$Loader;Network=$Network}

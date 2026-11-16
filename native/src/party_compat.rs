@@ -9,6 +9,8 @@ fn read(path:&Path)->Result<Vec<u8>,String> {
 }
 fn collect(build:&str,version:&str,module:&Path,assets:&Path)->Result<Compatibility,String> {
     let mut seamless_hash=0xcbf29ce484222325;append(&mut seamless_hash,&read(module)?);
+    append(&mut seamless_hash,b"tower-session-gate-v1");
+    append(&mut seamless_hash,&read(&module.with_file_name("Tower.SeamlessGate.dll"))?);
     let config=read(&module.with_file_name("ersc_settings.ini"))?;
     let config=std::str::from_utf8(&config).map_err(|_|"无缝配置不是有效 UTF-8，请修复配置后重启游戏")?;
     let rules=parse_rules(config)?;
@@ -39,16 +41,20 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let config="allow_invaders=0\ndeath_debuffs=0\nallow_summons=1\nalways_spectate_on_death=1\nenemy_health_scaling=100\nenemy_damage_scaling=20\nenemy_posture_scaling=30\nboss_health_scaling=100\nboss_damage_scaling=20\nboss_posture_scaling=80\n";
         let module=root.join("ersc.dll");std::fs::write(&module,b"fixture DLL, never executed").unwrap();
+        std::fs::write(root.join("Tower.SeamlessGate.dll"),b"gate fixture").unwrap();
         for name in ASSETS {std::fs::write(root.join(name),name).unwrap();}
         std::fs::write(root.join("ersc_settings.ini"),format!("{config}cooppassword=first-secret\n")).unwrap();
         let before=collect("0123456789abcdef","2.0.3",&module,&root).unwrap();
         std::fs::write(root.join("ersc_settings.ini"),format!("{config}cooppassword=second-secret\nmod_language_override=english\n")).unwrap();
         assert_eq!(before,collect("0123456789abcdef","2.0.3",&module,&root).unwrap());
+        std::fs::write(root.join("Tower.SeamlessGate.dll"),b"different gate").unwrap();
+        assert_ne!(before.seamless_hash,collect("0123456789abcdef","2.0.3",&module,&root).unwrap().seamless_hash);
+        std::fs::write(root.join("Tower.SeamlessGate.dll"),b"gate fixture").unwrap();
         std::fs::write(root.join("regulation.bin"),b"modified").unwrap();
         assert!(before.check(&collect("0123456789abcdef","2.0.3",&module,&root).unwrap()).unwrap_err().contains("关键资源"));
         std::fs::remove_file(root.join("regulation.bin")).unwrap();
         assert!(collect("0123456789abcdef","2.0.3",&module,&root).unwrap_err().contains("regulation.bin"));
-        for name in ASSETS.into_iter().filter(|&n|n!="regulation.bin").chain(["ersc.dll","ersc_settings.ini"]) {std::fs::remove_file(root.join(name)).unwrap();}
+        for name in ASSETS.into_iter().filter(|&n|n!="regulation.bin").chain(["ersc.dll","ersc_settings.ini","Tower.SeamlessGate.dll"]) {std::fs::remove_file(root.join(name)).unwrap();}
         std::fs::remove_dir(root).unwrap();
     }
 }

@@ -55,6 +55,8 @@ namespace Tower.Launcher
             this.paths = paths;
             this.form = form;
             settings = HostSettings.Load(paths.SettingsFile);
+            settings.Network = NetworkProfile.Detect(GameDir());
+            if (settings.Loader != HostSettings.Me3) { settings.Loader = HostSettings.Me3; settings.Save(paths.SettingsFile); }
             // 跳转由 HttpReleaseSource 自己跟，保证每一跳都带 Range
             http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(5) };
             http.DefaultRequestHeaders.UserAgent.ParseAdd($"ErdtreeTowerLauncher/{typeof(TowerHost).Assembly.GetName().Version}");
@@ -181,15 +183,10 @@ namespace Tower.Launcher
             switch (key)
             {
                 case "network":
-                    if (launching || GameRunning() || lobbyConnecting) { Toast("请先退出游戏并等待当前启动或加入操作结束，再切换联机模式", "warn"); PushStatus(); return; }
-                    CloseLobby(); rooms.Clear();
-                    settings.Network = value.ValueKind == JsonValueKind.String && value.GetString() == NetworkProfile.OnlineFixLabel ? NetworkProfile.OnlineFix : NetworkProfile.Steam;
-                    settings.Save(paths.SettingsFile);
-                    form.Post("lobby", "rooms", new { rooms = Array.Empty<object>(), mine = (object?)null });
                     PushStatus();
                     return;
                 case "loader":
-                    settings.Loader = value.ValueKind == JsonValueKind.String && value.GetString() == HostSettings.Yafsml ? HostSettings.Yafsml : HostSettings.Me3;
+                    settings.Loader = HostSettings.Me3;
                     settings.Save(paths.SettingsFile);
                     PushStatus();
                     return;
@@ -440,7 +437,7 @@ namespace Tower.Launcher
                 ["autoCheck"] = settings.AutoCheck,
                 ["closeExit"] = settings.CloseExit,
                 ["windowSize"] = settings.WindowSize,
-                ["gameDir"] = GameDir() ?? (settings.Network == NetworkProfile.OnlineFix ? "（请选择已安装学习版联机补丁的 Game 目录）" : "（未设置：开始游戏时自动查找，找不到再询问）"),
+                ["gameDir"] = GameDir() ?? "（未设置：请选择共用的 Game 目录）",
                 ["version"] = PackageVersion(state),
                 ["launcherVersion"] = LauncherVersionLabel(state),
                 ["updateStatus"] = updateStatus,
@@ -744,6 +741,7 @@ namespace Tower.Launcher
             var generation = lobbyGeneration;
             try
             {
+                if (steam == null) ValidateNetwork(gameDir);
                 steam ??= new LobbyClient(gameDir, settings.Network);
                 rooms = await steam.ListAsync(query);
                 if (generation != lobbyGeneration) return;
@@ -858,6 +856,7 @@ namespace Tower.Launcher
             try {
             var gameDir = GameDir() ?? FindGameDir();
             if (gameDir == null) throw new InvalidOperationException("请先在设置里选择游戏目录");
+            if (steam == null) ValidateNetwork(gameDir);
             steam ??= new LobbyClient(gameDir, settings.Network);
             LobbyRoom? room;
             if (quick) {
@@ -943,13 +942,12 @@ namespace Tower.Launcher
             try
             {
             var script = Path.Combine(paths.InstallDir, "Start-Tower.ps1");
-            var wrapper = Path.Combine(paths.InstallDir, "Launch-Logged.ps1");
-            if (!File.Exists(wrapper)) { Toast("缺少 Launch-Logged.ps1，请完整更新启动器文件", "error", 0); return; }
             if (!File.Exists(script)) { Toast("缺少 Start-Tower.ps1：请在设置 → 更新里「校验并修复文件」", "error", 6000); return; }
             var gameDir = GameDir() ?? FindGameDir() ?? ChooseGameDir(true);
             if (gameDir == null) return;
                 if (prepare != null && !prepare()) return;
                 CloseLobby();
+                ValidateNetwork(gameDir);
                 if (!lobbyHost && File.Exists(LobbyFile)) File.Delete(LobbyFile);
                 var options = TowerOptions.Read(OptionsFile);
                 options.TryGetValue("dlc", out var dlcMode);
@@ -970,13 +968,13 @@ namespace Tower.Launcher
                 var mode = settings.Mode;
                 var logs = Path.Combine(paths.LaunchLogs, DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
                 Directory.CreateDirectory(logs);
-                var arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File {Quote(wrapper)} -Entry {Quote(script)} -Mode {mode} -Network {settings.Network} -Loader {settings.Loader} -GameDir {Quote(gameDir)} -ErrorFile {Quote(errorFile)} -LogDirectory {Quote(logs)}";
+                var arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File {Quote(script)} -Mode {mode} -Network {settings.Network} -Loader {settings.Loader} -GameDir {Quote(gameDir)} -ErrorFile {Quote(errorFile)}";
                 Log.Write("开始游戏：" + arguments);
                 var output = new LaunchLogReader(Path.Combine(logs, "stdout.log"));
                 var nativeLog = new LaunchLogReader(Path.Combine(paths.InstallDir,
                     mode == HostSettings.Seamless ? "seamless-entry/" + NetworkProfile.Runtime(settings.Network) + "/tower-preview.log" : "tower-preview.log"), true);
                 var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
-                using var process = Process.Start(new ProcessStartInfo(powershell, arguments) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = paths.InstallDir })!;
+                var process = LoggedLaunch.Start(powershell, arguments, paths.InstallDir, logs);
                 launchWorker = (process.Id, process.StartTime.ToUniversalTime());
                 Toast("正在启动黄金树爬塔…", "info", 6000);
                 var localAssets = UsesLocalAssets();
@@ -1024,6 +1022,7 @@ namespace Tower.Launcher
                 }
                 if (process.HasExited && process.ExitCode != 0)
                 {
+                    await process.Completion;
                     var reason = LaunchResult.Summary(errorFile, logs, process.ExitCode);
                     Log.Write($"启动脚本退出码 {process.ExitCode}：{reason}");
                     launchProgress.End("failed", "启动失败", reason); PushLaunchProgress();
@@ -1060,6 +1059,23 @@ namespace Tower.Launcher
 
         static bool HasGame(string dir) => File.Exists(Path.Combine(dir, "eldenring.exe"));
 
+        void ValidateNetwork(string gameDir)
+        {
+            var network = NetworkProfile.Detect(gameDir);
+            var script = Path.Combine(paths.InstallDir, "Check-TowerNetwork.ps1");
+            if (!File.Exists(script)) throw new InvalidOperationException("缺少联机环境检查脚本，请更新完整启动器");
+            var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
+            using var process = Process.Start(new ProcessStartInfo(powershell,
+                $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File {Quote(script)} -GameDir {Quote(gameDir)} -Network {network}") {
+                UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true,
+                StandardErrorEncoding = Encoding.UTF8, WorkingDirectory = paths.InstallDir,
+            }) ?? throw new InvalidOperationException("无法检查联机环境");
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            if (process.ExitCode != 0) throw new InvalidOperationException("联机环境检查失败：" + error.Trim());
+            settings.Network = network;
+        }
+
         /// <summary>GamePath.txt 里记住的 Game 目录（和 Start-Tower.ps1 共用），失效了返回 null</summary>
         string GamePathFile => Path.Combine(paths.InstallDir, NetworkProfile.PathFile(settings.Network));
         string? GameDir()
@@ -1076,9 +1092,8 @@ namespace Tower.Launcher
 
         void SaveGameDir(string dir)
         {
-            var other = Path.Combine(paths.InstallDir, NetworkProfile.PathFile(settings.Network == NetworkProfile.OnlineFix ? NetworkProfile.Steam : NetworkProfile.OnlineFix));
-            NetworkProfile.AssertDifferent(dir, File.Exists(other) ? File.ReadAllText(other) : null);
             CloseLobby(); rooms.Clear();
+            ValidateNetwork(dir);
             File.WriteAllText(GamePathFile, dir, new UTF8Encoding(true));
             PushValues(InstallState.Load(paths.InstallDir));
         }
@@ -1086,7 +1101,6 @@ namespace Tower.Launcher
         /// <summary>在 Steam 的各个库目录里找艾尔登法环，找到就记下来</summary>
         string? FindGameDir()
         {
-            if (settings.Network == NetworkProfile.OnlineFix) return null;
             if (!(Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) is string steam) || steam.Length == 0) return null;
             var libraries = new List<string> { steam };
             try

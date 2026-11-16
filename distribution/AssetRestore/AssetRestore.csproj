@@ -3,6 +3,8 @@
     <OutputType>Exe</OutputType><TargetFramework>net48</TargetFramework>
     <PlatformTarget>x64</PlatformTarget><LangVersion>latest</LangVersion>
     <AssemblyName>Tower.AssetRestore</AssemblyName>
+    <Description>Erdtree Tower local resource verification and restoration.</Description>
+    <AssemblyTitle>黄金树爬塔资源恢复工具</AssemblyTitle>
   </PropertyGroup>
   <ItemGroup><Reference Include="System.Runtime.Serialization" /></ItemGroup>
 </Project>

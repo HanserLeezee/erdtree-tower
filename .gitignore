@@ -29,7 +29,12 @@ tower-options.ini
 /plugins/
 preview.launch.me3
 /SeamlessCoop/ersc.dll
+/SeamlessCoop/Tower.SeamlessGate.dll
+/SeamlessCoop/gate-manifest.json
 /SeamlessCoop/locale/
 /SeamlessCoop/crashpad/
 /config/
+*.pfx
+*.p12
 /seamless-entry/
+/network-patches/

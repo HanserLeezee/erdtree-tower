@@ -5,6 +5,8 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <RootNamespace>Tower.Update</RootNamespace>
+    <Description>Erdtree Tower update and package verification library.</Description>
+    <AssemblyTitle>黄金树爬塔更新组件</AssemblyTitle>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>

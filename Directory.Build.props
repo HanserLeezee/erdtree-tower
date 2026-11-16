@@ -1,0 +1,3 @@
+<Project>
+  <Import Project="ProductInfo.props" Condition="'$(MSBuildProjectName)' == 'Tower.Launcher' Or '$(MSBuildProjectName)' == 'Tower.Update' Or '$(MSBuildProjectName)' == 'AssetRestore' Or '$(MSBuildProjectName)' == 'AssetDiagnose'" />
+</Project>

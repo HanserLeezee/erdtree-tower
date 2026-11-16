@@ -924,6 +924,21 @@
     return code ? '<div class="lobby-code"><span>' + esc(roomCode(code)) + '</span> <button class="btn-ghost" data-lobby="copyCode" data-code="' + esc(code) + '">复制房间码</button></div>' : '';
   }
 
+  function lobbyIcon(name) {
+    var paths = {
+      people: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.87M15 3.13a4 4 0 0 1 0 7.75"/><circle cx="9" cy="7" r="4"/>',
+      arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>',
+      plus: '<path d="M12 5v14M5 12h14"/>',
+      key: '<circle cx="8" cy="8" r="5"/><path d="m12 12 9 9m-3-3 3-3m-6 0 3-3"/>',
+      search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
+      refresh: '<path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3A7 7 0 0 0 18 17"/>'
+    };
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (paths[name] || paths.people) + '</svg>';
+  }
+  function lobbyEmpty(title, detail, loading) {
+    return '<div class="lobby-empty" role="status"><div class="lobby-empty-art' + (loading ? ' loading' : '') + '">' + lobbyIcon(loading ? 'refresh' : 'people') + '</div><strong>' + esc(title) + '</strong><span>' + esc(detail) + '</span></div>';
+  }
+
   function openLobby() {
     closeModal();
     lobbyState = { view: 'list', loading: true, error: '', rooms: [], version: '', joining: null, query: '' };
@@ -931,6 +946,9 @@
     mask.id = 'modalMask';
     var dlg = el('div', 'set-dialog lobby-dialog');
     dlg.id = 'lobbyDialog';
+    dlg.setAttribute('role', 'dialog');
+    dlg.setAttribute('aria-modal', 'true');
+    dlg.setAttribute('aria-label', '联机大厅');
     mask.appendChild(dlg);
     mask.addEventListener('click', function (e) { if (e.target === mask) closeModal(); });
     document.getElementById('app').appendChild(mask);
@@ -969,7 +987,7 @@
       pager.innerHTML = buttons + '<button class="btn-ghost" data-lobby="page" data-page="' + (page + 1) + '"' + (page + 1 === pages ? ' disabled' : '') + '>下一页</button><span>' + (page + 1) + ' / ' + pages + ' 页 · 每页 20 个</span>';
     }
     var total = dlg.querySelector('#lobbyResults');
-    if (total) total.textContent = query ? count + ' / 已加载 ' + lobbyState.rooms.length + ' 个' : '已加载 ' + lobbyState.rooms.length + ' 个';
+    if (total) total.textContent = query ? count + ' / ' + lobbyState.rooms.length : String(lobbyState.rooms.length);
     var empty = dlg.querySelector('#lobbyNoMatch');
     if (empty) empty.hidden = count > 0;
     var list = dlg.querySelector('.lobby-list');
@@ -992,14 +1010,14 @@
     var searchSelection = searchFocused ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     var L = lobbyState;
     var draftName = dlg.querySelector('#lobbyName');
+    dlg.classList.toggle('lobby-form', L.view !== 'list');
     if (draftName) L.draft = { name: draftName.value, max: dlg.querySelector('#lobbyMax').value, password: dlg.querySelector('#lobbyPassword').value };
     var draftCode = dlg.querySelector('#lobbyCode');
     if (draftCode) L.code = draftCode.value;
     var draft = L.draft || { name: '', max: 4, password: '' };
     var html = '<button class="set-close" data-lobby="close" aria-label="关闭">' +
       '<svg viewBox="0 0 14 14"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.6"/></svg></button>' +
-      '<div class="lobby-body"><div class="card-header">联机大厅</div>' +
-      '<div class="lobby-hint" role="note">' + esc(steamReminder) + '</div>';
+      '<div class="lobby-body"><header class="lobby-header"><div class="lobby-heading-icon">' + lobbyIcon('people') + '</div><div><div class="lobby-eyebrow">CO-OP · 黄金树爬塔</div><h2>' + (L.view === 'host' ? '创建队伍' : L.view === 'code' ? '加入好友' : '联机大厅') + '</h2></div><span class="lobby-version">' + (L.version ? esc(L.version) : '寻找同行者') + '</span></header>';
     if (L.view === 'host') {
       html += '<div class="lobby-hint">创建后进入游戏，使用联机道具开放世界。好友可以用房间码找到你，公开队伍也会出现在大厅中。</div>' +
         '<div class="set-row"><div class="label">房间名</div><div class="ctrl"><input class="inp" id="lobbyName" maxlength="32" placeholder="例如：一起爬塔" value="' + esc(draft.name) + '"></div></div>' +
@@ -1015,35 +1033,32 @@
         '<div class="set-row"><div class="label">房间码</div><div class="ctrl"><input class="inp" id="lobbyCode" maxlength="24" placeholder="T-0123-4567-89AB-CDEF" value="' + esc(L.code || '') + '"></div></div>' +
         '<div class="lobby-actions"><button class="btn-ghost" data-lobby="back">返回</button><button class="btn-ghost primary" data-lobby="findCode">查找并加入</button></div>';
     } else {
-      html += '<div class="lobby-entry"><button class="btn-ghost primary" data-lobby="quick"' + (L.loading ? ' disabled' : '') + '>快速加入公开队伍</button>' +
-        '<button class="btn-ghost" data-lobby="code">使用好友房间码</button><span class="lobby-hint">自动选择同版本、未开局的公开队伍</span></div>';
-      html += '<div class="lobby-toolbar"><span class="lobby-hint">' +
-        (L.version ? '你的版本 ' + esc(L.version) + ' · 版本不同的房间不能加入' : '同一版本的队友开的房间会显示在这里') + '</span>' +
-        '<span><button class="btn-ghost" data-lobby="refresh"' + (L.loading ? ' disabled' : '') + '>' + (L.loading ? '刷新中…' : '刷新') + '</button> ' +
-        '<button class="btn-ghost primary" data-lobby="host"' + (L.loading ? ' disabled' : '') + '>开房邀请好友</button></span></div>' +
-        '<div class="lobby-search"><input class="inp" id="lobbySearch" maxlength="80" aria-label="搜索房间" placeholder="搜索房间名、房主或房间 ID" value="' + esc(L.query || '') + '">' +
-        '<button class="btn-ghost" data-lobby="searchRemote"' + (L.loading ? ' disabled' : '') + '>完整房间名查找</button>' +
-        '<button class="btn-ghost" data-lobby="clearSearch"' + (L.loading ? ' disabled' : '') + '>清空</button><span id="lobbyResults" class="lobby-hint" aria-live="polite"></span></div>' +
-        '<div class="lobby-hint">输入时筛选已加载列表；找不到时，填写完整房间名并点击查找，从 Steam 查询。列表数量不是大厅总数。</div>';
+      html += '<div class="lobby-entry">' +
+        '<button class="lobby-entry-card featured" data-lobby="quick"' + (L.loading ? ' disabled' : '') + '><span class="lobby-entry-icon">' + lobbyIcon('arrow') + '</span><span><strong>快速加入</strong><small>匹配同版本的公开队伍</small></span></button>' +
+        '<button class="lobby-entry-card" data-lobby="code"><span class="lobby-entry-icon">' + lobbyIcon('key') + '</span><span><strong>房间码加入</strong><small>与好友继续冒险</small></span></button>' +
+        '<button class="lobby-entry-card" data-lobby="host"' + (L.loading ? ' disabled' : '') + '><span class="lobby-entry-icon">' + lobbyIcon('plus') + '</span><span><strong>创建队伍</strong><small>开房并邀请同行者</small></span></button></div>' +
+        '<div class="lobby-search"><label class="lobby-search-field">' + lobbyIcon('search') + '<input class="inp" id="lobbySearch" maxlength="80" aria-label="搜索房间" placeholder="搜索房间、房主或房间码" value="' + esc(L.query || '') + '"><button class="lobby-clear" data-lobby="clearSearch" aria-label="清空搜索" title="清空搜索">×</button></label>' +
+        '<button class="btn-ghost" data-lobby="searchRemote" title="按完整房间名向 Steam 查找"' + (L.loading ? ' disabled' : '') + '>精确查找</button></div>' +
+        '<div class="lobby-toolbar"><div class="lobby-section-title">公开队伍 <span id="lobbyResults" aria-live="polite"></span></div><button class="lobby-refresh" data-lobby="refresh"' + (L.loading ? ' disabled' : '') + '>' + lobbyIcon('refresh') + (L.loading ? '刷新中' : '刷新') + '</button></div>';
       if (L.mine) {
         html += '<div class="lobby-mine lobby-mine-' + esc(L.mine.state) + (L.mine.state === 'open' && !L.mine.ready ? ' lobby-mine-wait' : '') + '">你开的房间「' + esc(L.mine.name) + '」：' + esc(L.mine.detail) +
           (L.mine.state === 'open' ? '<span class="lobby-hint">（可把房间码发给好友）</span>' + shareCode(L.mine.code) : '') + '</div>';
       }
       if (L.error) {
-        html += '<div class="lobby-empty">' + esc(L.error) + '</div>';
+        html += lobbyEmpty('暂时无法获取房间', L.error, false);
       } else if (L.loading && !L.rooms.length) {
-        html += '<div class="lobby-empty">正在向 Steam 查询房间…</div>';
+        html += lobbyEmpty('正在寻找同行者', '正在查询 Steam 房间，请稍候', true);
       } else if (!L.rooms.length) {
-        html += '<div class="lobby-empty">暂时没有房间，点「开房」开一个吧</div>';
+        html += lobbyEmpty('还没有公开队伍', '创建一支队伍，或用房间码加入好友', false);
       } else {
         html += '<ul class="lobby-list">' + L.rooms.map(function (r) {
           var blocked = !r.sameVersion ? '版本不同' : (r.full ? '已满' : (r.started ? '旅程中' : (!r.open ? '未开放' : (r.joinError ? '不可加入' : ''))));
           var joining = L.joining === r.id;
           return '<li class="lobby-room' + (blocked ? ' off' : '') + '">' +
-            '<div class="lobby-main"><div class="lobby-name">' + (r.locked ? '🔒 ' : '') + esc(r.name) + '</div>' +
+            '<div class="lobby-room-avatar">' + lobbyIcon('people') + '</div><div class="lobby-main"><div class="lobby-name">' + (r.locked ? '🔒 ' : '') + esc(r.name) + '</div>' +
             '<div class="lobby-meta">房主 ' + esc(r.host || '—') + ' · ' + esc(r.state || '大赐福') +
             (r.open ? '' : ' · <span class="lobby-wait">等待房主开启联机</span>') + '</div>' + shareCode(r.code) + '</div>' +
-            '<div class="lobby-count">' + r.players + ' / ' + r.max + '</div>' +
+            '<div class="lobby-count"><strong>' + r.players + '<span> / ' + r.max + '</span></strong><small>' + (blocked ? esc(blocked) : '等待加入') + '</small></div>' +
             (joining
               ? '<div class="lobby-join"><input class="inp lobby-pass" id="lobbyJoinPass" type="password" maxlength="32" placeholder="房间密码">' +
                 '<button class="btn-ghost primary" data-lobby="joinConfirm" data-id="' + esc(r.id) + '">加入</button></div>'
@@ -1056,7 +1071,7 @@
     if (L.view === 'list') html += '<div id="lobbyPages" class="lobby-pages"></div>' +
       (L.limited ? '<div class="lobby-hint">部分分组仍达到查询上限，列表可能不完整；找不到时请用完整房间名查找。</div>' : '');
     if (L.busy) html += '<div class="lobby-hint lobby-progress" role="status">正在确认房间状态，关闭此窗口可取消查找…</div>';
-    html += '</div>';
+    html += '<footer class="lobby-footer"><span class="lobby-dot"></span><span>请保持 Steam 登录</span><span class="lobby-footer-help" title="' + esc(steamReminder) + '">找不到队伍？试试完整房间名或房间码</span></footer></div>';
     dlg.innerHTML = html;
     if (L.busy) dlg.querySelectorAll('button:not([data-lobby="close"]), input, select').forEach(function (node) { node.disabled = true; });
     filterLobby();
