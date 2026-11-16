@@ -23,8 +23,6 @@ pub(super) fn stage(elapsed:Duration)->Stage {
     else {Stage::Finished}
 }
 impl Hunt {
-    pub fn networked(base:i32)->Self {Self{entity_base:Some(base),..Default::default()}}
-    pub fn result(&self)->Option<u8> {self.finished.then_some(self.killed)}
     pub fn active(&self)->bool {self.clock.is_some()}
     pub fn ready(&self)->bool {self.bugs.len()==3&&!self.active()&&!self.finished}
     pub fn start(&mut self)->Result<(),String> {
@@ -66,7 +64,7 @@ impl Hunt {
             bytes.add(0xc8).write(0);
         }
         world.debug_chr_creator.last_created_chr=None;
-        world.spawn_debug_character(&ChrDebugSpawnRequest {chr_id:4191,npc_param_id:NPC,npc_think_param_id:THINK,chara_init_param_id:0,event_entity_id:self.entity_base.unwrap_or(45011810)+self.bugs.len() as i32,talk_id:-1,pos_x:pos[0],pos_y:pos[1],pos_z:pos[2]});
+        super::spawn_guard::spawn(world,&ChrDebugSpawnRequest {chr_id:4191,npc_param_id:NPC,npc_think_param_id:THINK,chara_init_param_id:0,event_entity_id:self.entity_base.unwrap_or(45011810)+self.bugs.len() as i32,talk_id:-1,pos_x:pos[0],pos_y:pos[1],pos_z:pos[2]});
         self.requested=Some(Instant::now());Ok(())
     }
     pub fn poll(&mut self,world:&mut WorldChrMan)->Result<(),String> {

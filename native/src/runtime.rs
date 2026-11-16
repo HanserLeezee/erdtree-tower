@@ -1604,6 +1604,7 @@ fn tick_locked() {
     }
     clear_ailments_under_overlay(&mut state,world,game);
     super::debug_menu::tick_enemies(world);
+    super::spawn_guard::tick(world,game);
     if state.view.resource_alert.is_none()&&let Some(bad)=resource_check().filter(|bad|!bad.is_empty()) {
         state.view.resource_alert=Some((1,bad.clone()));
         report(&mut state,format!("整合包文件不完整：{} 个场地文件缺失或与当前版本不一致，进入这些战斗会被拒绝。请关闭游戏，在启动器里点「校验并修复文件」。",bad.len()));
@@ -1926,7 +1927,7 @@ fn tick_locked() {
         let foes:Vec<_>=if camp {state.dummy.as_ref().and_then(|d|d.target(world)).map(|h|vec![(h,3,0)]).unwrap_or_default()}else{vec![]};
         let flasks=state.flasks.as_ref().map(|f|f.total());
         // Practice never forwards combat rewards or persistent stack gains.
-        let _=state.ember_practice.tick(world,key,&held,&foes,true,false,flasks,keeper);
+        let _=state.ember_practice.tick(world,key,&held,&foes,true,false,flasks,keeper,false);
         super::frost_shackle::observe(world,key,&foes,held.contains(&erdtree_tower::embers::Ember::FrostShackle));
         super::embers::clear_practice_critical();
     } else {
@@ -3045,6 +3046,25 @@ fn record_ember_gains(state:&mut Runtime,gains:Vec<erdtree_tower::embers::Gain>,
         state.view.status=format!("余烬「{}」第 {level} 层：{}",ember.name(),state.view.run.as_ref().and_then(|r|r.ember_stacks.bonus(ember)).unwrap_or_default());state.view.prompt=state.view.prompt.wrapping_add(1);
     }
 }
+/// 捕灵壶：捕捉到的敌人给一份它的骨灰，等级按当前骨灰等级（与奖励里刷出的骨灰同一档）。
+/// 没有对应骨灰、没有 DLC 时的 DLC 骨灰、律法禁用骨灰时只算击杀
+fn grant_captures(state:&mut Runtime,world:&mut WorldChrMan,models:&[i32]) {
+    let Some(run)=state.view.run.as_ref() else{return};
+    for &model in models {
+        let Some(base)=erdtree_tower::rewards::spirit_for_model(model)
+            .filter(|id|erdtree_tower::dlc::item_allowed(*id)&&!run.law.lone_wolf()) else {
+            super::log(format!("TOWER_EMBER capture model={model}: no spirit ash granted"));state.view.status="捕捉成功".into();state.view.prompt=state.view.prompt.wrapping_add(1);continue;
+        };
+        let id=base+u32::from(erdtree_tower::rewards::spirit_level_now(run));
+        let name=erdtree_tower::rewards::lookup(id).map_or("骨灰",|i|i.name);
+        if world.main_player.is_none() {return;}
+        match super::items::give(&[(id as i32,1,-1)]) {
+            Ok(())=>{super::log(format!("TOWER_EMBER capture model={model} granted={id}"));state.view.status=format!("捕捉成功：获得「{name}」");}
+            Err(error)=>{super::log(format!("TOWER_EMBER capture model={model} grant failed: {error}"));state.view.status=format!("捕捉成功，但骨灰发放失败：{error}");}
+        }
+        state.view.prompt=state.view.prompt.wrapping_add(1);
+    }
+}
 /// 噬神之蛇的饱食：补回 1 次红圣杯瓶
 fn grant_feast(flasks:Option<&mut super::flasks::Flasks>,world:&mut WorldChrMan) {
     if let (Some(flasks),Some(player))=(flasks,world.main_player.as_mut()) {
@@ -3066,8 +3086,11 @@ fn host_embers(state:&mut Runtime,world:&mut WorldChrMan) {
     let foes:Vec<_>=pending.foes.iter().enumerate().filter_map(|(slot,f)|Some((f.fight.handle()?,super::enemies::bar_rank(&f.spec),slot as u8))).collect();
     let keeper=run.ember_stacks.level(erdtree_tower::embers::Ember::SpiritKeeper);
     let key=(run.seed,run.act,id);
-    let events=state.ember_fight.tick(world,key,&embers,&foes,authority,state.party.is_some(),flasks,keeper);
+    let astro=run.class==erdtree_tower::Class::Astrologer;
+    let events=state.ember_fight.tick(world,key,&embers,&foes,authority,state.party.is_some(),flasks,keeper,astro);
     if events.feast {grant_feast(state.flasks.as_mut(),world);}
+    if let Some(player)=world.main_player.as_mut() {super::passives::kill_fp(&mut player.chr_ins,Some(&pending.next_run),&events.gains);}
+    grant_captures(state,world,&events.captures);
     record_ember_gains(state,events.gains,key);
     // 鲜血骑士的破势：自己持有，或联机时任一在场队员持有，都由房主（单人即自己）执行
     let breaker=erdtree_tower::embers::Ember::Breaker;
@@ -3164,8 +3187,11 @@ fn member_embers(state:&mut Runtime,world:&mut WorldChrMan) {
     if let Some(link)=state.party.as_ref(){super::frost_shackle::receive(world,key,&foes,&link.event.frost_shackles);}
     let keeper=run.ember_stacks.level(erdtree_tower::embers::Ember::SpiritKeeper);
     let flasks=state.flasks.as_ref().map(|f|f.total());
-    let events=state.ember_fight.tick(world,key,&embers,&foes,false,true,flasks,keeper);
+    let astro=run.class==erdtree_tower::Class::Astrologer;
+    let events=state.ember_fight.tick(world,key,&embers,&foes,false,true,flasks,keeper,astro);
     if events.feast {grant_feast(state.flasks.as_mut(),world);}
+    if let Some(player)=world.main_player.as_mut() {super::passives::kill_fp(&mut player.chr_ins,state.view.run.as_ref(),&events.gains);}
+    grant_captures(state,world,&events.captures);
     record_ember_gains(state,events.gains,key);
     // 作用在敌人身上的余烬交给房主执行
     if !events.strikes.is_empty() && let Some(link)=state.party.as_mut() {link.push_strikes(&events.strikes);}
@@ -3253,7 +3279,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
     let mut camp_refill=None;
     match action {
         Action::Camp(choice) => {
-            next.camp(choice)?;
+            if next.tent_available() {next.tent_refill(choice)?;} else {next.camp(choice)?;}
             camp_refill = match choice { CampChoice::Refill => Some([2,1]), CampChoice::RefillBlue => Some([1,2]), CampChoice::RefillRedOnly => Some([3,0]), CampChoice::RefillBlueOnly => Some([0,3]), _ => None };
         }
         Action::Claim(index) => {
@@ -3476,6 +3502,7 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
             .and_then(|_|state.party.as_ref().and_then(|p|p.event.storm_decision));
         let trial_order=state.view.run.as_ref().filter(|r|r.regional_event.trial)
             .and_then(|_|state.party.as_ref().and_then(|p|p.event.trial_decision));
+        room.tent=room.kind==erdtree_tower::NodeKind::Camp&&state.view.run.as_ref().is_some_and(|r|r.tent_available());
         if storm_order.is_none()&&trial_order.is_none(){room.poll(world, game)?;}
         if let Some((angry,dead))=room.patches_state()&&let Some(run)=state.view.run.as_ref()
             &&(run.regional_event.patches_angry!=angry||run.regional_event.patches_dead!=dead) {
@@ -3628,7 +3655,9 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
             }
             let request = room.take_refill().and_then(|choice|match choice {1=>Some(CampChoice::Refill),2=>Some(CampChoice::RefillBlue),3=>Some(CampChoice::RefillRedOnly),4=>Some(CampChoice::RefillBlueOnly),_=>None});
             if let Some(choice) = request {
-                let result = if room.view.completed {
+                // 余烬「帐篷」：先用免费的那一次，不扣营地发的强化石、不结束营地服务
+                let tent=state.view.run.as_ref().is_some_and(|r|r.tent_available());
+                let result = if room.view.completed&&!tent {
                     Err("篝火服务已用完".to_string())
                 } else {
                     transact(state, world, Action::Camp(choice), false, false)
@@ -3636,7 +3665,10 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
                 if let Err(error) = &result {
                     super::log(format!("Camp refill failed: {error}"));
                 }
-                if result.is_ok() {
+                if result.is_ok()&&tent {
+                    super::log(format!("Camp refill done: {choice:?} free=tent party={}",state.party.is_some()));
+                    if !room.view.completed {room.view.message="余烬「帐篷」：这次补给免费，篝火服务仍可使用".into();}
+                } else if result.is_ok() {
                     super::log(format!("Camp refill done: {choice:?} party={}",state.party.is_some()));
                     // 补瓶代替强化：用掉营地发的那块强化石，身上其他强化石保留
                     if let Err(error)=super::smith::consume_one(unsafe {world.main_player.as_mut().unwrap().player_game_data.as_mut()}) {super::log(format!("Camp refill stone: {error}"));}
@@ -4291,7 +4323,7 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
                     bytes.add(0xc8).write(0);
                 }
                 world.debug_chr_creator.last_created_chr = None;
-                world.spawn_debug_character(&ChrDebugSpawnRequest {
+                super::spawn_guard::spawn(world,&ChrDebugSpawnRequest {
                     chr_id:foe.spec.model, npc_param_id:foe.spec.npc, npc_think_param_id:foe.spec.think as i32,
                     chara_init_param_id:0, event_entity_id:pending.entity_base.map_or_else(||if pending.networked||foe.spec.bar>0||foe.spec.model==4730 {arena.boss_entity(i)}else{0},|base|base+i as i32), talk_id:-1, pos_x:pos.0,pos_y:pos.1,pos_z:pos.2,
                 });
@@ -5235,6 +5267,7 @@ mod tests {
         assert!(super::owner_changed(Some((0,3)),(1,3)));
         let mut state=super::fresh_runtime();
         state.command=Some(super::Action::Enter(0));state.view.busy=true;state.spawn_used=true;
+        assert!(state.command.is_some()&&state.view.busy);
         state=super::fresh_runtime();
         assert!(state.hub.is_none()&&state.pending.is_none()&&state.room.is_none()&&state.attendant.is_none());
         assert!(state.command.is_none()&&state.flasks.is_none()&&state.reward_wait.is_none());

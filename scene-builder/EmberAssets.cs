@@ -22,14 +22,14 @@ static class EmberAssets {
     const int CriticalState=288,CriticalOnly=367;
     static readonly string[] Kept=["spCategory","categoryPriority","effectTargetOpposeTarget","effectTargetFriendlyTarget","effectTargetSelfTarget","effectTargetSelf","effectTargetFriend","effectTargetEnemy","effectTargetPlayer","effectTargetAI","effectTargetLive","effectTargetGhost"];
     static void Set(PARAM.Row r,string key,object value)=>r[key].Value=Convert.ChangeType(value,r[key].Value.GetType());
-    static PARAM.Row Player(PARAM p,int id,string name,float attack,float endurance) {
+    internal static PARAM.Row Player(PARAM p,int id,string name,float attack,float endurance) {
         var r=new PARAM.Row(p.Rows.Single(r=>r.ID==321300)){ID=id,Name=name};
         foreach(var (key,value) in new (string,object)[]{("iconId",-1),("effectEndurance",endurance),("spCategory",0),("categoryPriority",0),("saveCategory",-1),("dontDeleteOnDead",0),("magicSubCategoryChange1",0)})Set(r,key,value);
         foreach(var element in new[]{"physics","magic","fire","thunder","dark"})Set(r,element+"AttackRate",attack);
         foreach(var target in new[]{"Player","Enemy"})foreach(var element in new[]{"Physics","Magic","Fire","Thunder","Dark"})Set(r,$"atk{target}DmgCorrectRate_{element}",1f);
         return r;
     }
-    static PARAM.Row Enemy(PARAM p,int id,string name,float endurance) {
+    internal static PARAM.Row Enemy(PARAM p,int id,string name,float endurance) {
         var neutral=p.Rows.Single(r=>r.ID==90400);
         var r=new PARAM.Row(p.Rows.Single(r=>r.ID==7030)){ID=id,Name=name};
         foreach(var cell in r.Cells.Where(c=>!Kept.Contains(c.Def.InternalName)))cell.Value=neutral[cell.Def.InternalName].Value;

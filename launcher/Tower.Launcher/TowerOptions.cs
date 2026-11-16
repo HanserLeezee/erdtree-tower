@@ -48,6 +48,7 @@ namespace Tower.Launcher
         {
             ("auto", "跟随游戏 / Follow game"),
             ("zh-CN", "简体中文 / Chinese"),
+            ("zh-TW", "繁體中文 / Traditional Chinese"),
             ("en-US", "English"),
         };
         public static string LanguageLabel(Dictionary<string, string> values) =>

@@ -11,9 +11,10 @@ static class EmberPickupAssets {
         var order=Regex.Match(source,@"pub const ALL:[^=]+?=\[(.*?)\];",RegexOptions.Singleline).Groups[1].Value;
         var keys=Regex.Matches(order,@"Self::(\w+)").Select(m=>m.Groups[1].Value).ToArray();
         var names=Regex.Matches(source,@"Self::(\w+)=>""([^""]+)""").GroupBy(m=>m.Groups[1].Value).ToDictionary(g=>g.Key,g=>g.First().Groups[2].Value);
-        if(keys.Length!=37||keys.Distinct().Count()!=37||keys[36]!="FrostShackle"||keys.Any(k=>!names.ContainsKey(k)))throw new Exception("Ember catalogue mismatch");
-        int Index(int i)=>i==36?37:i;
-        int Icon(int i)=>i==36?2:i;
+        if(keys.Length!=41||keys.Distinct().Count()!=41||keys[36]!="FrostShackle"||keys[37]!="Tent"||keys[38]!="Capture"||keys[39]!="Glintblade"||keys[40]!="Mind"||keys.Any(k=>!names.ContainsKey(k)))throw new Exception("Ember catalogue mismatch");
+        int Index(int i)=>i>=36?i+1:i;
+        // 寒霜枷锁借永冻吐息（2）的图标，帐篷借圣杯余响（9），捕灵壶借灵唤铃的号令（15），魔力辉剑借辉石的余韵（23），由心及物借亚兹勒的冥想（22）
+        int Icon(int i)=>i==36?2:i==37?9:i==38?15:i==39?23:i==40?22:i;
         const int ArtCount=36;
         Directory.CreateDirectory(output);
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));

@@ -342,7 +342,23 @@ fn flask_consumption_is_only_legal_in_combat() {
 
 #[test]
 fn complete_runs_remain_valid_at_every_checkpoint() {
-    for seed in 0..1000 {
+    // 1000 个种子互不相关，分到各个核心上跑
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()) as u64;
+    std::thread::scope(|scope| {
+        for start in 0..threads {
+            scope.spawn(move || {
+                let mut seed = start;
+                while seed < 1000 {
+                    complete_run_at_every_checkpoint(seed);
+                    seed += threads;
+                }
+            });
+        }
+    });
+}
+
+fn complete_run_at_every_checkpoint(seed: u64) {
+    {
         let mut r = Run::new(seed, Class::Prophet);
         for _ in 0..48 {
             r.validate().unwrap();
@@ -427,4 +443,67 @@ fn weapon_levels_keep_converting_past_the_vanilla_cap() {
     run.weapon_peak=Some(MAX_PEAK);
     assert_eq!(erdtree_tower::rewards::spirit_level_now(&run),39);
     assert!(erdtree_tower::Run::decode(&run.encode().unwrap()).is_ok(),"a peak above 50 is a valid save");
+}
+
+#[test]
+fn tent_refills_once_per_camp_without_spending_the_service() {
+    let mut run = camp(1);
+    assert!(!run.tent_available(), "without the ember there is no free refill");
+    assert!(run.tent_refill(CampChoice::Refill).is_err());
+    run.ember_rewards = true;
+    run.embers.push(embers::Ember::Tent);
+    assert!(run.tent_available());
+    let phase = run.phase.clone();
+    run.tent_refill(CampChoice::Refill).unwrap();
+    assert_eq!((run.flasks, run.phase.clone()), (4, phase), "the camp stays open for its service");
+    assert!(!run.tent_available());
+    assert!(run.tent_refill(CampChoice::RefillBlue).is_err(), "once per camp");
+    assert_eq!(run.tent_refill, Some((run.act, match run.phase { Phase::Node { id } => id, _ => unreachable!() })));
+    run.camp(CampChoice::Refill).unwrap();
+    assert_eq!((run.flasks, run.phase.clone()), (7, Phase::Map), "the regular service still works");
+
+    // 先用营地服务，人还在篝火里，帐篷照样可以补一次
+    let mut run = camp(1);
+    run.ember_rewards = true;
+    run.embers.push(embers::Ember::Tent);
+    run.camp(CampChoice::UpgradeWeapon).unwrap();
+    assert!(run.tent_available());
+    run.tent_refill(CampChoice::RefillRedOnly).unwrap();
+    assert_eq!(run.flasks, 4);
+    assert!(run.tent_refill(CampChoice::Refill).is_err());
+    assert!(run.tent_refill(CampChoice::UpgradeWeapon).is_err());
+
+    let mut full = camp(10);
+    full.ember_rewards = true;
+    full.embers.push(embers::Ember::Tent);
+    assert!(full.tent_refill(CampChoice::Refill).is_err(), "full flasks keep the free refill");
+    assert!(full.tent_available());
+}
+
+#[test]
+fn tent_refill_is_kept_in_the_save() {
+    // 沿真实路线走到第一个篝火，保证存档能通过校验
+    let mut r = Run::new(3, Class::Prophet);
+    r.ember_rewards = true;
+    r.embers.push(embers::Ember::Tent);
+    loop {
+        let next = *r.available().iter().find(|&&id| r.nodes[id].kind == NodeKind::Camp).unwrap_or(&r.available()[0]);
+        r.enter(next).unwrap();
+        match r.nodes[next].kind {
+            NodeKind::Camp => break,
+            NodeKind::Monster | NodeKind::Elite | NodeKind::Boss => {
+                r.win_combat().unwrap();
+                if matches!(r.phase, Phase::Reward { .. }) { r.claim_reward(0).unwrap(); }
+            }
+            NodeKind::Shop => r.leave_shop().unwrap(),
+            NodeKind::Event => r.resolve_event(false).unwrap(),
+            NodeKind::Chest => { r.open_chest().unwrap(); r.claim_reward(0).unwrap(); }
+        }
+    }
+    r.flasks = 1;
+    assert!(r.flask_limit >= 4);
+    r.tent_refill(CampChoice::Refill).unwrap();
+    let restored = Run::decode(&r.encode().unwrap()).unwrap();
+    assert!(!restored.tent_available());
+    assert_eq!(restored.tent_refill, r.tent_refill);
 }

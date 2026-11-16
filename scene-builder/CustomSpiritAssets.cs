@@ -10,7 +10,11 @@ static class CustomSpiritAssets {
         var specs=File.ReadAllLines(Path.Combine(input,"custom-spirit-definitions.tsv")).Select(l=>{
             var p=l.Split('|');return new Spec(int.Parse(p[0]),int.Parse(p[1]),int.Parse(p[2]),int.Parse(p[3]),int.Parse(p[4]),int.Parse(p[5]),int.Parse(p[6]),p[7],p[8]);
         }).ToArray();
-        if(specs.Length!=12||specs.Select(s=>s.Id).Distinct().Count()!=12||specs.Any(s=>s.Id%1000!=0||s.Tier is <2 or >3))throw new Exception("Invalid custom spirit definitions");
+        // 编号按行连续：第 n 行是 270000+n*1000（调试菜单与运行时按这个从 BuddyParam 反推骨灰）；第 10 列 dlc 表示 DLC 怪物的模型
+        if(specs.Length<12||specs.Select(s=>s.Id).Distinct().Count()!=specs.Length||specs.Any(s=>s.Tier is <2 or >3)||specs.Where((s,i)=>s.Id!=270000+i*1000).Any())throw new Exception("Invalid custom spirit definitions");
+        // 没有 Oodle（Linux）时读不了地图和 dcx 文本：只写参数与奖励表，地图模型检查和物品文本留给 Windows 上再跑一次（已有的行会跳过）
+        bool oodle=Environment.GetEnvironmentVariable("TOWER_NO_OODLE")!="1";
+        if(!oodle)Console.WriteLine("TOWER_NO_OODLE=1: skipping map model checks and item text; rerun on Windows to finish.");
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
         var original=reg.Files.ToDictionary(f=>f.Name,f=>f.Bytes.ToArray());
         var defs=Environment.GetEnvironmentVariable("TOWER_PARAMDEFS")??"work/SoulsRandomizers/diste/Defs";
@@ -27,14 +31,19 @@ static class CustomSpiritAssets {
         }
         var ally=Row("NpcParam",121000000);var allyThink=Row("NpcThinkParam",121000000);
         var sourceBuddy=Row("BuddyParam",20000000);
-        var mapNames=File.ReadAllLines(Path.Combine(input,"arenas-built.txt")).Where(l=>!l.StartsWith('#')&&!string.IsNullOrWhiteSpace(l)).Select(l=>l.Split('|')[1])
+        var mapNames=!oodle?Enumerable.Empty<string>():File.ReadAllLines(Path.Combine(input,"arenas-built.txt")).Where(l=>!l.StartsWith('#')&&!string.IsNullOrWhiteSpace(l)).Select(l=>l.Split('|')[1])
             .Concat(File.ReadAllLines(Path.Combine(input,"battlefields.txt")).Select(l=>l.Split('|')[1])).Distinct();
         var arenaModels=mapNames.ToDictionary(m=>m,m=>MSBE.Read(Path.Combine(input,"map/mapstudio",m+".msb.dcx")).Models.Enemies.Select(e=>e.Name).ToHashSet());
         var audit=new List<object>();
         for(int family=0;family<specs.Length;family++) {
             var s=specs[family];int npcId=100000000+s.Model*10000+8000+family,thinkId=npcId;
-            int sourceMaps=arenaModels.Values.Count(models=>models.Contains($"c{s.Model:D4}"));
+            int sourceMaps=oodle?arenaModels.Values.Count(models=>models.Contains($"c{s.Model:D4}")):-1;
             if(sourceMaps==0)throw new Exception($"Summon model c{s.Model:D4} not present in existing arena resources");
+            // 已经生成过的骨灰（重跑或追加时）：参数保留原样，只核对名字
+            if(index["NpcParam"].TryGetValue(npcId,out var existing)) {
+                if(existing.Name!="Tower custom spirit "+s.Name||!index["EquipParamGoods"].ContainsKey(s.Id+SpiritLevelAssets.Max))throw new Exception($"Custom spirit ID collision: NpcParam/{npcId}");
+                audit.Add(new {s.Id,s.Model,s.Name,s.Tier,s.Hp,npcId,thinkId,levels=40,team=47,sourceMaps,liveTested=false});continue;
+            }
             var npc=new PARAM.Row(Row("NpcParam",s.Npc)){ID=npcId,Name="Tower custom spirit "+s.Name};
             Set(npc,"teamType",I(ally,"teamType"));Set(npc,"hp",s.Hp);Set(npc,"getSoul",0);
             Set(npc,"itemLotId_enemy",-1);Set(npc,"itemLotId_map",-1);
@@ -85,12 +94,13 @@ static class CustomSpiritAssets {
                 if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,rows[row.ID][cell.Def.InternalName].Value))throw new Exception("Custom spirit serialization mismatch");
         }
         const string message="msg/zhocn/item_dlc02.msgbnd.dcx";
+        if(oodle) {
         var text=BND4.Read(Path.Combine(input,message));
         foreach(var table in new[]{"GoodsName","GoodsInfo","GoodsCaption"}) {
             var file=text.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name).Split("_dlc")[0]==table&&FMG.Read(f.Bytes).Entries.Any(e=>e.ID==200000&&!string.IsNullOrWhiteSpace(e.Text)));
             var fmg=FMG.Read(file.Bytes);
             foreach(var s in specs)for(int level=0;level<=SpiritLevelAssets.Max;level++) {
-                if(fmg.Entries.Any(e=>e.ID==s.Id+level))throw new Exception("Custom spirit text collision");
+                if(fmg.Entries.Any(e=>e.ID==s.Id+level))continue;
                 var value=table=="GoodsName"?s.Name+(level==0?"":$"＋{level}"):s.Info+(table=="GoodsCaption"?"\n\n黄金树爬塔的召唤骨灰。可强化至 +39。\n每次召唤消耗一份骨灰；召唤师在胜利时按存活情况返还。":"");
                 fmg.Entries.Add(new FMG.Entry(s.Id+level,value));
             }
@@ -98,12 +108,15 @@ static class CustomSpiritAssets {
         }
         var msgOut=Path.Combine(output,message);Directory.CreateDirectory(Path.GetDirectoryName(msgOut)!);text.Write(msgOut);
         foreach(var file in BND4.Read(msgOut).Files)if(!file.Bytes.SequenceEqual(text.Files.Single(f=>f.ID==file.ID).Bytes))throw new Exception("Custom spirit text roundtrip failed");
+        }
         var catalog=File.ReadAllLines(Path.Combine(input,"reward-catalog.txt")).ToList();
         var details=File.ReadAllLines(Path.Combine(input,"reward-details.tsv")).ToList();
         var rarities=File.ReadAllLines(Path.Combine(input,"reward-rarities.tsv")).ToList();
         foreach(var s in specs) {
             uint full=0x40000000u|(uint)s.Id;int icon=I(Row("EquipParamGoods",s.Id),"iconId");
-            if(catalog.Any(l=>l.StartsWith($"spirit|{s.Id}|"))||details.Any(l=>l.StartsWith(full+"\t"))||rarities.Any(l=>l.StartsWith(full+"\t")))throw new Exception("Custom spirit catalog collision");
+            bool listed=catalog.Any(l=>l.StartsWith($"spirit|{s.Id}|")),detailed=details.Any(l=>l.StartsWith(full+"\t")),rated=rarities.Any(l=>l.StartsWith(full+"\t"));
+            if(listed&&detailed&&rated)continue;
+            if(listed||detailed||rated)throw new Exception("Custom spirit catalog partially present: "+s.Id);
             if(new FileInfo(Path.Combine(input,"reward-icons",icon+".rgba")).Length!=160*160*4)throw new Exception("Custom spirit icon missing");
             catalog.Add($"spirit|{s.Id}|{s.Name}");rarities.Add($"{full}\t{s.Tier}");
             details.Add($"{full}\t{icon}\t{s.Name}\t{s.Info}\t{s.Info}\\n\\n可强化至 +39。每次召唤消耗一份骨灰。\t召唤消耗：0 专注值、0 生命值。\\n装备到快捷栏后，在战斗区域召唤。\t");

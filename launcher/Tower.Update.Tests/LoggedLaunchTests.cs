@@ -7,6 +7,7 @@ public class LoggedLaunchTests
     [Fact]
     public async Task DirectWorkerStreamsUtf8AndKeepsLoggingAfterFirstFrame()
     {
+        if (!OperatingSystem.IsWindows()) return; // 依赖 Windows PowerShell
         var root = Path.Combine(Path.GetTempPath(), "tower 日志 ' " + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var entry = Path.Combine(root, "worker.ps1");

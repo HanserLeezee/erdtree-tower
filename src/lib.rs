@@ -262,6 +262,9 @@ pub struct Run {
     /// 战斗法师：在铁匠处附加了 S 补正的武器（武器参数行，0 智力 / 1 信仰），读档后由运行时重新写进内存参数
     #[serde(default,skip_serializing_if="Vec::is_empty")]
     pub battlemage: Vec<(u32,u8)>,
+    /// 余烬「帐篷」：最近一次免费补瓶用在哪个篝火（幕, 节点）。每个篝火一次，不占营地服务
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub tent_refill: Option<(u8,usize)>,
     /// 余烬规则：1 起按品质抽（embers::offer_by_quality）；2 起宝箱房改为给一枚随机余烬（embers::chest_ember）；3 起职业专属余烬只有对应职业抽得到（Ember::classes）；旧存档为 0，等概率
     #[serde(default)]
     pub ember_rules: u8,
@@ -717,6 +720,7 @@ impl Run {
             stone_rewards: true,
             embers: vec![],
             battlemage: vec![],
+            tent_refill: None,
             ember_stacks: Default::default(),
             debug: false,
             boss_test: None,
@@ -919,14 +923,37 @@ impl Run {
         Ok(())
     }
 
+    /// 当前所在的篝火：还没用服务时是当前节点；用过服务后路线已推进到地图，但人还在这个篝火里
+    fn current_camp(&self)->Option<usize> {
+        let id=match self.phase {Phase::Node{id}=>id,Phase::Map=>*self.visited.last()?,_=>return None};
+        self.nodes.get(id).is_some_and(|n|n.kind==NodeKind::Camp).then_some(id)
+    }
+    /// 余烬「帐篷」：这个篝火还能免费补一次瓶
+    pub fn tent_available(&self)->bool {
+        self.embers.contains(&embers::Ember::Tent)&&self.current_camp().is_some_and(|id|self.tent_refill!=Some((self.act,id)))
+    }
+    /// 余烬「帐篷」的免费补瓶：与营地补给同样的补法，但不结束营地节点、不占服务次数
+    pub fn tent_refill(&mut self, choice: CampChoice) -> RuleResult<()> {
+        if !matches!(choice,CampChoice::Refill|CampChoice::RefillBlue|CampChoice::RefillRedOnly|CampChoice::RefillBlueOnly) {return Err("帐篷只提供圣杯瓶补给".into());}
+        if !self.tent_available() {return Err("这个篝火的帐篷补给已用过".into());}
+        let id=self.current_camp().unwrap();
+        self.refill_at_camp()?;
+        self.tent_refill=Some((self.act,id));
+        Ok(())
+    }
+    fn refill_at_camp(&mut self)->RuleResult<()> {
+        if self.flasks >= self.flask_limit {
+            return Err("圣杯瓶已满".into());
+        }
+        self.flasks = self.flasks.saturating_add(3).min(self.flask_limit);
+        Ok(())
+    }
+
     pub fn camp(&mut self, choice: CampChoice) -> RuleResult<()> {
         let id = self.active_node(NodeKind::Camp)?;
         match choice {
             CampChoice::Refill | CampChoice::RefillBlue | CampChoice::RefillRedOnly | CampChoice::RefillBlueOnly => {
-                if self.flasks >= self.flask_limit {
-                    return Err("圣杯瓶已满".into());
-                }
-                self.flasks = self.flasks.saturating_add(3).min(self.flask_limit);
+                self.refill_at_camp()?;
             }
             CampChoice::UpgradeWeapon => {
                 if self.weapon_level >= contracts::NORMAL_MAX {
@@ -1238,8 +1265,9 @@ impl Run {
             run.boss_reward_rules=1;
             if let Phase::Reward{id,..}=run.phase {run.phase=Phase::Reward{id,offers:run.offers(id)};}
         }
+        // 旧版规则生成的奖励换成当前规则；先比当前规则，相同就不用把每个旧版本都算一遍
         if let Phase::Reward{id,ref offers}=run.phase {
-            if *offers==rewards::before_tool_rate(&run,id)||*offers==rewards::before_whetblades(&run,id)||*offers==rewards::before_claimed_bases(&run,id)||*offers==rewards::before_spirit_levels(&run,id)||*offers==rewards::before_currency_1500(&run,id)||*offers==rewards::before_chest_boosts(&run,id)||*offers==rewards::before_bosses(&run,id)||*offers==rewards::before_elites(&run,id)||*offers==rewards::before_base_talismans(&run,id)||*offers==rewards::before_spirit_weight(&run,id)||*offers==rewards::previous_offers(&run,id)||*offers==run.legacy_offers(id)||*offers==rewards::before_spirits(&run,id)||*offers==rewards::before_expansion(&run,id) {
+            if *offers!=run.offers(id)&&(*offers==rewards::before_tool_rate(&run,id)||*offers==rewards::before_whetblades(&run,id)||*offers==rewards::before_claimed_bases(&run,id)||*offers==rewards::before_spirit_levels(&run,id)||*offers==rewards::before_currency_1500(&run,id)||*offers==rewards::before_chest_boosts(&run,id)||*offers==rewards::before_bosses(&run,id)||*offers==rewards::before_elites(&run,id)||*offers==rewards::before_base_talismans(&run,id)||*offers==rewards::before_spirit_weight(&run,id)||*offers==rewards::previous_offers(&run,id)||*offers==run.legacy_offers(id)||*offers==rewards::before_spirits(&run,id)||*offers==rewards::before_expansion(&run,id)) {
                 run.phase=Phase::Reward{id,offers:run.offers(id)};
             }
         }
@@ -1334,7 +1362,7 @@ impl Run {
                     .nodes
                     .get(*id)
                     .is_some_and(|n| n.kind.combat() || n.kind == NodeKind::Chest)
-                    || (!previous_summoner && *offers != self.offers(*id) && *offers != rewards::before_custom_spirits(self,*id) && *offers != rewards::before_tool_rate(self,*id) && *offers != rewards::before_whetblades(self,*id) && *offers != rewards::before_claimed_bases(self,*id) && *offers != rewards::before_spirit_levels(self,*id) && *offers != rewards::before_currency_1500(self,*id) && *offers != rewards::before_chest_boosts(self,*id) && *offers != rewards::before_bosses(self,*id) && *offers != rewards::before_elites(self,*id) && *offers != rewards::before_base_talismans(self,*id) && *offers != self.legacy_offers(*id) && *offers != rewards::previous_offers(self,*id) && *offers != rewards::before_spirits(self,*id) && *offers != rewards::before_expansion(self,*id) && *offers != rewards::before_spirit_weight(self,*id))
+                    || (!previous_summoner && *offers != self.offers(*id) && *offers != rewards::before_custom_spirits(self,*id) && *offers != rewards::before_enemy_spirits(self,*id) && *offers != rewards::before_tool_rate(self,*id) && *offers != rewards::before_whetblades(self,*id) && *offers != rewards::before_claimed_bases(self,*id) && *offers != rewards::before_spirit_levels(self,*id) && *offers != rewards::before_currency_1500(self,*id) && *offers != rewards::before_chest_boosts(self,*id) && *offers != rewards::before_bosses(self,*id) && *offers != rewards::before_elites(self,*id) && *offers != rewards::before_base_talismans(self,*id) && *offers != self.legacy_offers(*id) && *offers != rewards::previous_offers(self,*id) && *offers != rewards::before_spirits(self,*id) && *offers != rewards::before_expansion(self,*id) && *offers != rewards::before_spirit_weight(self,*id))
                 {
                     return fail();
                 }

@@ -222,7 +222,6 @@ fn run()->Result<()> {
         if !show {
             if shown {let _=ShowWindow(window.overlay,SW_HIDE);shown=false;}
             crate::input::CAPTURE.store(false,Ordering::Release);
-            crate::native_settings::begin_frame();
             crate::reward_ui::poll_pad(ctx.io_mut(),false,false);
             // Drain release/focus events without running any UI actions in the background.
             ctx.io_mut().delta_time=0.05;ctx.frame();ctx.render();

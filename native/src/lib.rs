@@ -21,6 +21,8 @@ use hudhook::{
 };
 
 mod blessings;
+mod spawn_guard;
+mod glintblade;
 mod suspension;
 mod frost_shackle;
 mod pad;
@@ -32,8 +34,6 @@ mod gpu_engine;
 mod overlay_gpu;
 mod overlay_keys;
 mod recovery;
-mod native_settings;
-mod native_settings_keys;
 mod radahn_probe;
 mod radahn_entity;
 mod mausoleum;
@@ -321,9 +321,15 @@ impl ImguiRenderLoop for TowerPreview {
         let [width,height]=ctx.io().display_size;
         let density=(width/1600.0).min(height/900.0).clamp(1.0,2.0);
         let mut font_density=1.0;
+        // 繁体：界面字表里没有繁体字形，另有补充字体（只含字表里简体字对应的繁体字），语言设为繁体时合并进正文与标题字体
+        let traditional=crate::options::get().language==erdtree_tower::localization::Language::TraditionalChinese;
+        let tw_ranges=if traditional {fancy_text::traditional_glyph_ranges()}else{None};
+        let tw_body=tw_ranges.and_then(|_|std::fs::read(fancy_text::traditional_body_font_path()).ok());
+        let tw_title=tw_ranges.and_then(|_|std::fs::read(fancy_text::traditional_title_font_path()).ok());
+        if traditional {log(format!("TRADITIONAL fonts: glyphs={} body={} title={}",tw_ranges.is_some(),tw_body.is_some(),tw_title.is_some()));}
         // 正文：思源宋体常规体；字体文件缺失时退回系统黑体
         if let Ok(font) = std::fs::read(fancy_text::body_font_path()).or_else(|error|{log(format!("Body font missing, falling back to SimHei: {error}"));std::fs::read("C:/Windows/Fonts/simhei.ttf")}) {
-            ctx.fonts().add_font(&[FontSource::TtfData {
+            let mut sources=vec![FontSource::TtfData {
                 data: &font,
                 size_pixels: 20.0*density,
                 config: Some(FontConfig {
@@ -331,18 +337,26 @@ impl ImguiRenderLoop for TowerPreview {
                     rasterizer_multiply: 1.15,
                     ..Default::default()
                 }),
-            }]);
+            }];
+            if let (Some(data),Some(extra))=(tw_body.as_deref(),tw_ranges) {
+                sources.push(FontSource::TtfData {data,size_pixels:20.0*density,config:Some(FontConfig {glyph_ranges:FontGlyphRanges::from_slice(extra),rasterizer_multiply:1.15,..Default::default()})});
+            }
+            ctx.fonts().add_font(&sources);
             ctx.io_mut().font_global_scale=1.0/density;
             font_density=density;
         }
         // 标题字体：思源宋体子集，按 32 像素加载，供带动态特效的标题文字使用
         match std::fs::read(fancy_text::title_font_path()) {
             Ok(font)=>{
-                fancy_text::set_title_font(fancy_text::TitleFont(ctx.fonts().add_font(&[FontSource::TtfData {
+                let mut sources=vec![FontSource::TtfData {
                     data: &font,
                     size_pixels: 32.0*font_density,
                     config: Some(FontConfig {glyph_ranges: ranges(FontGlyphRanges::chinese_simplified_common()),..Default::default()}),
-                }])));
+                }];
+                if let (Some(data),Some(extra))=(tw_title.as_deref(),tw_ranges) {
+                    sources.push(FontSource::TtfData {data,size_pixels:32.0*font_density,config:Some(FontConfig {glyph_ranges:FontGlyphRanges::from_slice(extra),..Default::default()})});
+                }
+                fancy_text::set_title_font(fancy_text::TitleFont(ctx.fonts().add_font(&sources)));
             },
             Err(error)=>log(format!("Title font missing: {error}")),
         }
@@ -373,7 +387,6 @@ impl ImguiRenderLoop for TowerPreview {
 
     fn render(&mut self, ui: &mut Ui) {
         diagnostics::frame();
-        native_settings::begin_frame();
         if options::pressed(ui,Hotkey::Settle) {
             if runtime::PLAYER_READY.load(Ordering::Relaxed) {
                 runtime::QUICK_END.store(true,Ordering::Relaxed);
@@ -539,7 +552,6 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
             }
             return;
         }
-        native_settings::init(diagnostics::module_path(address));
         render_diagnostics::install();
         if options::get().renderer==erdtree_tower::options::Renderer::Window {
             use hudhook::mh::{MH_Initialize,MH_STATUS};

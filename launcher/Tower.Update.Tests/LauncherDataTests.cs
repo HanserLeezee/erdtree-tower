@@ -36,6 +36,7 @@ public sealed class LauncherDataTests : IDisposable
     [Fact]
     public void Locked_log_falls_back_without_truncating_it()
     {
+        if (!OperatingSystem.IsWindows()) return; // 只有 Windows 的共享锁会阻止写入
         Directory.CreateDirectory(Preferred);
         var log = Path.Combine(Preferred, "launcher.log");
         File.WriteAllText(log, "keep");

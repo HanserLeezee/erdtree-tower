@@ -175,7 +175,7 @@ impl Dummy {
             bytes.add(0xc8).write(0);
         }
         world.debug_chr_creator.last_created_chr=None;
-        world.spawn_debug_character(&ChrDebugSpawnRequest{chr_id:MODEL,npc_param_id:NPC,npc_think_param_id:THINK,chara_init_param_id:0,event_entity_id:0,talk_id:-1,
+        super::spawn_guard::spawn(world,&ChrDebugSpawnRequest{chr_id:MODEL,npc_param_id:NPC,npc_think_param_id:THINK,chara_init_param_id:0,event_entity_id:0,talk_id:-1,
             pos_x:origin[0]+at[0],pos_y:origin[1]+at[1],pos_z:origin[2]+at[2]});
         self.requested=Some(Instant::now());self.respawn_at=None;
         Ok(())

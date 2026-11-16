@@ -98,7 +98,6 @@ def copy_tree(src, relative):
 
 copy_file(built_native, native[0])
 copy_file(built_native.with_name('tower_transmog.dll'), 'tower_transmog.dll')
-copy_tree(built_native.parent / 'native-ui', 'native-ui')
 for name in ['LICENSE', 'ADDITIONAL-TERMS.md']:
     copy_file(project / name, 'docs/' + name)
 (stage / 'preview.me3').write_text(profile, encoding='utf-8')

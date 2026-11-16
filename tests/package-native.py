@@ -30,13 +30,6 @@ class NativePackageTests(unittest.TestCase):
         transmog_mock = patch.object(native_build, 'build_transmog', return_value=transmog)
         transmog_mock.start()
         self.addCleanup(transmog_mock.stop)
-        def settings_build(project, target):
-            target.mkdir(parents=True, exist_ok=True)
-            (target / 'ERNativeUI.dll').write_bytes(b'host')
-            (target / 'tower_native_settings.dll').write_bytes(b'provider')
-        settings_mock = patch.object(native_build, 'build_native_settings', side_effect=settings_build)
-        settings_mock.start()
-        self.addCleanup(settings_mock.stop)
         self.destination = self.workspace / 'package/erdtree_tower_party_test.dll'
         self.destination.parent.mkdir()
         self.destination.write_bytes(b'old staged DLL')
@@ -59,8 +52,7 @@ class NativePackageTests(unittest.TestCase):
         self.assertEqual(self.destination.read_bytes(), self.built.read_bytes())
         self.assertEqual(digest, hashlib.sha256(self.built.read_bytes()).hexdigest())
         self.assertEqual(self.checksum.read_text().strip(), digest)
-        self.assertEqual((self.destination.parent / 'native-ui/ERNativeUI.dll').read_bytes(), b'host')
-        self.assertEqual((self.destination.parent / 'native-ui/tower_native_settings.dll').read_bytes(), b'provider')
+        self.assertFalse((self.destination.parent / 'native-ui').exists())
 
     def test_failed_build_cannot_package_previous_binary(self):
         self.built.write_bytes(b'DX12 queue captured from submitted back-buffer PRESENT transition')

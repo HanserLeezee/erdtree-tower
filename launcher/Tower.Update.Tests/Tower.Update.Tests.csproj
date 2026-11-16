@@ -29,5 +29,6 @@
     <Compile Include="../Tower.Launcher/AuthorUnlock.cs" Link="AuthorUnlock.cs" />
     <Compile Include="../Tower.Launcher/LauncherWindowSize.cs" Link="LauncherWindowSize.cs" />
     <Compile Include="../Tower.Launcher/LauncherData.cs" Link="LauncherData.cs" />
+    <Compile Include="../Tower.Launcher/CrashDumps.cs" Link="CrashDumps.cs" />
   </ItemGroup>
 </Project>

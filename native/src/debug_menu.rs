@@ -30,8 +30,9 @@ pub fn valid_spirit_test_item(id:u32)->bool {
 }
 fn custom_buddy_item(param:i32)->Option<u32> {
     let offset=param.checked_sub(1600000000)?;
-    if !(0..480000).contains(&offset)||offset%1000!=0{return None;}
-    let id=0x40000000|(270000+(offset/40000) as u32*1000+(offset%40000/1000) as u32);
+    let families=erdtree_tower::rewards::CUSTOM_SPIRITS.len() as i32;
+    if !(0..families*40000).contains(&offset)||offset%1000!=0{return None;}
+    let id=0x40000000|(erdtree_tower::rewards::CUSTOM_SPIRIT_FIRST+(offset/40000) as u32*1000+(offset%40000/1000) as u32);
     valid_spirit_test_item(id).then_some(id)
 }
 /// 每帧（游戏任务线程）：攻击立刻爆条开着时压低全部敌人的韧性；菜单打开时记下最近那个敌人的韧性。只看敌人，不动玩家、队友与召唤物
@@ -218,7 +219,7 @@ impl Menu {
     }
     fn spirit_tests(&mut self,ui:&Ui,view:&crate::runtime::View,run:&Run) {
         let blocked=PARTY_ROLE.load(Ordering::Relaxed)!=0||view.travelling||!view.ready||matches!(run.phase,erdtree_tower::Phase::Reward{..});
-        ui.text_wrapped(crate::i18n::t("12 种新骨灰，每次领取 1 份，可重复补充。装备到快捷栏后，在战斗场地手动召唤；检验胜利返还请使用召唤师。"));
+        ui.text_wrapped(crate::i18n::t("全部自制骨灰（含按怪池补齐的），每次领取 1 份，可重复补充。装备到快捷栏后，在战斗场地手动召唤；检验胜利返还请使用召唤师。"));
         if PARTY_ROLE.load(Ordering::Relaxed)!=0 {ui.text_disabled(crate::i18n::t("实际组队时禁止发放调试物品；无缝入口独自游玩可用。"));}
         {
             let _disabled=ui.begin_disabled(blocked||view.busy||run.phase!=erdtree_tower::Phase::Map);
@@ -496,15 +497,15 @@ mod tests {
     #[test]
     fn custom_spirit_test_lists_all_presets_and_matches_live_buddy_ids() {
         for level in [0,10,39] {
-            let items=super::new_spirits(level);assert_eq!(items.len(),12);
+            let items=super::new_spirits(level);assert_eq!(items.len(),erdtree_tower::rewards::CUSTOM_SPIRITS.len());
             for (index,(id,_)) in items.iter().enumerate() {
                 assert!(super::valid_spirit_test_item(*id));
                 assert_eq!(super::custom_buddy_item(1600000000+index as i32*40000+level as i32*1000),Some(*id));
             }
         }
         assert!(super::new_spirits(40).is_empty());
-        for id in [0,0x40000000|200000,0x40000000|270040,0x40000000|282000] {assert!(!super::valid_spirit_test_item(id));}
-        for param in [0,1599999999,1600000001,1600480000] {assert_eq!(super::custom_buddy_item(param),None);}
+        for id in [0,0x40000000|200000,0x40000000|270040,0x40000000|326000] {assert!(!super::valid_spirit_test_item(id));}
+        for param in [0,1599999999,1600000001,1600000000+56*40000] {assert_eq!(super::custom_buddy_item(param),None);}
     }
     #[test]
     fn god_mode_leaves_global_hit_and_enemy_protection_off() {

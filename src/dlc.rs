@@ -69,6 +69,7 @@ pub fn mode() -> Mode {
 
 /// 带类别标记的物品编号（武器 0、防具 0x10000000、护符 0x20000000、道具 0x40000000）是否属于 DLC；词条装备看它的底子
 pub fn is_dlc_item(id: u32) -> bool {
+    if crate::rewards::custom_spirit_dlc(id) {return true;}
     let id = crate::affixes::base(id);
     let raw = id & 0x0fff_ffff;
     match id >> 28 {

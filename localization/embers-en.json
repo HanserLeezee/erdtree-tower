@@ -82,5 +82,19 @@
   "致命一击伤害 +{}%": "Critical damage +{0}%",
   "最大生命 +{}%、攻击 +{}%": "Max HP +{0}%, attack +{1}%",
   "最大生命 +{}%": "Max HP +{0}%",
-  "召唤物伤害 +{}%、受到的伤害 -{}%": "Spirit damage +{0}%, damage taken -{1}%"
+  "召唤物伤害 +{}%、受到的伤害 -{}%": "Spirit damage +{0}%, damage taken -{1}%",
+  "帐篷": "Tent",
+  "每个篝火可以免费使用一次\n圣杯瓶补给，不占营地服务次数": "Once per Site of Grace camp, refill\nflasks for free without using\nthe camp service.",
+  "帐篷只提供圣杯瓶补给": "The Tent only offers flask refills.",
+  "这个篝火的帐篷补给已用过": "The Tent refill has already been used at this camp.",
+  "余烬「帐篷」：这次补给免费，篝火服务仍可使用": "Tent ember: this refill was free; the camp service is still available.",
+  "捕捉成功": "Captured",
+  "捕捉成功：获得「{name}」": "Captured: received {name}",
+  "捕捉成功，但骨灰发放失败：{error}": "Captured, but the Spirit Ash could not be granted: {error}",
+  "捕灵壶": "Soul Snare Pot",
+  "投掷壶命中生命低于 {CAPTURE_FROM_PERCENT}% 的敌人时\n有机会捕捉：{CAPTURE_FROM_PERCENT}% 时 {CAPTURE_BASE_CHANCE}%，越低越高\n{CAPTURE_SURE_PERCENT}% 以下必定捕捉\n捕捉视为击杀，并获得它的骨灰（有的话）\nBoss 也能捕捉": "When a thrown pot hits an enemy below {CAPTURE_FROM_PERCENT}% HP,\nyou may capture it: {CAPTURE_BASE_CHANCE}% at {CAPTURE_FROM_PERCENT}%, rising as HP falls,\ncertain at {CAPTURE_SURE_PERCENT}% or below.\nA capture counts as a kill and grants its Spirit Ash (if any).\nBosses can be captured too.",
+  "魔力辉剑": "Glintblade",
+  "魔法命中敌人时\n召唤一把魔力辉剑追击它\n每次施法最多一把": "When a sorcery hits an enemy,\nsummon a glintblade that chases it.\nAt most one per cast.",
+  "由心及物": "Mind over Matter",
+  "最大生命增加\n相当于最大专注的 {MIND_HP_TIMES} 倍": "Max HP increased by\n{MIND_HP_TIMES}× your max FP"
 }

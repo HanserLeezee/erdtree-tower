@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path -LiteralPath $PackageRoot).Path
 if ((Get-Item -LiteralPath $root).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Sign a real staging directory, not a link.' }
 if (Get-ChildItem -LiteralPath $root -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } | Select-Object -First 1) { throw 'Staging directory contains a reparse point.' }
-$owned = '^(ErdtreeTowerLauncher\.exe|Tower\.(Update|AssetRestore|AssetDiagnose|IconCodec|SeamlessGate)\.(exe|dll)|erdtree_tower_preview(?:_v\d+)?\.dll|tower_(transmog|native_settings)\.dll)$'
+$owned = '^(ErdtreeTowerLauncher\.exe|Tower\.(Update|AssetRestore|AssetDiagnose|IconCodec|SeamlessGate)\.(exe|dll)|erdtree_tower_preview(?:_v\d+)?\.dll|tower_transmog\.dll)$'
 $scripts = @('Start-Tower.ps1','Launch-Logged.ps1','Launch-Seamless-Tower.ps1','Tower-Loader.ps1','Tower-Network.ps1','Tower-SessionGate.ps1')
 $files = @(Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object {
     $_.Name -match $owned -or ($_.DirectoryName -eq $root -and $_.Name -in $scripts)

@@ -102,6 +102,8 @@ pub struct Room {
     saved_fp: i32,
     restored: bool,
     pub allowance_issued: bool,
+    /// 余烬「帐篷」：这个篝火还有一次免费补瓶（由运行时每帧按旅程更新），服务用完后补给 NPC 仍接受补瓶
+    pub tent: bool,
     /// 营地发放强化石到账时身上的强化石数量：少于它就说明营地的一次服务用掉了
     pub allowance_target: u32,
     allowance:super::smith::Grant,
@@ -241,6 +243,7 @@ impl Room {
             saved_fp: fp,
             restored: kind==NodeKind::Monster,
             allowance_issued: false,
+            tent: false,
             allowance_target: 0,
             allowance:super::smith::Grant::default(),
             view: RoomView {
@@ -426,7 +429,7 @@ impl Room {
                     bytes.add(0xc8).write(player_model(model));
                 }
                 world.debug_chr_creator.last_created_chr = None;
-                world.spawn_debug_character(&ChrDebugSpawnRequest {
+                super::spawn_guard::spawn(world,&ChrDebugSpawnRequest {
                     chr_id: model,
                     npc_param_id: npc,
                     npc_think_param_id: think,
@@ -494,7 +497,7 @@ impl Room {
                 },
             }
         }
-        for talk in &mut self.talks {talk.set_camp_used(self.view.completed);}
+        for talk in &mut self.talks {talk.set_camp_used(self.view.completed&&!self.tent);}
         let skip=usize::from(self.merchant_down||self.patches_host()&&self.patches_angry);
         if self.merchant_down&&let Some(talk)=self.talks.first_mut(){talk.suspend()?;}
         if let Some((index,_)) = self.talks.iter().enumerate().skip(skip).find(|(_,talk)|talk.active()) {

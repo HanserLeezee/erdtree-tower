@@ -67,6 +67,10 @@ fn breaker_boss(rank:u8)->bool {rank<=1}
 #[derive(Default)]
 struct Break {key:u64,bursts:Vec<i32>,effects:Vec<i32>,hp:i32}
 const FLASH:i32=FIRST+40;
+/// 捕灵壶：捕捉成功时挂在敌人身上的一次性扣血（一下扣满最大生命，走游戏自己的死亡流程；scene-builder capture-patch）
+pub const CAPTURE:i32=FIRST+29;
+/// 投掷壶的使用动作（EquipParamGoods.goodsUseAnim）：3 与 42 投掷壶、20 附绳壶、67 双手投出的重壶
+const POT_ANIMS:[u8;4]=[3,20,42,67];
 /// 灵唤铃的号令：挂在召唤物身上
 const SPIRIT_COMMAND:i32=FIRST+50;
 fn frenzy_effect(stack:u8)->i32 {if stack<=8 {FIRST+30+i32::from(stack)}else{FIRST+100+i32::from(stack)-9}}
@@ -123,7 +127,7 @@ fn player_ids()->impl Iterator<Item=i32> {[EXECUTION,REVENGE,ECHO,BARRIER,MEDITA
 /// 叠层余烬不设上限：每种两行轮换（灵魂收容挂在召唤物身上，其余挂在玩家身上）。
 /// 层数变了就把新倍率写进没挂着的那一行、换上它，再摘掉旧的那一行；不改正在生效的那一行
 fn slots(ember:Ember)->Option<[i32;2]> {
-    let base=match ember {Ember::Battlemage=>26,Ember::Godslayer=>60,Ember::Harvest=>62,Ember::SoulEater=>70,Ember::Chain=>80,Ember::SpiritKeeper=>90,_=>return None};
+    let base=match ember {Ember::Mind=>42,Ember::Battlemage=>26,Ember::Godslayer=>60,Ember::Harvest=>62,Ember::SoulEater=>70,Ember::Chain=>80,Ember::SpiritKeeper=>90,_=>return None};
     Some([FIRST+base,FIRST+base+1])
 }
 const PLAYER_STACKING:[Ember;4]=[Ember::Godslayer,Ember::Harvest,Ember::SoulEater,Ember::Chain];
@@ -165,6 +169,26 @@ fn scaled_slot_rates(ember:Ember,level:u32,present:&[i32],rates:embers::Rates)->
     let free=slots.into_iter().find(|id|!present.contains(id))?;
     write(params.get_mut::<SpEffectParam>(free as u32)?,ember,rates);
     Some(free)
+}
+/// 由心及物换行后等这么久再重新计算：游戏不一定当帧就按新倍率更新最大生命，立刻重算会在两个倍率之间来回换
+const MIND_SETTLE:Duration=Duration::from_secs(1);
+static MIND_SWAPPED:std::sync::Mutex<Option<Instant>>=std::sync::Mutex::new(None);
+fn mind_hp_slot(chr:&ChrIns,present:&[i32])->Option<i32> {
+    let slots=slots(Ember::Mind)?;
+    let current=slots.into_iter().find(|id|present.contains(id));
+    let mut swapped=MIND_SWAPPED.lock().ok()?;
+    if let Some(id)=current&&swapped.is_some_and(|at|at.elapsed()<MIND_SETTLE) {return Some(id);}
+    let params=unsafe {SoloParamRepository::instance()}.ok()?;
+    let rate_now=current.and_then(|id|params.get::<SpEffectParam>(id as u32)).map_or(1.0,|row|row.max_hp_rate());
+    let data=&chr.modules.data;
+    if rate_now<=0.0||data.max_hp<=0 {return current;}
+    let base=(data.max_hp as f32/rate_now).round() as i32;
+    let rate=embers::mind_hp_rate(base,data.max_fp);
+    // 变化不到 1% 不换（专注上限小幅波动、取整误差）
+    if let Some(id)=current&&(rate-rate_now).abs()<0.01 {return Some(id);}
+    let want=scaled_slot_rates(Ember::Mind,1,present,embers::Rates{attack:1.0,hp:rate,cut:1.0});
+    if want.is_some()&&want!=current {*swapped=Some(Instant::now());super::log(format!("TOWER_EMBER mind base_hp={base} max_fp={} rate={rate}",data.max_fp));}
+    want.or(current)
 }
 /// 按 scaled_slot 的结果在一个角色身上换行：先挂新的再摘旧的（屠神者摘掉最大生命倍率时不会先把当前生命压低）
 fn swap<C:ChrInsExt+?Sized>(chr:&mut C,present:&[i32],ember:Ember,want:Option<i32>) {
@@ -309,6 +333,9 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>,fight:&Fight,spirit_alive:bool,grea
     // 战斗法师的减伤：按智力、信仰较高者，能力值变了就换一行
     let mind=if battlemage {unsafe {eldenring::cs::PlayerIns::local_player()}.ok().map_or(0,|p|{let d=unsafe {p.player_game_data.as_ref()};d.intelligence.max(d.faith)})}else{0};
     swap(chr,&present,Ember::Battlemage,scaled_slot(Ember::Battlemage,mind,&present));
+    // 由心及物：最大生命 + 最大专注 × 3，按不算这枚余烬的最大生命换算成倍率
+    let mind_slot=if embers.contains(&Ember::Mind) {mind_hp_slot(chr,&present)}else{None};
+    swap(chr,&present,Ember::Mind,mind_slot);
     for id in player_ids() {if present.contains(&id)&&!want.contains(&id){chr.remove_speffect(id);}}
     if want.is_empty()||!ready(&want) {observe_chain(chr,stacks.level(Ember::Chain));return;}
     for id in want {if !present.contains(&id){chr.apply_speffect(id,false);}}
@@ -325,7 +352,9 @@ fn distance(a:[f32;3],b:[f32;3])->f32 {((a[0]-b[0]).powi(2)+(a[1]-b[1]).powi(2)+
 struct Foe {handle:FieldInsHandle,hp:i32,max:i32,pos:[f32;3],alive:bool,boss:bool,rank:u8,slot:u8,hit_at:Option<Instant>}
 /// 一帧的结果：噬神之蛇的饱食是否要补红瓶、让叠层余烬加层的事件、联机成员要请房主执行的敌人侧效果
 #[derive(Default)]
-pub struct Events {pub feast:bool,pub gains:Vec<Gain>,pub strikes:Vec<Strike>}
+pub struct Events {pub feast:bool,pub gains:Vec<Gain>,pub strikes:Vec<Strike>,
+    /// 捕灵壶：本机玩家捕捉到的敌人模型（由运行时发对应的骨灰）
+    pub captures:Vec<i32>}
 /// 本机玩家与本机召唤物：联机时只算他们的命中与击倒（看敌人的 last_hit_by）
 fn own_handles(world:&WorldChrMan)->Vec<FieldInsHandle> {
     world.main_player.as_ref().map(|p|p.chr_ins.field_ins_handle).into_iter().chain(world.summon_buddy_chr_set.characters().map(|c|c.field_ins_handle)).collect()
@@ -369,6 +398,8 @@ pub struct Fight {
     attributed:[bool;2],
     /// 鲜血骑士的破势：每只敌人的发作状态；probes：本场已记的校准日志条数
     breaks:Vec<Break>,probes:u8,
+    /// 捕灵壶：最近一次扔出投掷壶的时间（只给之后 CAPTURE_WINDOW_MS 内的第一次命中用），上一帧的投掷道具与它的数量
+    pot:Option<Instant>,pot_item:Option<u32>,pot_count:u64,capture_seed:u64,
 }
 impl Fight {
     pub fn observe_practice_refill(&mut self,world:&WorldChrMan) {
@@ -408,11 +439,14 @@ impl Fight {
     pub fn casting(&self)->bool {self.cast_until.is_some_and(|until|Instant::now()<until)}
     /// foes：(句柄, 血条等级 enemies::bar_rank, 名单位置)；authority：房主或单人（敌人侧效果直接执行，否则交给房主）；
     /// party：联机（命中与击倒只算本机玩家与召唤物的）；keeper：灵魂收容当前层数
-    pub fn tick(&mut self,world:&mut WorldChrMan,key:(u64,u8,usize),held:&[Ember],foes:&[(FieldInsHandle,u8,u8)],authority:bool,party:bool,flasks:Option<u8>,keeper:u32)->Events {
-        if self.key!=Some(key) {*self=Self{key:Some(key),..Default::default()};}
+    /// track_kills：没有余烬也要统计击倒（星辉术士「星涌」击倒回专注用）
+    pub fn tick(&mut self,world:&mut WorldChrMan,key:(u64,u8,usize),held:&[Ember],foes:&[(FieldInsHandle,u8,u8)],authority:bool,party:bool,flasks:Option<u8>,keeper:u32,track_kills:bool)->Events {
+        if self.key!=Some(key) {*self=Self{key:Some(key),..Default::default()};super::glintblade::reset();}
+        // 魔力辉剑：持有时才在弹体生成挂钩里记录本机玩家的施法
+        super::glintblade::set_owner(world.main_player.as_ref().filter(|_|held.contains(&Ember::Glintblade)).map(|p|&p.chr_ins.field_ins_handle));
         let drank=matches!((self.flasks,flasks),(Some(before),Some(after)) if after<before);self.flasks=flasks;
         let mut events=Events::default();
-        if held.is_empty() {return events;}
+        if held.is_empty()&&!track_kills {return events;}
         let has=|e:Ember|held.contains(&e);
         let now=Instant::now();
         let Some(player)=world.main_player.as_ref() else{return events};
@@ -433,6 +467,15 @@ impl Fight {
             }
         }
         let Some(player)=world.main_player.as_ref() else{return events};
+        // 捕灵壶：正在使用的道具是投掷壶时记下扔出的时间。刚换成壶、或同一种壶的数量变少都算新扔了一只（无底囊下不消耗，只能靠前者）
+        if has(Ember::Capture) {
+            let pot=player.chr_ins.tae_queued_use_item.as_valid().filter(|item|item.category()==eldenring::cs::ItemCategory::Goods).map(|item|item.param_id())
+                .filter(|id|unsafe {SoloParamRepository::instance()}.ok().and_then(|p|p.get::<EquipParamGoods>(*id)).is_some_and(|row|POT_ANIMS.contains(&row.goods_use_anim())));
+            let count=pot.map_or(0,|id|super::items::stack_count(unsafe {player.player_game_data.as_ref()},id));
+            let thrown=pot.is_some()&&(pot!=self.pot_item||count<self.pot_count);
+            if thrown {self.pot=Some(now);super::log(format!("TOWER_EMBER capture pot thrown item={:?} count={count}",pot));}
+            (self.pot_item,self.pot_count)=(pot,count);
+        }
         let data=&player.chr_ins.modules.data;
         let (hp,max_hp,stamina,max_stamina)=(data.hp,data.max_hp,data.stamina,data.max_stamina);
         // 法师余烬：施法键（主手、副手，含武器上的施法）按住即算施法，松开后再保持一会儿，出招动作放完前都算
@@ -465,7 +508,7 @@ impl Fight {
         let at=|c:&ChrIns|{let q=c.modules.physics.position;[q.0,q.1,q.2]};
         let mine_at:Vec<_>=std::iter::once(here).chain(world.summon_buddy_chr_set.characters().filter(|c|living(c)).map(|c|at(c))).collect();
         let others_at:Vec<_>=world.player_chr_set.characters().map(|p|&p.chr_ins).filter(|c|!own.contains(&c.field_ins_handle)&&living(c)).map(at).collect();
-        if party {
+        if party||has(Ember::Glintblade) {
             let teammates:Vec<_>=world.player_chr_set.characters().map(|p|p.chr_ins.field_ins_handle).filter(|h|!own.contains(h)).collect();
             self.bullets.retain(|&(t,_,_)|now.duration_since(t)<=BULLET_MEMORY);
             if let Ok(manager)=unsafe {eldenring::cs::CSBulletManager::instance()} {
@@ -481,6 +524,8 @@ impl Fight {
         }
         // 自己造成的伤害（米凯拉之刃按它吸血）：自己那几只敌人每一帧掉的生命都算，不受命中判定的门槛与间隔限制
         let (mut hits,mut deaths,mut dealt)=(Vec::new(),Vec::new(),0i64);
+        let mut captured:Vec<usize>=Vec::new();
+        let mut blades:Vec<(FieldInsHandle,[f32;3])>=Vec::new();
         for &(ref handle,rank,slot) in foes {
             let Some(chr)=world.chr_ins_by_handle(handle) else{continue};
             let (foe_hp,foe_max)=(chr.modules.data.hp,chr.modules.data.max_hp);
@@ -493,6 +538,7 @@ impl Fight {
                 self.foes.push(Foe{handle:*handle,hp:foe_hp,max:foe_max,pos,alive,boss:rank<=1,rank,slot,hit_at:None});continue;
             };
             let foe=&mut self.foes[index];
+            let before=foe.hp;
             let drop=foe.hp-foe_hp;let lost=(foe.hp-foe_hp.max(0)).max(0);
             let died=foe.alive&&!alive;
             let hit=!died&&alive&&buildup_hit(drop,foe_max,foe.hit_at.map(|t|now.duration_since(t)));
@@ -504,8 +550,30 @@ impl Fight {
                 super::log(format!("TOWER_EMBER party {} by {attacker} counted={mine}{}",if died{"kill"}else{"hit"},if !attacker.is_empty(){""}else if by_bullet.is_some(){" (bullet)"}else{" (nearest)"}));
             }
             if !mine {continue;}
+            // 捕灵壶：扔出的壶之后第一次打中自己这边的敌人（Boss 也算），按命中前的生命掷一次（每只壶只掷一次）；这一下直接打死也算捕捉到
+            if has(Ember::Capture)&&drop>0&&self.pot.is_some_and(|t|now.duration_since(t)<=Duration::from_millis(embers::CAPTURE_WINDOW_MS)) {
+                self.pot=None;
+                if let Some(chance)=embers::capture_chance_permille(before,foe_max) {
+                    if self.capture_seed==0 {self.capture_seed=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0x9e37_79b9,|d|d.as_nanos() as u64)|1;}
+                    self.capture_seed^=self.capture_seed<<13;self.capture_seed^=self.capture_seed>>7;self.capture_seed^=self.capture_seed<<17;
+                    let roll=(self.capture_seed%1000) as u32;
+                    let caught=roll<chance;
+                    super::log(format!("TOWER_EMBER capture model={} hp={before}/{foe_max} chance={chance}permille roll={roll} caught={caught} killed_by_hit={died}",chr.npc_id));
+                    if caught {captured.push(index);events.captures.push(chr.npc_id);}
+                }
+            }
+            // 魔力辉剑：自己的弹体刚落在这只敌人附近、它掉了血，且还有一次没换过辉剑的施法
+            if has(Ember::Glintblade)&&drop>0&&alive
+                &&self.bullets.iter().any(|&(t,p,own)|own&&now.duration_since(t)<=BULLET_MEMORY&&distance(p,pos)<=BULLET_REACH)
+                &&super::glintblade::take_cast() {blades.push((*handle,pos));}
             dealt+=i64::from(lost);
             if died {deaths.push(index);} else if hit {hits.push((index,drop));}
+        }
+        for (target,pos) in blades {
+            match super::glintblade::spawn(here,&target,pos) {
+                Ok(())=>super::log(format!("TOWER_EMBER glintblade spawned target={target}")),
+                Err(error)=>super::log_repeating(format!("TOWER_EMBER glintblade: {error}")),
+            }
         }
         // 召唤物：只看本机玩家的骨灰
         let spirit=world.summon_buddy_chr_set.characters().find(|c|c.modules.data.hp>0&&!c.chr_flags1c5.death_flag())
@@ -589,6 +657,7 @@ impl Fight {
         if events.feast {self.feasts+=1;}
         // 敌人侧：房主与单人直接执行；联机成员算出来交给房主（命中、击倒都只算自己的）
         let mut strikes:Vec<(usize,Strike)>=Vec::new();
+        for &index in &captured {if self.foes[index].alive {strikes.push((index,Strike::Capture{slot:self.foes[index].slot}));}}
         for &(index,_) in &hits {
             for ember in [Ember::Bloodlord,Ember::Frost] {if has(ember) {strikes.push((index,Strike::Buildup{slot:self.foes[index].slot,ember}));}}
         }
@@ -615,6 +684,13 @@ impl Fight {
         if chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag() {return;}
         let max=chr.modules.data.max_hp;
         let damage=match strike {
+            Strike::Capture{..}=>{
+                // 先压到 1 点再挂一次性扣满的特效，由游戏自己判定死亡；缺特效行时只压到 1 点，下一击就倒
+                chr.modules.data.hp=1;foe.hp=1;chr.apply_speffect(FLASH,false);
+                if ready(&[CAPTURE]) {chr.apply_speffect(CAPTURE,false);}
+                else if !self.missing {super::log("TOWER_EMBER missing capture effect; update regulation.bin");self.missing=true;}
+                return;
+            },
             Strike::Buildup{ember,..}=>{if let Some(effect)=buildup_effect(ember){apply_buildup(chr,effect);}return;},
             Strike::Wound{ember,..}=>embers::enemy_damage(max,embers::wound_percent(ember).unwrap_or(0),foe.boss),
             Strike::Thorns{taken,..}=>embers::thorns_damage(taken,max,foe.boss),

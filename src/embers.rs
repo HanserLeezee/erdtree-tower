@@ -2,7 +2,7 @@ use serde::{Deserialize,Serialize};
 
 /// 余烬：誓约三选一里的机制增益，没有代价，不能深化；选过的整局生效
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash,Serialize,Deserialize)]
-pub enum Ember {Execution,Bloodlord,Frost,Deathflame,Miquella,Rise,DragonHeart,Revenge,Frenzy,Echo,Feast,Thorns,SpiritLink,SpiritBurst,SpiritFeast,SpiritCommand,SpiritTwin,SoulEater,Chain,Godslayer,SpiritKeeper,Barrier,Meditation,Glintstone,FullMoon,Footwork,SpiritResonance,Pouch,Arts,Bulwark,Breaker,Harvest,LastStand,Martyr,Mercy,Battlemage,Stride,FrostShackle}
+pub enum Ember {Execution,Bloodlord,Frost,Deathflame,Miquella,Rise,DragonHeart,Revenge,Frenzy,Echo,Feast,Thorns,SpiritLink,SpiritBurst,SpiritFeast,SpiritCommand,SpiritTwin,SoulEater,Chain,Godslayer,SpiritKeeper,Barrier,Meditation,Glintstone,FullMoon,Footwork,SpiritResonance,Pouch,Arts,Bulwark,Breaker,Harvest,LastStand,Martyr,Mercy,Battlemage,Stride,FrostShackle,Tent,Capture,Glintblade,Mind}
 
 // 运行时数值（参数类的数值见 scene-builder/EmberAssets.cs，说明文字同步引用这些常量）
 pub const EXECUTION_SECONDS:u32=10;
@@ -87,19 +87,49 @@ pub fn martyr_fp(taken:i32,max_hp:i32,max_fp:i32)->i32 {
 }
 pub const LAST_STAND_POISE_PERCENT:u32=200;
 pub const HARVEST_STEP_PERCENT:u32=1;
+/// 捕灵壶：投掷壶命中时，敌人生命低于 CAPTURE_FROM_PERCENT% 才能捕捉，此时概率 CAPTURE_BASE_CHANCE%；
+/// 生命越低概率线性升高，到 CAPTURE_SURE_PERCENT% 及以下必定捕捉
+pub const CAPTURE_FROM_PERCENT:u32=30;
+/// 由心及物：最大生命增加最大专注的这么多倍（游戏只能按倍率改最大生命，运行时按当前数值换算成倍率）
+pub const MIND_HP_TIMES:u32=3;
+/// 由心及物的最大生命倍率：base 为不算这枚余烬时的最大生命，按千分之一取整（倍率不变就不用换行）
+pub fn mind_hp_rate(base:i32,max_fp:i32)->f32 {
+    if base<=0||max_fp<=0 {return 1.0;}
+    let rate=(f64::from(base)+f64::from(max_fp)*f64::from(MIND_HP_TIMES))/f64::from(base);
+    ((rate*1000.0).round()/1000.0) as f32
+}
+pub const CAPTURE_SURE_PERCENT:u32=10;
+pub const CAPTURE_BASE_CHANCE:u32=20;
+/// 扔出投掷壶后这么久内的第一次命中算这只壶的（壶飞行加爆炸的时间）
+pub const CAPTURE_WINDOW_MS:u64=4000;
+/// 捕捉概率（千分比）：hp 为命中前的生命；None 为生命还不够低、不能捕捉
+pub fn capture_chance_permille(hp:i32,max:i32)->Option<u32> {
+    if hp<=0||max<=0 {return None;}
+    let permille=(i64::from(hp)*1000/i64::from(max)) as u32;
+    let (from,sure)=(CAPTURE_FROM_PERCENT*10,CAPTURE_SURE_PERCENT*10);
+    if permille>from {return None;}
+    if permille<=sure {return Some(1000);}
+    // from → base，sure → 1000，中间线性
+    let base=CAPTURE_BASE_CHANCE*10;
+    Some(base+(from-permille)*(1000-base)/(from-sure))
+}
 /// 倍率计算的点数上限：只防浮点溢出（1.01^1000 约 2 万倍），正常一局远远到不了，规则上视为不设上限
 pub const HARVEST_POINT_CAP:u32=1000;
 
 impl Ember {
-    pub const ALL:[Self;37]=[Self::Execution,Self::Bloodlord,Self::Frost,Self::Deathflame,Self::Miquella,Self::Rise,Self::DragonHeart,Self::Revenge,Self::Frenzy,Self::Echo,Self::Feast,Self::Thorns,
+    pub const ALL:[Self;41]=[Self::Execution,Self::Bloodlord,Self::Frost,Self::Deathflame,Self::Miquella,Self::Rise,Self::DragonHeart,Self::Revenge,Self::Frenzy,Self::Echo,Self::Feast,Self::Thorns,
         Self::SpiritLink,Self::SpiritBurst,Self::SpiritFeast,Self::SpiritCommand,Self::SpiritTwin,Self::SoulEater,Self::Chain,Self::Godslayer,Self::SpiritKeeper,
-        Self::Barrier,Self::Meditation,Self::Glintstone,Self::FullMoon,Self::Footwork,Self::SpiritResonance,Self::Pouch,Self::Arts,Self::Bulwark,Self::Breaker,Self::Harvest,Self::LastStand,Self::Martyr,Self::Mercy,Self::Battlemage,Self::FrostShackle];
+        Self::Barrier,Self::Meditation,Self::Glintstone,Self::FullMoon,Self::Footwork,Self::SpiritResonance,Self::Pouch,Self::Arts,Self::Bulwark,Self::Breaker,Self::Harvest,Self::LastStand,Self::Martyr,Self::Mercy,Self::Battlemage,Self::FrostShackle,Self::Tent,Self::Capture,Self::Glintblade,Self::Mind];
     // Retained only for old saves and archived runs.
     pub fn retired(self)->bool {matches!(self,Self::Stride|Self::SpiritTwin)}
-    pub fn index(self)->usize {match self {Self::Stride=>36,Self::FrostShackle=>37,_=>Self::ALL.iter().position(|e|*e==self).unwrap()}}
-    pub fn icon_index(self)->usize {if self==Self::FrostShackle{Self::Frost.index()}else{self.index()}}
+    pub fn index(self)->usize {match self {Self::Stride=>36,Self::FrostShackle=>37,Self::Tent=>38,Self::Capture=>39,Self::Glintblade=>40,Self::Mind=>41,_=>Self::ALL.iter().position(|e|*e==self).unwrap()}}
+    pub fn icon_index(self)->usize {match self {Self::FrostShackle=>Self::Frost.index(),Self::Tent=>Self::Echo.index(),Self::Capture=>Self::SpiritCommand.index(),Self::Glintblade=>Self::Glintstone.index(),Self::Mind=>Self::Meditation.index(),_=>self.index()}}
     pub fn name(self)->&'static str {match self {
         Self::FrostShackle=>"寒霜枷锁",
+        Self::Tent=>"帐篷",
+        Self::Capture=>"捕灵壶",
+        Self::Glintblade=>"魔力辉剑",
+        Self::Mind=>"由心及物",
         Self::Execution=>"无声处刑",Self::Bloodlord=>"鲜血君王的赐福",Self::Frost=>"永冻吐息",Self::Deathflame=>"死诞之焰",
         Self::Miquella=>"米凯拉之刃",Self::Rise=>"荷莱·露的再起",Self::DragonHeart=>"古龙之心",Self::Revenge=>"以血还血",
         Self::Frenzy=>"癫火狂热",Self::Echo=>"圣杯余响",Self::Feast=>"噬神之蛇的饱食",Self::Thorns=>"荆棘之躯",
@@ -109,6 +139,10 @@ impl Ember {
         Self::Footwork=>"黑刀刺客的身法",Self::SpiritResonance=>"灵唤师的共鸣",Self::Pouch=>"行商的无底囊",Self::Arts=>"战技的精粹",Self::Bulwark=>"坩埚骑士的铁壁",Self::Breaker=>"鲜血骑士的破势",Self::Harvest=>"处刑者的血宴",Self::LastStand=>"红狮子的不退",Self::Martyr=>"殉道者的苦修",Self::Mercy=>"黄金树的恩泽",Self::Battlemage=>"战斗法师",Self::Stride=>"已移除的余烬",
     }}
     pub fn effect(self)->String {match self {
+        Self::Mind=>format!("最大生命增加\n相当于最大专注的 {MIND_HP_TIMES} 倍"),
+        Self::Glintblade=>"魔法命中敌人时\n召唤一把魔力辉剑追击它\n每次施法最多一把".into(),
+        Self::Capture=>format!("投掷壶命中生命低于 {CAPTURE_FROM_PERCENT}% 的敌人时\n有机会捕捉：{CAPTURE_FROM_PERCENT}% 时 {CAPTURE_BASE_CHANCE}%，越低越高\n{CAPTURE_SURE_PERCENT}% 以下必定捕捉\n捕捉视为击杀，并获得它的骨灰（有的话）\nBoss 也能捕捉"),
+        Self::Tent=>"每个篝火可以免费使用一次\n圣杯瓶补给，不占营地服务次数".into(),
         Self::FrostShackle=>"敌人触发冻伤后，持续 10 秒\n行动速度 -30%，造成伤害 -20%\n再次触发刷新持续时间，不叠加".into(),
         Self::Execution=>format!("致命一击后 {EXECUTION_SECONDS} 秒内\n精力消耗 -{EXECUTION_STAMINA_CUT}%"),
         Self::Bloodlord=>format!("每次命中积累\n{BUILDUP} 点出血"),
@@ -150,7 +184,7 @@ impl Ember {
     }}
     /// 品质：余烬只有史诗（2）与传说（3），按强度定，决定抽到的概率与奖励卡的颜色
     pub fn quality(self)->u8 {match self {
-        Self::Rise|Self::SpiritTwin|Self::Miquella|Self::Feast|Self::Godslayer|Self::Meditation|Self::SpiritResonance|Self::Breaker|Self::Harvest|Self::Battlemage=>3,
+        Self::Rise|Self::SpiritTwin|Self::Miquella|Self::Feast|Self::Godslayer|Self::Meditation|Self::SpiritResonance|Self::Breaker|Self::Harvest|Self::Battlemage|Self::Capture|Self::Mind=>3,
         _=>2,
     }}
     /// 只影响敌人的余烬：联机客机上不生效（敌人由房主计算）
@@ -185,7 +219,8 @@ impl Ember {
             Self::Stride=>Some(&[Astrologer,Prophet,Confessor]),
             Self::Bloodlord|Self::Frost|Self::Footwork|Self::Breaker=>Some(&[Samurai]),
             Self::Barrier|Self::Meditation|Self::Glintstone|Self::FullMoon|Self::Martyr|Self::Battlemage=>Some(&[Astrologer,Prophet]),
-            Self::SpiritLink|Self::SpiritBurst|Self::SpiritFeast|Self::SpiritCommand|Self::SpiritTwin|Self::SpiritKeeper|Self::SpiritResonance=>Some(&[Confessor]),
+            Self::Glintblade=>Some(&[Astrologer]),
+            Self::SpiritLink|Self::SpiritBurst|Self::SpiritFeast|Self::SpiritCommand|Self::SpiritTwin|Self::SpiritKeeper|Self::SpiritResonance|Self::Capture=>Some(&[Confessor]),
             _=>None,
         }
     }
@@ -204,20 +239,23 @@ pub enum Strike {
     Wound{slot:u8,ember:Ember},
     /// 荆棘之躯：按成员受到的伤害反弹
     Thorns{slot:u8,taken:i32},
+    /// 捕灵壶：成员用投掷壶捕捉成功（概率在成员那边掷过），房主把这只敌人打倒
+    Capture{slot:u8},
 }
 /// 荆棘之躯一次反弹按受到的伤害计，超过这个数视为无效请求
 pub const THORNS_TAKEN_LIMIT:i32=100_000;
 /// 汇报里最多带的敌人侧效果条数（最近的若干条；房主按序号执行没执行过的）
 pub const STRIKE_WINDOW:usize=32;
 impl Strike {
-    pub fn slot(self)->u8 {match self {Self::Buildup{slot,..}|Self::Wound{slot,..}|Self::Thorns{slot,..}=>slot}}
-    pub fn ember(self)->Ember {match self {Self::Buildup{ember,..}|Self::Wound{ember,..}=>ember,Self::Thorns{..}=>Ember::Thorns}}
+    pub fn slot(self)->u8 {match self {Self::Buildup{slot,..}|Self::Wound{slot,..}|Self::Thorns{slot,..}|Self::Capture{slot}=>slot}}
+    pub fn ember(self)->Ember {match self {Self::Buildup{ember,..}|Self::Wound{ember,..}=>ember,Self::Thorns{..}=>Ember::Thorns,Self::Capture{..}=>Ember::Capture}}
     /// 成员确实带着这个余烬，且效果类型与余烬对得上
     pub fn valid(self,held:&[Ember])->bool {
         held.contains(&self.ember())&&match self {
             Self::Buildup{ember,..}=>matches!(ember,Ember::Bloodlord|Ember::Frost),
             Self::Wound{ember,..}=>wound_percent(ember).is_some(),
             Self::Thorns{taken,..}=>(1..=THORNS_TAKEN_LIMIT).contains(&taken),
+            Self::Capture{..}=>true,
         }
     }
 }
@@ -388,6 +426,10 @@ pub fn carries_catalyst(run:&crate::Run)->bool {
 /// 借用原版护符的图标
 pub fn icon_talisman(ember:Ember)->u32 {match ember {
     Ember::FrostShackle=>1140,
+    Ember::Tent=>5000,
+    Ember::Capture=>3060,
+    Ember::Glintblade=>1010,
+    Ember::Mind=>1010,
     Ember::Execution=>5050,Ember::Bloodlord=>2160,Ember::Frost=>1140,Ember::Deathflame=>1190,Ember::Miquella=>1250,Ember::Rise=>3090,
     Ember::DragonHeart=>4020,Ember::Revenge=>2060,Ember::Frenzy=>2080,Ember::Echo=>5000,Ember::Feast=>5030,Ember::Thorns=>1210,
     Ember::SpiritLink=>6090,Ember::SpiritBurst=>6020,Ember::SpiritFeast=>2210,Ember::SpiritCommand=>3060,Ember::SpiritTwin=>6090,
@@ -416,6 +458,42 @@ mod tests {
         assert_eq!(Ember::ALL.iter().map(|e|e.index()).collect::<std::collections::HashSet<_>>().len(),Ember::ALL.len());
         let held:Vec<_>=Ember::ALL.into_iter().filter(|e|*e!=Ember::FrostShackle).collect();
         assert_eq!(offer(1,&held,false,false,None),Some(Ember::FrostShackle));
+    }
+    #[test]
+    fn mind_adds_three_times_max_fp_as_a_rate_of_base_hp() {
+        use super::*;
+        assert_eq!(mind_hp_rate(1000,100),1.3);
+        assert_eq!(mind_hp_rate(500,200),2.2);
+        assert_eq!(mind_hp_rate(1000,0),1.0);assert_eq!(mind_hp_rate(0,100),1.0);
+        assert!(Ember::Mind.classes().is_none()&&Ember::Mind.quality()==3&&Ember::Mind.index()==41);
+    }
+    #[test]
+    fn glintblade_is_an_astrologer_epic_with_a_new_id() {
+        use super::*;
+        assert_eq!(Ember::Glintblade.index(),40);assert_eq!(Ember::Glintblade.icon_index(),Ember::Glintstone.index());
+        assert_eq!(Ember::Glintblade.quality(),2);assert_eq!(Ember::Glintblade.classes(),Some(&[crate::Class::Astrologer][..]));
+        assert_eq!(Ember::ALL.iter().map(|e|e.index()).collect::<std::collections::HashSet<_>>().len(),Ember::ALL.len());
+    }
+    #[test]
+    fn capture_chance_starts_at_thirty_percent_and_is_certain_at_ten() {
+        use super::*;
+        assert_eq!(capture_chance_permille(301,1000),None);
+        assert_eq!(capture_chance_permille(300,1000),Some(200));
+        assert_eq!(capture_chance_permille(200,1000),Some(600));
+        assert_eq!(capture_chance_permille(150,1000),Some(800));
+        assert_eq!(capture_chance_permille(100,1000),Some(1000));
+        assert_eq!(capture_chance_permille(1,1000),Some(1000));
+        assert_eq!(capture_chance_permille(0,1000),None);
+        assert_eq!(Ember::Capture.index(),39);assert_eq!(Ember::Capture.classes(),Some(&[crate::Class::Confessor][..]));
+        assert_eq!(Ember::Capture.quality(),3);
+    }
+    #[test]
+    fn tent_appends_a_new_id_and_is_universal_epic() {
+        use super::*;
+        assert_eq!(Ember::FrostShackle.index(),37);assert_eq!(Ember::Tent.index(),38);
+        assert_eq!(Ember::Tent.icon_index(),Ember::Echo.index());
+        assert_eq!(Ember::Tent.quality(),2);assert!(Ember::Tent.classes().is_none());
+        assert_eq!(Ember::ALL.iter().map(|e|e.index()).collect::<std::collections::HashSet<_>>().len(),Ember::ALL.len());
     }
     #[test]
     fn twin_is_temporarily_retired_without_renumbering_other_embers() {
@@ -451,7 +529,7 @@ mod tests {
     #[test]
     fn every_quality_has_embers_and_rolls_follow_the_odds() {
         assert!(Ember::ALL.iter().all(|e|matches!(e.quality(),2|3)),"embers are only epic or legendary");
-        assert_eq!(Ember::ALL.iter().filter(|e|e.quality()==3).count(),10);
+        assert_eq!(Ember::ALL.iter().filter(|e|e.quality()==3).count(),12);
         assert_eq!(odds(crate::affixes::QUALITY_START),[0,0,85,15]);assert_eq!(odds(crate::affixes::QUALITY_END),[0,0,72,28]);
         let mut counts=[0u32;4];
         for seed in 0..20000u64 {counts[usize::from(offer_by_quality(seed,&[],true,true,None,[0,0,50,50]).unwrap().quality())]+=1;}
@@ -523,7 +601,7 @@ mod tests {
     fn class_embers_only_reach_their_own_classes() {
         use crate::Class;
         let general=Ember::ALL.iter().filter(|e|e.classes().is_none()).count();
-        assert_eq!(general,14);
+        assert_eq!(general,16);
         for class in Class::PLAYABLE {
             let mut drawn=vec![];
             while let Some(e)=offer(drawn.len() as u64*29,&drawn,true,true,Some(class)) {
@@ -544,10 +622,10 @@ mod tests {
         for _ in 0..Ember::ALL.iter().filter(|e|!e.retired()).count() {let e=offer(held.len() as u64*31,&held,true,true,None).unwrap();assert!(!held.contains(&e));held.push(e);}
         assert_eq!(offer(1,&held,true,true,None),None);
         assert_eq!(offer(5,&[],true,true,None),offer(5,&[],true,true,None));
-        // 没有骨灰、也没有法杖圣印记时只出 25 枚（不分职业时），抽完就没有了
+        // 没有骨灰、也没有法杖圣印记时只出 30 枚（不分职业时），抽完就没有了
         let mut plain=vec![];
         while let Some(e)=offer(plain.len() as u64*17,&plain,false,false,None) {assert!(!e.needs_spirit()&&!e.needs_casting());plain.push(e);}
-        assert_eq!(plain.len(),26);
+        assert_eq!(plain.len(),30);
     }
     #[test]
     fn enemy_damage_is_capped_for_bosses() {

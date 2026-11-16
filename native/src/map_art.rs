@@ -22,9 +22,6 @@ pub fn paper_tinted(draw:&DrawListMut<'_>,min:[f32;2],max:[f32;2],tint:ImColor32
     let Some(id)=texture(&PAPER) else{return false;};
     draw.add_image(id,min,max).col(tint).build();true
 }
-pub fn icon(draw:&DrawListMut<'_>,p:[f32;2],kind:NodeKind,alpha:f32)->bool {
-    icon_scaled(draw,p,kind,alpha,1.0)
-}
 pub fn icon_scaled(draw:&DrawListMut<'_>,p:[f32;2],kind:NodeKind,alpha:f32,zoom:f32)->bool {
     let Some(id)=texture(&ICONS) else{return false;};
     let index=match kind {NodeKind::Monster=>0,NodeKind::Elite=>1,NodeKind::Camp=>2,NodeKind::Shop=>3,NodeKind::Chest=>4,NodeKind::Event=>5,NodeKind::Boss=>6};

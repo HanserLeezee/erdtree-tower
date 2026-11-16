@@ -4,8 +4,8 @@ fn definitions()->Vec<Vec<&'static str>> {
     include_str!("../scene-assets/custom-spirit-definitions.tsv").lines().map(|l|l.split('|').collect()).collect()
 }
 #[test]
-fn all_twelve_custom_spirits_have_names_quality_and_forty_levels() {
-    let defs=definitions();assert_eq!(defs.len(),12);
+fn all_custom_spirits_have_names_quality_and_forty_levels() {
+    let defs=definitions();assert_eq!(defs.len(),56);
     let rarities:std::collections::HashMap<u32,u8>=include_str!("../scene-assets/reward-rarities.tsv").lines().map(|l|{
         let (id,tier)=l.split_once('\t').unwrap();(id.parse().unwrap(),tier.parse().unwrap())
     }).collect();

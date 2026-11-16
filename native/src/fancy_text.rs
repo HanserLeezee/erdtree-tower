@@ -11,6 +11,16 @@ pub fn ui_glyph_ranges()->Option<&'static [u32]> {
     });
     RANGES.as_deref()
 }
+/// 繁体补充字形（localization/generate_zh_tw_fonts.py 生成的 ui-glyphs-tw.txt）：只在语言设为繁体时合并加载
+pub fn traditional_glyph_ranges()->Option<&'static [u32]> {
+    static RANGES:std::sync::LazyLock<Option<Vec<u32>>>=std::sync::LazyLock::new(|| {
+        let text=std::fs::read_to_string(crate::LOG_PATH.with_file_name("scene-assets").join("fonts").join("ui-glyphs-tw.txt")).ok()?;
+        Some(ranges(&text))
+    });
+    RANGES.as_deref()
+}
+pub fn traditional_body_font_path()->std::path::PathBuf {crate::LOG_PATH.with_file_name("scene-assets").join("fonts").join("TowerSerif-TW-Regular.otf")}
+pub fn traditional_title_font_path()->std::path::PathBuf {crate::LOG_PATH.with_file_name("scene-assets").join("fonts").join("TowerTitleSerif-TW-Bold.otf")}
 /// 字符集合并成连续区间 [起, 止, 起, 止, …, 0]；总是包含可见 ASCII
 fn ranges(text:&str)->Vec<u32> {
     let mut codes:Vec<u32>=text.chars().map(u32::from).filter(|c|*c>=0x80).chain(0x20..0x7f).collect();codes.sort_unstable();codes.dedup();

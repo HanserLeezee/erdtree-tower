@@ -51,14 +51,11 @@ fn no_dlc_settings_are_never_promoted_by_unknown_party_state() {
     }
 }
 /// 绑定到某个功能的键在界面上的写法（如 Home、F10、J）
-pub fn label(hotkey:Hotkey)->&'static str {crate::native_settings::live_key(hotkey).unwrap_or_else(||OPTIONS.key(hotkey))}
+pub fn label(hotkey:Hotkey)->&'static str {OPTIONS.key(hotkey)}
 pub fn key(hotkey:Hotkey)->Key {to_key(label(hotkey)).unwrap_or_else(||to_key(hotkey.default_key()).unwrap_or(Key::Home))}
 pub fn pressed(ui:&hudhook::imgui::Ui,hotkey:Hotkey)->bool {
     if !crate::input::foreground() {return false;}
     if label(hotkey)=="None" {return false;}
-    if let Some(pressed)=crate::native_settings::take_pressed(hotkey) {
-        return pressed || (crate::input::active() && ui.is_key_pressed_no_repeat(key(hotkey)));
-    }
     ui.is_key_pressed_no_repeat(key(hotkey))
 }
 

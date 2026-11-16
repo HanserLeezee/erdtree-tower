@@ -8,7 +8,7 @@
 
 Rust 源码与所需 vendored 代码在 `src/`、`native/`，可通过对应的 Cargo.toml 构建。`Build.ps1` 和 `scene-builder/SceneBuilder.csproj` 沿用原工作区布局；完整资源重建仍需原工作区中的 SoulsFormats、UXM、参数定义与游戏文件，仓库未声称包含这些外部依赖。
 
-法术接入的自动验证记录随资源保存。实际施放和原包缺失视觉引用的限制见 README；第三方来源见 THIRD_PARTY_NOTICES.md。
+法术接入的自动验证记录随资源保存。实际施放和原包缺失视觉引用的限制见 CHANGELOG.md；第三方来源见 THIRD_PARTY_NOTICES.md。
 
 ## 协议
 

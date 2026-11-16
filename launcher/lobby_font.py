@@ -8,6 +8,10 @@ src = (root / "launcher/ui/js/app.js").read_text(encoding="utf-8")
 start = src.index("/* ================= 联机大厅"); end = src.index("document.addEventListener('keydown'", start)
 text = src[start:end] + src[src.index("var steamReminder"):src.index("\n", src.index("var steamReminder"))]
 chars = sorted(set(c for c in text if ord(c) > 0x2e80)) + [chr(c) for c in range(0x20, 0x7f)] + list("·，。：；（）「」…—、？！《》“”0123456789")
+# 繁体：同一批字再按 localization/zh-TW 转成繁体，字形一起裁进去（语言设为繁体时大厅也用宋体）
+tables = [dict(l.split("\t") for l in (root / "localization/zh-TW" / n).read_text(encoding="utf-8").splitlines()) for n in ("st.tsv", "phrases.tsv", "variants.tsv")]
+single = {k: v for k, v in tables[0].items() if len(k) == 1}
+chars += [t for c in chars for t in single.get(c, c)] + [t for table in tables[1:] for v in table.values() for t in v]
 out = root / "launcher/ui/assets/fonts"; out.mkdir(parents=True, exist_ok=True)
 for name, dest in [("TowerSerif-Regular.otf", "LobbySerif-Regular.otf"), ("TowerTitleSerif-Bold.otf", "LobbySerif-Bold.otf")]:
     options = subset.Options(); options.layout_features = ["*"]; options.name_IDs = ["*"]; options.notdef_outline = True

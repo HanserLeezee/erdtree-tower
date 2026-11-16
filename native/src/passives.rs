@@ -30,6 +30,23 @@ pub fn heal_victory(chr:&mut ChrIns,run:&Run) {
     let data=&mut chr.modules.data;
     data.hp=victory_hp(run,data.hp,data.max_hp);
 }
+/// 星辉术士「星涌」：自己（含自己的召唤物）击倒敌人时回复专注：普通敌人 10%，精英与 Boss 30%（按最大专注）
+pub const ASTRO_KILL_FP_PERCENT:[u32;2]=[10,30];
+/// gains 里的击倒（Gain::Kill 的 rank：0 普通、1 精英、2 Boss）合计回复多少专注
+fn astro_kill_fp(class:Class,ranks:&[u8],fp:i32,max_fp:i32)->i32 {
+    if class!=Class::Astrologer||max_fp<=0 {return fp;}
+    let percent:u32=ranks.iter().map(|rank|ASTRO_KILL_FP_PERCENT[usize::from(*rank>0)]).sum();
+    if percent==0 {return fp;}
+    (i64::from(fp.max(0))+i64::from(max_fp)*i64::from(percent)/100).min(i64::from(max_fp)) as i32
+}
+pub fn kill_fp(chr:&mut ChrIns,run:Option<&Run>,gains:&[erdtree_tower::embers::Gain]) {
+    let Some(run)=run.filter(|r|r.class==Class::Astrologer&&!matches!(r.phase,Phase::Dead|Phase::Won)) else{return};
+    let ranks:Vec<u8>=gains.iter().filter_map(|g|match g {erdtree_tower::embers::Gain::Kill{rank,..}=>Some(*rank),_=>None}).collect();
+    if ranks.is_empty()||chr.chr_flags1c5.death_flag()||chr.modules.data.hp<=0 {return;}
+    let data=&mut chr.modules.data;
+    let before=data.fp;data.fp=astro_kill_fp(run.class,&ranks,data.fp,data.max_fp);
+    super::log(format!("CLASS_PASSIVE starsurge kills={ranks:?} fp {before}->{}",data.fp));
+}
 /// 祷誓者「圣誓」：旅程中每秒回复 1% 最大专注（至少 1 点）
 fn prophet_regen(fp:i32,max_fp:i32)->i32 {
     if max_fp<=0 {return fp;}
@@ -79,6 +96,16 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn starsurge_restores_fp_on_kills_by_rank() {
+        use erdtree_tower::Class;
+        assert_eq!(super::astro_kill_fp(Class::Astrologer,&[0],20,100),30);
+        assert_eq!(super::astro_kill_fp(Class::Astrologer,&[1],20,100),50);
+        assert_eq!(super::astro_kill_fp(Class::Astrologer,&[2],20,100),50);
+        assert_eq!(super::astro_kill_fp(Class::Astrologer,&[0,0,2],80,100),100,"capped at max FP");
+        assert_eq!(super::astro_kill_fp(Class::Prophet,&[2],20,100),20,"Astrologer only");
+        assert_eq!(super::astro_kill_fp(Class::Astrologer,&[],20,100),20);
+    }
     use super::*;
     #[test]
     fn class_gifts_are_exact() {

@@ -38,12 +38,50 @@ fn parse(text:&'static str)->Vec<Item> {text.lines().map(|line| {
     Item{id:tag|parts.next().unwrap().parse::<u32>().unwrap(),name:parts.next().unwrap(),kind}
 }).collect()}
 pub const SPIRIT_MAX:u8=39;
+/// 自制骨灰（定义表见下方 include_str）：第 n 行的编号是 270000+n*1000；第 10 列 dlc 表示用的是 DLC 怪物的模型
+pub const CUSTOM_SPIRIT_FIRST:u32=270000;
+/// 第一批 12 种之后追加的、按怪池补齐的骨灰从这里开始
+pub const ENEMY_SPIRIT_FIRST:u32=282000;
+/// (编号, 怪物模型, 是否 DLC 模型)
+pub static CUSTOM_SPIRITS:LazyLock<Vec<(u32,i32,bool)>>=LazyLock::new(||include_str!("../scene-assets/custom-spirit-definitions.tsv").lines().filter(|l|!l.trim().is_empty()).enumerate().map(|(row,line)|{
+    let p:Vec<_>=line.split('|').collect();
+    let id:u32=p[0].parse().expect("Invalid custom spirit id");
+    assert_eq!(id,CUSTOM_SPIRIT_FIRST+row as u32*1000,"Custom spirit ids must be contiguous");
+    (id,p[1].parse().expect("Invalid custom spirit model"),p.get(9)==Some(&"dlc"))
+}).collect());
+/// 怪池里已有原版骨灰的怪物：模型 → 原版骨灰（+0 的物品编号）。其余怪物用自制骨灰（按定义表的模型，同模型取第一种）
+const VANILLA_SPIRITS:[(i32,u32);44]=[
+    (2100,200000),(4820,247000),(3010,201000),(3170,204000),(3300,206000),(3350,208000),(3704,221000),(3800,223000),
+    (3901,228000),(3970,230000),(4290,239000),(4340,243000),(4354,257000),(4490,263000),(3080,203000),(3360,209000),
+    (3470,211000),(3700,216000),(3702,218000),(3703,220000),(3810,224000),(3850,225000),(3900,227000),(3950,229000),
+    (4090,233000),(4100,234000),(4166,235000),(4210,237000),(4311,250000),(4312,251000),(4313,252000),(4314,253000),
+    (4315,254000),(4240,2217000),(5040,2200000),(5080,2201000),(5160,2203000),(5192,2204000),(5250,2214000),(5260,2212000),
+    (5840,2208000),(5311,2205000),(5900,2211000),(3600,276000),
+];
+/// 捕灵壶捕捉到这种怪物时给的骨灰（+0 的完整物品编号）；没有对应骨灰时 None
+pub fn spirit_for_model(model:i32)->Option<u32> {
+    let id=VANILLA_SPIRITS.iter().find(|(m,_)|*m==model).map(|(_,id)|*id)
+        .or_else(||CUSTOM_SPIRITS.iter().find(|(_,m,_)|*m==model).map(|(id,_,_)|*id))?;
+    let full=0x40000000|id;
+    CATALOG.iter().any(|i|i.id==full&&i.kind==ItemKind::Spirit).then_some(full)
+}
 pub fn custom_spirit(id:u32)->bool {
-    id>>28==4&&(270000..282000).contains(&(id&0x0fffffff))&&(id&0x0fffffff)%1000<=u32::from(SPIRIT_MAX)
+    let raw=id&0x0fffffff;
+    id>>28==4&&(CUSTOM_SPIRIT_FIRST..CUSTOM_SPIRIT_FIRST+CUSTOM_SPIRITS.len() as u32*1000).contains(&raw)&&raw%1000<=u32::from(SPIRIT_MAX)
+}
+/// 用 DLC 怪物模型的自制骨灰：没有 DLC 时不出
+pub fn custom_spirit_dlc(id:u32)->bool {
+    custom_spirit(id)&&CUSTOM_SPIRITS.get(((id&0x0fffffff)-CUSTOM_SPIRIT_FIRST) as usize/1000).is_some_and(|(_,_,dlc)|*dlc)
 }
 pub(crate) fn before_custom_spirits(run:&Run,node:usize)->Vec<Reward> {
     let mut previous=run.clone();
     previous.claimed_items.extend(CATALOG.iter().filter(|i|custom_spirit(i.id)).map(|i|i.id));
+    previous.offers(node)
+}
+/// 追加按怪池补齐的骨灰之前的奖励（只有第一批 12 种自制骨灰）
+pub(crate) fn before_enemy_spirits(run:&Run,node:usize)->Vec<Reward> {
+    let mut previous=run.clone();
+    previous.claimed_items.extend(CATALOG.iter().filter(|i|custom_spirit(i.id)&&i.id&0x0fffffff>=ENEMY_SPIRIT_FIRST).map(|i|i.id));
     previous.offers(node)
 }
 static SPIRIT_LEVELS:LazyLock<Vec<Item>>=LazyLock::new(||CATALOG.iter().filter(|i|i.kind==ItemKind::Spirit).flat_map(|i|(1..=u32::from(SPIRIT_MAX)).map(move |level|Item{
@@ -318,6 +356,43 @@ mod tests {
         ensure_summoner_spirit(&run,node,&mut cards);assert!(cards.iter().all(|r|*r==Reward::Gold(1500)));
     }
     use super::*;
+    #[test]
+    fn enemy_spirits_extend_the_custom_range_and_keep_dlc_models_out_without_the_dlc() {
+        assert_eq!(CUSTOM_SPIRITS.len(),56);
+        assert!(custom_spirit(0x40000000|281039)&&custom_spirit(0x40000000|282000)&&custom_spirit(0x40000000|325039));
+        assert!(!custom_spirit(0x40000000|326000)&&!custom_spirit(0x40000000|325040)&&!custom_spirit(0x40000000|263000));
+        for (id,_,_) in CUSTOM_SPIRITS.iter() {assert!(lookup(0x40000000|id).is_some_and(|i|i.kind==ItemKind::Spirit),"{id} missing from the reward catalog");}
+        let dlc:Vec<_>=CUSTOM_SPIRITS.iter().filter(|(_,_,dlc)|*dlc).map(|(id,_,_)|*id).collect();
+        assert_eq!(dlc.len(),6);
+        for id in &dlc {assert!(crate::dlc::is_dlc_item(0x40000000|id+10));}
+        assert!(!crate::dlc::is_dlc_item(0x40000000|282000));
+        for seed in 0..60 {
+            let mut run=Run::new(seed,crate::Class::Confessor);
+            let id=run.available().into_iter().find(|id|run.nodes[*id].kind.combat()).unwrap();
+            run.enter(id).unwrap();run.win_combat().unwrap();
+            let offers=before_enemy_spirits(&run,id);
+            assert!(offers.iter().all(|r|!matches!(r,Reward::Item(id) if custom_spirit(*id)&&*id&0x0fffffff>=ENEMY_SPIRIT_FIRST)));
+            run.phase=crate::Phase::Reward{id,offers:offers.clone()};
+            let restored=Run::decode(&run.encode().unwrap()).unwrap();
+            assert_eq!(restored.phase,crate::Phase::Reward{id,offers},"reward pages from before the enemy spirits stay as they were");
+        }
+    }
+    #[test]
+    fn every_pool_monster_maps_to_a_spirit_ash_except_the_chariot() {
+        let pools=include_str!("../scene-assets/enemy-pools.txt");
+        let mut missing=vec![];
+        for line in pools.lines() {
+            let p:Vec<_>=line.split('|').collect();
+            if p.get(5)==Some(&"retired")||p.get(6)==Some(&"retired") {continue;}
+            let model:i32=p[2].parse().unwrap();
+            if spirit_for_model(model).is_none() {missing.push((model,p[4]));}
+        }
+        missing.sort();missing.dedup();
+        assert_eq!(missing,vec![(4460,"火焰战车")]);
+        assert_eq!(spirit_for_model(2500),Some(0x40000000|273000),"same model: the first custom ash");
+        assert_eq!(spirit_for_model(4311),Some(0x40000000|250000));
+        assert_eq!(spirit_for_model(1),None);
+    }
     #[test]
     fn pre_custom_spirit_reward_pages_remain_valid_without_rerolling() {
         for seed in 0..100 {

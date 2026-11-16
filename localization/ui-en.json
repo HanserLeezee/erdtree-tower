@@ -23,7 +23,7 @@
   "星辉术士": "Starcaller",
   "远程法术": "Ranged Sorcery",
   "星涌": "Starsurge",
-  "进入战斗时专注回复一半；魔力伤害提高 15%": "Recover half your FP upon entering combat. Magic damage is increased by 15%.",
+  "进入战斗时专注回复一半；击倒敌人回复 10% 专注（精英、Boss 30%）；魔力伤害提高 15%": "Recover half your FP upon entering combat. Defeating an enemy restores 10% FP (30% for elites and bosses). Magic damage is increased by 15%.",
   "辉石杖、短剑、辉石魔砾、辉石彗星": "Glintstone Staff, Dagger, Glintstone Pebble, Glintstone Cometshard",
   "法杖与魔法": "Glintstone staves and sorceries",
   "祷誓者": "Oathsworn Cleric",

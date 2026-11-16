@@ -39,7 +39,6 @@
   "祭坛": "Altar",
   "上锁宝箱": "Locked Chest",
   "场地": "Arena",
-  "12 种新骨灰，每次领取 1 份，可重复补充。装备到快捷栏后，在战斗场地手动召唤；检验胜利返还请使用召唤师。": "12 custom Spirit Ashes. Receive one copy per click; repeat to restock. Equip in a quick slot and summon manually in a battle arena. Use Summoner to test victory refunds.",
   "实际组队时禁止发放调试物品；无缝入口独自游玩可用。": "Debug items cannot be granted while grouped. Available when playing alone through the Seamless entry.",
   "获得双生的灵唤铃": "Receive Twin Spiritcalling Bell",
   "进入大树守卫测试战斗": "Start Tree Sentinel Test Battle",
@@ -119,5 +118,6 @@
   "参数未就绪或与层数不符": "Parameters not ready or do not match the stack count",
   "已挂载倍率效果数：{}   限定致命一击：{}": "Applied Multiplier Effects: {0}   Critical Hits Only: {1}",
   "进入战斗后背刺或处决一次，再打开此页：真实触发次数应 +1，层数应 +1，倍率应增加 0.05。普通攻击不应加层。营地假人不走战斗叠层检测，请使用战斗或 Boss 测试入口。": "Perform a backstab or critical in battle, then reopen this page. Trigger count and stacks should each increase by 1, and the multiplier by 0.05. Normal attacks should not add stacks. Camp dummies do not use battle stack detection; use a battle or boss test.",
-  "10 层按钮仅用于手动对照参数，不计入真实触发次数。比较伤害请保持同一把武器、同一敌人及其他增益不变，并关闭秒杀。": "The 10-stack button is for manual parameter comparison and does not count as an actual trigger. Compare damage using the same weapon, enemy, and buffs, with instant kill disabled."
+  "10 层按钮仅用于手动对照参数，不计入真实触发次数。比较伤害请保持同一把武器、同一敌人及其他增益不变，并关闭秒杀。": "The 10-stack button is for manual parameter comparison and does not count as an actual trigger. Compare damage using the same weapon, enemy, and buffs, with instant kill disabled.",
+  "全部自制骨灰（含按怪池补齐的），每次领取 1 份，可重复补充。装备到快捷栏后，在战斗场地手动召唤；检验胜利返还请使用召唤师。": "All custom Spirit Ashes (including those added from the enemy pools). Receive one copy per click; repeat to restock. Equip in a quick slot and summon manually in a battle arena. Use Summoner to test victory refunds."
 }

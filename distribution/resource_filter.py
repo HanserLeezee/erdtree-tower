@@ -4,12 +4,12 @@ EMBEDDED = frozenset({
     'affix-catalog.txt', 'affix-details.tsv', 'affix-rarities.tsv',
     'affix-v2-catalog.txt', 'affix-v2-details.tsv', 'affix-v2-rarities.tsv',
     'protected-ash-pools.tsv', 'random-ash-details.tsv', 'random-ash-weapon-rows.txt',
+    'custom-spirit-definitions.tsv',
     'reward-rarities.tsv', 'talisman-definitions.tsv', 'talisman-details.tsv', 'talisman-rarities.tsv',
 })
 
 BUILD_ONLY = frozenset({
     'heretical-rise-start.json', 'vanilla-talisman-quality.tsv',
-    'custom-spirit-definitions.tsv',
     'affix-effect-remap.tsv', 'random-ashes.tsv', 'talisman-catalog.txt',
     'retired-spell-strip.json', 'reward-art/extra-icons.txt',
     'reward-art/rare-blue-generation.txt', 'reward-art/rarity-generation.txt',

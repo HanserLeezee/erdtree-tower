@@ -953,8 +953,8 @@
     lobbyState = { view: 'list', loading: true, error: '', rooms: [], version: '', joining: null, query: '', fresh: true };
     var mask = el('div', 'modal-mask');
     mask.id = 'modalMask';
-    /* 主题：lobby-er 为法环风（宋体、细金线、横向高亮条），去掉这个类就是明日方舟式平面风 */
-    var dlg = el('div', 'set-dialog lobby-dialog lobby-er');
+    /* 法环风：宋体、细金线、悬停时横向淡出的高亮条 */
+    var dlg = el('div', 'set-dialog lobby-dialog');
     dlg.id = 'lobbyDialog';
     dlg.setAttribute('role', 'dialog');
     dlg.setAttribute('aria-modal', 'true');
@@ -1028,8 +1028,8 @@
     var html = '<button class="set-close" data-lobby="close" aria-label="关闭">' +
       '<svg viewBox="0 0 14 14"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.6"/></svg></button>' +
       '<div class="lobby-body" data-view="' + esc(L.view) + '">' +
-      '<header class="lobby-head"><div class="lobby-title"><span class="lobby-mark"></span><h2>联机大厅</h2>' +
-      '<span class="lobby-en">MULTIPLAYER LOBBY' + (L.version ? ' / V' + esc(L.version) : '') + '</span><span class="lobby-rule"></span><span class="lobby-barcode" aria-hidden="true"></span></div>' +
+      '<header class="lobby-head"><div class="lobby-title"><h2>联机大厅</h2>' +
+      '<span class="lobby-en">MULTIPLAYER LOBBY' + (L.version ? ' / V' + esc(L.version) : '') + '</span><span class="lobby-rule"></span></div>' +
       '<div class="lobby-sub" role="note">' + esc(steamReminder) + '</div></header>';
     if (L.view === 'host') {
       html += '<div class="lobby-form"><button class="lobby-back" data-lobby="back">' + lobbyIcon('back') + '返回大厅</button>' +
@@ -2267,6 +2267,12 @@
       /* 宿主推送设置页的值（启动模式、游戏目录、当前版本、更新状态等），宿主是这些值的来源 */
       if (msg.type === 'settings' && msg.action === 'values') {
         Object.keys(p).forEach(function (k) { setState[k] = p[k]; });
+        /* 语言设为繁体：把页面文字转成繁体（简繁表见 zh-tw.js）；改回别的语言需要重新载入页面才能还原 */
+        if (typeof p.language === 'string') {
+          var traditional = p.language.indexOf('繁體') !== -1;
+          if (traditional) window.towerTraditional.enable();
+          else if (window.towerTraditional.enabled()) location.reload();
+        }
         if (document.getElementById('setDialog')) renderSettings();
         return;
       }

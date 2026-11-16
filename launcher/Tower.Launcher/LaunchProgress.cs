@@ -62,7 +62,6 @@ namespace Tower.Launcher
             if (Terminal) return;
             if (line.Contains("SESSION_START")) { nativeSession = true; Set("waiting", "正在加载爬塔模块", "游戏已启动，正在初始化界面"); }
             if (!nativeSession) return;
-            if (line.Contains("NATIVE_SETTINGS registration")) Set("waiting", "正在初始化游戏界面", "原生设置已加载，等待渲染准备");
             if (line.Contains("DX12 renderer initialized")) Set("waiting", "正在准备首帧画面", "渲染器已就绪");
             if (line.Contains("First overlay frame rendered")) { FrameReady = true; End("finished", "游戏画面已开始绘制", "可以切换到游戏窗口继续"); }
         }

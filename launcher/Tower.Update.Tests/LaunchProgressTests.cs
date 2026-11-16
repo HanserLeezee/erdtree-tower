@@ -53,7 +53,7 @@ public class LaunchProgressTests
     {
         var p = new LaunchProgress(); p.Native("First overlay frame rendered"); Assert.False(p.FrameReady);
         p.GameDetected(); Assert.Equal("waiting", p.Phase); Assert.False(p.Terminal);
-        p.Native("SESSION_START build=test"); p.Native("NATIVE_SETTINGS registration result=0");
+        p.Native("SESSION_START build=test");
         p.Output("TOWER_PROGRESS|checking|0|3|old resource message|old"); Assert.Equal("waiting", p.Phase);
         p.Native("First overlay frame rendered"); Assert.True(p.FrameReady); Assert.True(p.Terminal);
         p.Native("SESSION_START stale"); Assert.Equal("finished", p.Phase);

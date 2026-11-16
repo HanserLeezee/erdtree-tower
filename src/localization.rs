@@ -1,14 +1,49 @@
 use std::{borrow::Cow,collections::HashMap,sync::{LazyLock,atomic::{AtomicBool,Ordering}}};
 
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
-pub enum Language {#[default] Auto,Chinese,English}
+pub enum Language {#[default] Auto,Chinese,English,TraditionalChinese}
 impl Language {
-    pub fn id(self)->&'static str {match self {Self::Auto=>"auto",Self::Chinese=>"zh-CN",Self::English=>"en-US"}}
-    pub fn parse(value:&str)->Option<Self> {match value.trim().to_ascii_lowercase().as_str(){"auto"|"game"=>Some(Self::Auto),"zh-cn"|"zhocn"|"chinese"=>Some(Self::Chinese),"en-us"|"engus"|"english"|"en"=>Some(Self::English),_=>None}}
+    pub fn id(self)->&'static str {match self {Self::Auto=>"auto",Self::Chinese=>"zh-CN",Self::English=>"en-US",Self::TraditionalChinese=>"zh-TW"}}
+    pub fn parse(value:&str)->Option<Self> {match value.trim().to_ascii_lowercase().as_str(){"auto"|"game"=>Some(Self::Auto),"zh-cn"|"zhocn"|"chinese"=>Some(Self::Chinese),"en-us"|"engus"|"english"|"en"=>Some(Self::English),"zh-tw"|"zhotw"|"zh-hant"|"traditional"|"tc"=>Some(Self::TraditionalChinese),_=>None}}
 }
 static ENGLISH:AtomicBool=AtomicBool::new(false);
-pub fn set(language:Language){ENGLISH.store(language==Language::English,Ordering::Relaxed);}
+static TRADITIONAL:AtomicBool=AtomicBool::new(false);
+pub fn set(language:Language){ENGLISH.store(language==Language::English,Ordering::Relaxed);TRADITIONAL.store(language==Language::TraditionalChinese,Ordering::Relaxed);}
 pub fn english()->bool {ENGLISH.load(Ordering::Relaxed)}
+pub fn traditional()->bool {TRADITIONAL.load(Ordering::Relaxed)}
+
+/// 简体 → 繁体（台湾正体）：OpenCC 的 s2twp 三步（简繁词组与单字、台湾常用词、台湾异体字），表见 localization/zh-TW，生成器 generate_zh_tw.py。
+/// 每步都是最长匹配；只用于显示，存档键、物品编号、联机消息仍是简体原文。
+struct Convert {table:HashMap<&'static str,&'static str>,longest:usize}
+impl Convert {
+    fn new(data:&'static str)->Self {
+        let table:HashMap<_,_>=data.lines().filter_map(|l|l.split_once('\t')).collect();
+        Self{longest:table.keys().map(|k|k.chars().count()).max().unwrap_or(1),table}
+    }
+    fn apply(&self,text:&str)->String {
+        let chars:Vec<(usize,char)>=text.char_indices().collect();let mut out=String::with_capacity(text.len());let mut i=0;
+        while i<chars.len() {
+            let mut hit=None;
+            for len in (1..=self.longest.min(chars.len()-i)).rev() {
+                let start=chars[i].0;let end=chars.get(i+len).map_or(text.len(),|c|c.0);
+                if let Some(value)=self.table.get(&text[start..end]) {hit=Some((len,*value));break;}
+            }
+            match hit {Some((len,value))=>{out.push_str(value);i+=len;},None=>{out.push(chars[i].1);i+=1;}}
+        }
+        out
+    }
+}
+static TRADITIONAL_TABLES:LazyLock<[Convert;3]>=LazyLock::new(||[
+    Convert::new(include_str!("../localization/zh-TW/st.tsv")),
+    Convert::new(include_str!("../localization/zh-TW/phrases.tsv")),
+    Convert::new(include_str!("../localization/zh-TW/variants.tsv")),
+]);
+pub fn to_traditional(text:&str)->Cow<'_,str> {
+    if !cjk(text) {return Cow::Borrowed(text);}
+    let [st,phrases,variants]=&*TRADITIONAL_TABLES;
+    let converted=variants.apply(&phrases.apply(&st.apply(text)));
+    if converted==text {Cow::Borrowed(text)}else{Cow::Owned(converted)}
+}
 fn cjk(text:&str)->bool {text.chars().any(|c|('\u{3400}'..='\u{9fff}').contains(&c))}
 
 struct Pattern {parts:Vec<String>,names:Vec<String>,target:String,weight:usize}
@@ -60,7 +95,6 @@ static CATALOG:LazyLock<Catalog>=LazyLock::new(||{
     exact.extend(serde_json::from_str::<HashMap<String,String>>(include_str!("../localization/runtime-en.json")).expect("Invalid runtime English catalog"));
     exact.extend(serde_json::from_str::<HashMap<String,String>>(include_str!("../localization/native-en.json")).expect("Invalid native English catalog"));
     exact.extend(serde_json::from_str::<HashMap<String,String>>(include_str!("../localization/debug-en.json")).expect("Invalid debug English catalog"));
-    exact.extend(serde_json::from_str::<HashMap<String,String>>(include_str!("../localization/native-settings-en.json")).expect("Invalid native settings English catalog"));
     let mut patterns:Vec<_>=exact.iter().filter_map(|(source,target)|Pattern::new(source,target)).collect();
     patterns.sort_by_key(|p|std::cmp::Reverse(p.weight));
     let mut prefixes:HashMap<String,Vec<String>>=HashMap::new();
@@ -152,11 +186,23 @@ fn translate_en_uncached(text:&str,patterns:bool)->Cow<'_,str> {
 }
 pub fn translate_en(text:&str)->Cow<'_,str> {translate_en_inner(text,true)}
 /// Translate presentation text only; never use translated text as a save key or network identifier.
-pub fn text(text:&str)->Cow<'_,str> {if english(){translate_en(text)}else{Cow::Borrowed(text)}}
+pub fn text(text:&str)->Cow<'_,str> {if english(){translate_en(text)}else if traditional(){to_traditional(text)}else{Cow::Borrowed(text)}}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn traditional_conversion_uses_taiwan_forms_and_keeps_markup() {
+        assert_eq!(to_traditional("联机大厅"),"聯機大廳");
+        assert_eq!(to_traditional("软件 · 鼠标 · 内存"),"軟體 · 滑鼠 · 記憶體");
+        assert_eq!(to_traditional("苦难律法 ##law-1 {0}%"),"苦難律法 ##law-1 {0}%");
+        assert_eq!(to_traditional("发现 一发 头发"),"發現 一發 頭髮");
+        assert_eq!(to_traditional("ABC 123"),"ABC 123");
+        assert!(matches!(to_traditional("English only"),Cow::Borrowed(_)));
+        assert_eq!(Language::parse("zh-TW"),Some(Language::TraditionalChinese));
+        set(Language::TraditionalChinese);assert_eq!(text("开始旅程"),"開始旅程");assert!(traditional()&&!english());
+        set(Language::Chinese);assert_eq!(text("开始旅程"),"开始旅程");
+    }
     #[test]
     fn language_aliases_and_format_capture_preserve_values() {
         assert_eq!(Language::parse(" ENGUS "),Some(Language::English));assert_eq!(Language::parse("zh-CN"),Some(Language::Chinese));assert_eq!(Language::parse("unknown"),None);

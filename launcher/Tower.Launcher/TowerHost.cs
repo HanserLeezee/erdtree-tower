@@ -383,6 +383,9 @@ namespace Tower.Launcher
                 case "releaseHistory": _ = HistoryAsync(); break;
                 case "switchVersion": _ = UpdateAsync(false, Text(data, "tag")); break;
                 case "restartLauncher": Restart(); break;
+                case "crashDumps": _ = CrashDumpsAsync(true); break;
+                case "crashDumpsClean": _ = CleanCrashDumpsAsync(); break;
+                case "crashDumpsFix": FixDumpType(); break;
             }
         }
 
@@ -395,6 +398,7 @@ namespace Tower.Launcher
             if (pendingToast is { } toast) { pendingToast = null; Done(toast.text, toast.ms, toast.restart); }
             PushLaunchProgress();
             if (settings.AutoCheck && latest == null) _ = CheckAsync(false);
+            if (!dumpsChecked) { dumpsChecked = true; _ = CrashDumpsAsync(false); }
         }
 
         /// <summary>页面提示；button/then 给提示加一个按钮，点了以 settings.action(then) 回到宿主</summary>
@@ -1167,6 +1171,82 @@ namespace Tower.Launcher
             Directory.CreateDirectory(paths.LaunchLogs);
             var latestLog = Directory.GetDirectories(paths.LaunchLogs).OrderByDescending(Path.GetFileName).FirstOrDefault();
             OpenFolder(latestLog ?? paths.DataDir);
+        }
+
+        // ---------------- 崩溃转储 ----------------
+
+        const string LocalDumpsKey = @"SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps";
+        const long DumpWarnBytes = 1L << 30;
+        bool dumpsChecked;
+
+        /// <summary>LocalDumps 对 eldenring.exe 生效的 DumpType（专用键优先，其次全局键），和自定义的转储目录</summary>
+        static (int? type, List<string> folders) DumpSettings()
+        {
+            int? type = null; var folders = new List<string>();
+            try
+            {
+                using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+                foreach (var name in new[] { LocalDumpsKey + @"\eldenring.exe", LocalDumpsKey })
+                {
+                    using var key = root.OpenSubKey(name);
+                    if (key == null) continue;
+                    if (type == null && key.GetValue("DumpType") is int t) type = t;
+                    if (key.GetValue("DumpFolder") is string folder && folder.Length > 0) folders.Add(Environment.ExpandEnvironmentVariables(folder));
+                }
+            }
+            catch (Exception) { }
+            return (type, folders);
+        }
+
+        CrashDumps.Report ScanDumps()
+        {
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            return CrashDumps.Scan(CrashDumps.Roots(local, GameDir()).Concat(DumpSettings().folders));
+        }
+
+        async Task CrashDumpsAsync(bool manual)
+        {
+            CrashDumps.Report report;
+            try { report = await Task.Run(ScanDumps); }
+            catch (Exception e) { if (manual) Toast("扫描崩溃转储失败：" + e.Message, "error", 6000); return; }
+            var full = DumpSettings().type == 2;
+            if (report.Files.Count == 0)
+            {
+                if (!manual) return;
+                if (full) Toast("没有残留的崩溃转储，但 Windows 错误报告被设成了完整转储，游戏一崩就会写出几 GB 的文件", "warn", 0, "改为小转储", "crashDumpsFix");
+                else Toast("没有发现法环的崩溃转储文件", "success");
+                return;
+            }
+            if (!manual && report.Bytes < DumpWarnBytes) return;
+            Toast($"发现 {report.Files.Count} 个法环崩溃转储（.dmp），共占用 {CrashDumps.Size(report.Bytes)}。它们只用于排查崩溃，可以安全删除",
+                  report.Bytes >= DumpWarnBytes ? "warn" : "info", 0, "清理", "crashDumpsClean");
+        }
+
+        async Task CleanCrashDumpsAsync()
+        {
+            if (GameRunning()) { Toast("请先退出游戏再清理崩溃转储", "warn"); return; }
+            (long freed, int failed) result;
+            try { result = await Task.Run(() => CrashDumps.Clean(ScanDumps())); }
+            catch (Exception e) { Toast("清理崩溃转储失败：" + e.Message, "error", 6000); return; }
+            var text = $"已清理崩溃转储，释放 {CrashDumps.Size(result.freed)}" + (result.failed > 0 ? $"；{result.failed} 个文件被占用或没有权限，未删除" : "");
+            if (DumpSettings().type == 2) Toast(text + "。Windows 错误报告被设成了完整转储，建议改为小转储，以后不再写出几 GB 的文件", "warn", 0, "改为小转储", "crashDumpsFix");
+            else Toast(text, result.failed > 0 ? "warn" : "success", 6000);
+        }
+
+        /// <summary>只给 eldenring.exe 加专用 LocalDumps 键：小转储、最多 3 个，不改其他程序的设置。写 HKLM 需要管理员，会弹 UAC</summary>
+        void FixDumpType()
+        {
+            var key = "HKLM\\" + LocalDumpsKey + "\\eldenring.exe";
+            var command = $"/c reg add \"{key}\" /v DumpType /t REG_DWORD /d 1 /f /reg:64 && reg add \"{key}\" /v DumpCount /t REG_DWORD /d 3 /f /reg:64";
+            try
+            {
+                using var process = Process.Start(new ProcessStartInfo("cmd.exe", command) { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden });
+                process?.WaitForExit(15000);
+                if (process != null && process.HasExited && process.ExitCode == 0 && DumpSettings().type == 1) Toast("已改为小转储：以后法环崩溃只会留下几 MB 的文件", "success", 6000);
+                else Toast("没有改成功，请确认已允许管理员权限", "warn", 6000);
+            }
+            catch (Win32Exception) { Toast("已取消：修改 Windows 错误报告设置需要管理员权限", "info", 6000); }
+            catch (Exception e) { Toast("修改转储设置失败：" + e.Message, "error", 6000); }
         }
 
         void OpenModLogs()
