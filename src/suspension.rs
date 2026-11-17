@@ -15,7 +15,7 @@ pub fn prepare(run:&Run,gold:u32,flasks:Option<u8>)->RuleResult<Run> {
     let mut next=run.clone();
     if let Phase::Combat{id}=next.phase {next.resume_from_hub()?;next.retry_node=Some(id);}
     next.gold=gold;
-    if let Some(flasks)=flasks {next.flasks=flasks.min(next.flask_limit);}
+    if let Some(flasks)=flasks {next.flasks=flasks.min(next.flask_limit);next.clamp_flask_blue();}
     next.validate()?;Ok(next)
 }
 #[derive(Serialize,Deserialize)]

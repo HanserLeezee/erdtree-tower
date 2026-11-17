@@ -96,6 +96,7 @@ impl Run {
         let full=self.flasks==self.flask_limit;
         self.law=law;self.flask_limit=self.full_flask_limit();
         self.flasks=if full {self.flask_limit}else{self.flasks.min(self.flask_limit)};
+        self.clamp_flask_blue();
         self.validate()
     }
 }

@@ -208,6 +208,9 @@ struct CombatCheckpoint {
     id: usize,
     hp: u32,
     flasks: u8,
+    /// 进场时其中几瓶是蓝瓶（旧存档没有，恢复时按先红后蓝）
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    blue: Option<u8>,
 }
 
 /// 商店价格在第三幕最后一层的百分比（见 Run::shop_position_percent）
@@ -316,6 +319,9 @@ pub struct Run {
     pub hp: u32,
     pub max_hp: u32,
     pub flasks: u8,
+    /// flasks 里有几瓶是蓝瓶（由运行时按背包写入）；复活、读档、重试本层时按它分回红蓝，没有时先红后蓝
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub flask_blue: Option<u8>,
     #[serde(default)]
     pub physick_empty: bool,
     #[serde(default)]
@@ -754,6 +760,7 @@ impl Run {
             blessings: vec![],
             delivered_talismans: vec![],
             claimed_items: vec![],
+            flask_blue: None,
             physick_empty: false,
             physick_supply: Default::default(),
             regional_event: Default::default(),
@@ -784,6 +791,7 @@ impl Run {
         self.law=law;self.flask_limit=self.full_flask_limit();
         self.nodes=law_graph(self.seed,self.schema,law);
         self.flasks=if full {self.flask_limit}else{self.flasks.min(self.flask_limit)};
+        self.clamp_flask_blue();
         Ok(())
     }
     /// 职业重做后的召唤师（群灵：胜利时召唤物还活着就不消耗骨灰；骨灰奖励更多）
@@ -860,6 +868,7 @@ impl Run {
                 id,
                 hp: self.hp,
                 flasks: self.flasks,
+                blue: self.flask_blue,
             });
             self.phase = Phase::Combat { id };
         } else {
@@ -902,11 +911,14 @@ impl Run {
         };
     }
 
+    /// 瓶数变少之后蓝瓶数不能超过总数
+    pub fn clamp_flask_blue(&mut self) {if let Some(blue)=&mut self.flask_blue {*blue=(*blue).min(self.flasks);}}
     pub fn use_flask(&mut self) -> RuleResult<()> {
         if !matches!(self.phase, Phase::Combat { .. }) || self.flasks == 0 {
             return Err("当前无法使用圣杯瓶".into());
         }
         self.flasks -= 1;
+        self.clamp_flask_blue();
         Ok(())
     }
 
@@ -1215,7 +1227,7 @@ impl Run {
         if self.retries==0||self.retry_node.is_some() {return false;}
         let id=match self.phase {Phase::Combat{id}|Phase::Node{id}=>id,_=>return false};
         self.retries-=1;
-        if let Some(checkpoint)=self.checkpoint.take() {self.hp=checkpoint.hp;self.flasks=checkpoint.flasks;}
+        if let Some(checkpoint)=self.checkpoint.take() {self.hp=checkpoint.hp;self.flasks=checkpoint.flasks;self.flask_blue=checkpoint.blue;}
         if self.hp==0 {self.hp=self.max_hp;}
         let settled=self.nodes[id].kind==NodeKind::Event&&self.regional_event.touched();
         self.regional_event=crate::regional_events::Progress{settled,..Default::default()};
@@ -1274,6 +1286,7 @@ impl Run {
         if let Some(checkpoint) = &run.checkpoint {
             run.hp = checkpoint.hp;
             run.flasks = checkpoint.flasks;
+            run.flask_blue = checkpoint.blue;
         }
         Ok(run)
     }
@@ -1305,6 +1318,8 @@ impl Run {
             || self.embers.iter().enumerate().any(|(i,e)|self.embers[..i].contains(e))
             || self.flask_limit != self.full_flask_limit()
             || self.flasks > self.flask_limit
+            || self.flask_blue.is_some_and(|blue|blue>self.flasks)
+            || self.checkpoint.as_ref().is_some_and(|c|c.blue.is_some_and(|blue|blue>c.flasks))
             || self.weapon_level > contracts::NORMAL_MAX
             || self.weapon_peak.is_some_and(|peak|peak>contracts::MAX_PEAK)
             || self.spirit_peak.is_some_and(|peak|peak>rewards::SPIRIT_MAX)
