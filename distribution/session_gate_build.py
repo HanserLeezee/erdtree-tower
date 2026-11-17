@@ -27,4 +27,5 @@ def build_gate(project):
     subprocess.run([cmake, '-S', str(project / 'seamless-gate'), '-B', str(build), '-A', 'x64', '-DSTEAMWORKS_ROOT=' + str(sdk)], check=True)
     subprocess.run([cmake, '--build', str(build), '--config', 'Release', '--parallel', '6'], check=True)
     subprocess.run([str(build / 'Release/gate-tests.exe')], check=True)
+    subprocess.run([str(build / 'abi/Release/gate-hook-tests.exe')], cwd=build / 'abi/Release', timeout=20, check=True)
     return build / 'Release/Tower.SeamlessGate.dll'

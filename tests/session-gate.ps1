@@ -14,8 +14,10 @@ try {Assert-TowerSessionGate $fixture 'YAFSML';throw 'accepted unsupported loade
 $profile="profileVersion = 'v1'`n[[natives]]`npath = 'SeamlessCoop/ersc.dll'`n[[packages]]`npath = 'scene-assets'`n"
 $once=Add-TowerSessionGate $profile
 $twice=Add-TowerSessionGate $once
+$legacy=$once.Replace("load_before =", "initializer = { function = `"TowerGateInitialize`" }`nload_before =")
+if((Add-TowerSessionGate $legacy) -ne $twice){throw 'Legacy asynchronous initializer was not removed'}
 if([regex]::Matches($twice,"path = 'SeamlessCoop/Tower.SeamlessGate.dll'").Count -ne 1){throw 'Gate duplicated'}
-if($twice -notmatch 'initializer = \{ function = "TowerGateInitialize" \}' -or $twice -notmatch 'load_before = \[\{ id = "ersc.dll", optional = false \}\]'){throw 'Unsafe load ordering'}
+if($twice -match '(?m)^initializer\s*=' -or $twice -notmatch 'load_before = \[\{ id = "ersc.dll", optional = false \}\]'){throw 'Gate must load synchronously before ERSC'}
 if($twice -notmatch "path = 'scene-assets'" -or $twice -notmatch "path = 'SeamlessCoop/ersc.dll'"){throw 'Original profile lost'}
 [IO.File]::WriteAllText((Join-Path $folder 'Tower.SeamlessGate.dll'),'changed')
 try {Assert-TowerSessionGate $fixture 'ME3';throw 'accepted changed adapter'}catch{if($_.Exception.Message -notlike '*damaged or mismatched*'){throw}}

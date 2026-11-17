@@ -16,13 +16,13 @@ struct World {
     std::map<uint64, std::map<std::string, std::string>> meta;
 };
 struct MockMatch : ForwardISteamMatchmaking {
-    World& world; CSteamID self; int joins = 0, filters = 0;
+    World& world; CSteamID self; int joins = 0, filters = 0, rosterReads = 0, memberReads = 0;
     bool deferJoin = false, rejectJoin = false, nullData = false;
     MockMatch(World& w, CSteamID id): ForwardISteamMatchmaking(nullptr), world(w), self(id) {}
     bool joined() { return std::find(world.members.begin(), world.members.end(), self) != world.members.end(); }
     CSteamID GetLobbyOwner(CSteamID) override { return joined() ? world.owner : CSteamID(); }
-    int GetNumLobbyMembers(CSteamID) override { return joined() ? int(world.members.size()) : 0; }
-    CSteamID GetLobbyMemberByIndex(CSteamID, int i) override { return world.members.at(i); }
+    int GetNumLobbyMembers(CSteamID) override { ++rosterReads; return joined() ? int(world.members.size()) : 0; }
+    CSteamID GetLobbyMemberByIndex(CSteamID, int i) override { ++memberReads; return world.members.at(i); }
     const char* GetLobbyData(CSteamID, const char* key) override { return nullData ? nullptr : world.data[key].c_str(); }
     bool SetLobbyData(CSteamID, const char* key, const char* value) override { world.data[key] = value; return true; }
     const char* GetLobbyMemberData(CSteamID, CSteamID id, const char* key) override { return joined() ? world.meta[id.ConvertToUint64()][key].c_str() : nullptr; }
@@ -114,6 +114,21 @@ int main() {
     good.m_pfnRelease = ReleaseMessage; bad.m_pfnRelease = ReleaseMessage;
     transport.pending = {&bad, &good}; SteamNetworkingMessage_t* out[2]{};
     assert(net.ReceiveMessagesOnChannel(0, out, 2) == 1 && out[0] == &good && out[1] == nullptr && released == 1);
+    hostApi.rosterReads = hostApi.memberReads = 0;
+    assert(host.allow(Player(2)));
+    assert(hostApi.rosterReads == 1 && hostApi.memberReads == 2);
+    transport.pending.assign(32, &good);
+    SteamNetworkingMessage_t* batch[32]{};
+    hostApi.rosterReads = 0;
+    assert(net.ReceiveMessagesOnChannel(0, batch, 32) == 32);
+    assert(hostApi.rosterReads == 1);
+    world.meta[Player(2).ConvertToUint64()][MemberKey] = "revoked";
+    int beforeReleased = released;
+    assert(net.ReceiveMessagesOnChannel(0, batch, 32) == 0);
+    assert(released == beforeReleased + 32);
+    world.meta[Player(2).ConvertToUint64()][MemberKey] = host.epoch;
+    assert(net.ReceiveMessagesOnChannel(0, batch, 32) == 32);
+    std::cout << "PASS: one roster scan per peer/batch; no admission cache survives an API call\n";
     world.meta[Player(2).ConvertToUint64()][MemberKey] = "old-session";
     assert(!host.allow(Player(2)));
     world.meta[Player(2).ConvertToUint64()][MemberKey] = host.epoch;

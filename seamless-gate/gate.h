@@ -3,6 +3,8 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 inline constexpr char RealmKey[] = "tower_gate";
 inline constexpr char EpochKey[] = "tower_epoch";
@@ -51,20 +53,27 @@ struct Admission {
         GateLog("host namespace published");
         return true;
     }
-    bool valid() {
-        if (epoch.empty() || !realm(lobby) || epoch != SafeText(mm->GetLobbyData(lobby, EpochKey)) || !member(lobby, local)) return false;
+    bool valid(CSteamID peer = CSteamID()) {
+        if (epoch.empty() || !realm(lobby) || epoch != SafeText(mm->GetLobbyData(lobby, EpochKey))) return false;
         auto host = mm->GetLobbyOwner(lobby);
-        if (!host.IsValid() || (owner.IsValid() && host != owner) || !member(lobby, host) ||
+        if (!host.IsValid() || (owner.IsValid() && host != owner)) return false;
+        bool hasLocal = false, hasHost = false, hasPeer = !peer.IsValid();
+        int count = mm->GetNumLobbyMembers(lobby);
+        if (count < 1 || count > 250) return false;
+        for (int i = 0; i < count && !(hasLocal && hasHost && hasPeer); ++i) {
+            auto id = mm->GetLobbyMemberByIndex(lobby, i);
+            hasLocal |= id == local; hasHost |= id == host; hasPeer |= id == peer;
+        }
+        if (!hasLocal || !hasHost || !hasPeer ||
             epoch != SafeText(mm->GetLobbyMemberData(lobby, host, MemberKey))) return false;
         owner = host;
         if (epoch != SafeText(mm->GetLobbyMemberData(lobby, local, MemberKey)))
             mm->SetLobbyMemberData(lobby, MemberKey, epoch.c_str());
-        return true;
+        return !peer.IsValid() || epoch == SafeText(mm->GetLobbyMemberData(lobby, peer, MemberKey));
     }
     bool allow(CSteamID peer) {
         std::lock_guard<std::recursive_mutex> lock(mutex);
-        if (!peer.IsValid() || peer == local || !valid()) return false;
-        return member(lobby, peer) && epoch == SafeText(mm->GetLobbyMemberData(lobby, peer, MemberKey));
+        return peer.IsValid() && peer != local && valid(peer);
     }
 };
 
@@ -151,9 +160,20 @@ public:
     int ReceiveMessagesOnChannel(int channel, SteamNetworkingMessage_t** out, int maximum) override {
         if (!out || maximum <= 0) return 0;
         int count = real->ReceiveMessagesOnChannel(channel, out, maximum), kept = 0;
+        if (count <= 0) return 0;
+        // Only reuse admission within this batch. The next API call rechecks live state.
+        std::vector<std::pair<CSteamID, bool>> checked;
+        std::lock_guard<std::recursive_mutex> lock(gate.mutex);
         for (int i = 0; i < count; ++i) {
             auto message = out[i];
-            if (message && gate.allow(message->m_identityPeer.GetSteamID())) out[kept++] = message;
+            bool allowed = false;
+            if (message) {
+                auto peer = message->m_identityPeer.GetSteamID();
+                auto found = std::find_if(checked.begin(), checked.end(), [peer](const auto& entry) { return entry.first == peer; });
+                if (found == checked.end()) { allowed = gate.allow(peer); checked.emplace_back(peer, allowed); }
+                else allowed = found->second;
+            }
+            if (message && allowed) out[kept++] = message;
             else if (message) message->Release();
         }
         for (int i = kept; i < count; ++i) out[i] = nullptr;

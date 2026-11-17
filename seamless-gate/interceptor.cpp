@@ -22,7 +22,7 @@ static void* FindInterface(int user, const char* version) {
 
 extern "C" __declspec(dllexport) bool TowerGateInitialize() {
     if (original) return true;
-    // ME3 calls this outside DllMain, before loading ERSC. Never continue unguarded.
+    // Called outside DllMain, before loading ERSC. Never continue unguarded.
     if (!GetModuleHandleW(L"ersc.dll")) {
         auto steam = GetModuleHandleW(L"steam_api64.dll");
         auto address = steam ? GetProcAddress(steam, "SteamInternal_FindOrCreateUserInterface") : nullptr;
@@ -36,4 +36,10 @@ extern "C" __declspec(dllexport) bool TowerGateInitialize() {
     }
     GateLog("FATAL: cannot install gate before ERSC; cancelling test startup");
     ExitProcess(ERROR_DLL_INIT_FAILED);
+}
+
+// ME3 runs this synchronously; a profile initializer moves ERSC onto a background thread.
+extern "C" __declspec(dllexport) bool modengine_ext_init(void*, void** extension) {
+    if (extension) *extension = nullptr;
+    return TowerGateInitialize();
 }
