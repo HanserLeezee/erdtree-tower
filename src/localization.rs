@@ -145,7 +145,7 @@ fn translate_en_uncached(text:&str,patterns:bool)->Cow<'_,str> {
         return Cow::Owned(format!("{}\n{}",translate_en_inner(head,patterns),translate_en_inner(tail,patterns)));
     }
     if let Some((prefix,name))=text.split_once(' ') {
-        if let Some(name)=CATALOG.exact.get(name) {
+        if let Some(name)=CATALOG.exact.get(name).map(String::as_str).or_else(||(!cjk(name)).then_some(name)) {
             let translated:Option<Vec<_>>=prefix.split('·').map(|part|CATALOG.exact.get(part)).collect();
             if let Some(prefix)=translated {return Cow::Owned(format!("{} {name}",prefix.iter().map(|s|s.as_str()).collect::<Vec<_>>().join(" · ")));}
         }
@@ -192,6 +192,20 @@ pub fn text(text:&str)->Cow<'_,str> {if english(){translate_en(text)}else if tra
 mod tests {
     use super::*;
     #[test]
+    fn current_spirit_descriptions_are_english_and_traditional_glyphs_are_covered() {
+        let glyphs=format!("{}{}",include_str!("../scene-assets/fonts/ui-glyphs.txt"),include_str!("../scene-assets/fonts/ui-glyphs-tw.txt"));
+        for line in include_str!("../scene-assets/custom-spirit-definitions.tsv").lines() {
+            let p:Vec<_>=line.split('|').collect();
+            for source in [p[7],p[8]] {
+                assert!(!cjk(&translate_en(source)),"Missing English: {source}");
+                for ch in to_traditional(source).chars().filter(|c|('\u{3400}'..='\u{9fff}').contains(c)) {
+                    assert!(glyphs.contains(ch),"Missing Traditional glyph {ch}: {source}");
+                }
+            }
+        }
+        for source in ["一只","圣杯","内脏"] {for ch in to_traditional(source).chars() {assert!(glyphs.contains(ch),"{source}: {ch}");}}
+    }
+    #[test]
     fn traditional_conversion_uses_taiwan_forms_and_keeps_markup() {
         assert_eq!(to_traditional("联机大厅"),"聯機大廳");
         assert_eq!(to_traditional("软件 · 鼠标 · 内存"),"軟體 · 滑鼠 · 記憶體");
@@ -214,6 +228,7 @@ mod tests {
     fn composite_equipment_and_multiline_stats_are_fully_english() {
         assert_eq!(translate_en("防具类型：物理\n防御反击伤害 +8%"),"Armor Type: Physical\nGuard counter damage +8%");
         assert_eq!(translate_en("荆棘的 大树守卫"),"Thorned Tree Sentinel");
+        assert_eq!(translate_en("适应的 Cleanrot Knight (Spear)"),"Adaptive Cleanrot Knight (Spear)");
         assert_eq!(translate_en("大树守卫的骨灰＋12"),"Tree Sentinel Ashes +12");
         assert_eq!(translate_en("耐力恢复速度 +4"),"Stamina recovery speed +4");
     }

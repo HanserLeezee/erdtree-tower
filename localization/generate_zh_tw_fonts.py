@@ -4,7 +4,8 @@
 字体按 SIL OFL 1.1，改名为 Tower Serif TW / Tower Title Serif TW，许可见 licenses/NotoSerifCJK-OFL.txt。
 用法：python3 localization/generate_zh_tw_fonts.py <NotoSerifCJK-Regular.ttc> <NotoSerifCJK-Bold.ttc>（需要 fontTools）"""
 import pathlib, sys
-from fontTools.ttLib import TTCollection
+from fontTools.ttLib import TTCollection, TTFont
+from fontTools.varLib.instancer import instantiateVariableFont
 from fontTools.subset import Options, Subsetter
 root = pathlib.Path(__file__).resolve().parent.parent
 fonts = root / "scene-assets/fonts"; tables = root / "localization/zh-TW"
@@ -15,11 +16,19 @@ single = {k: v for k, v in st.items() if len(k) == 1}
 base = set((fonts / "ui-glyphs.txt").read_text(encoding="utf-8"))
 wanted = set()
 for c in base: wanted.update(single.get(c, c))
+for key, value in st.items():
+    if all(c in base for c in key): wanted.update(value)
 for v in list(phrases.values()) + list(variants.values()): wanted.update(v)
 extra = sorted(c for c in wanted - base if ord(c) >= 0x80 and c.isprintable())
 (fonts / "ui-glyphs-tw.txt").write_text("".join(extra), encoding="utf-8")
 def make(source, face, family, style, name):
-    font = next(f for f in TTCollection(str(source)).fonts if f["name"].getDebugName(4) == face)
+    if source.suffix.lower() == '.ttc':
+        font = next(f for f in TTCollection(str(source)).fonts if f["name"].getDebugName(4) == face)
+    else:
+        font = TTFont(str(source))
+        if 'fvar' in font: font = instantiateVariableFont(font, {'wght': 700 if style == 'Bold' else 400}, inplace=True)
+    missing = [c for c in extra if ord(c) not in font.getBestCmap()]
+    if missing: raise ValueError(f'Missing Traditional glyphs: {missing}')
     options = Options(); options.layout_features = ["*"]; options.name_IDs = ["*"]; options.notdef_outline = True
     subsetter = Subsetter(options); subsetter.populate(unicodes=[ord(c) for c in extra]); subsetter.subset(font)
     for record in font["name"].names:

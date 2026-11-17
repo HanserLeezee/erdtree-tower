@@ -469,6 +469,20 @@ fn affix_stock(run:&Run,visit:usize,result:&mut [Stock]) {
     }
 }
 #[test]
+fn shop_rolls_both_triggered_and_original_quality_talismans() {
+    let (mut triggered,mut passive)=(0,0);
+    for seed in 0..100 {
+        let run=Run::new(seed,erdtree_tower::Class::Samurai);
+        let mut rows=vec![Stock{kind:2,id:1000,price:1000,quantity:1}];
+        affix_stock(&run,0,&mut rows);
+        let id=0x20000000|rows[0].id as u32;
+        if erdtree_tower::talisman_passives::variant(id).is_some(){passive+=1;}
+        else {assert!(erdtree_tower::talismans::CATALOG.iter().any(|i|i.id==id));triggered+=1;}
+        let mut again=rows.clone();affix_stock(&run,0,&mut again);assert_eq!(rows,again);
+    }
+    assert!(triggered>0&&passive>0);
+}
+#[test]
 fn shop_spells_receive_variants_and_keep_legacy_opt_out() {
     for seed in 0..40 {
         let mut run=Run::new(seed,erdtree_tower::Class::Astrologer);

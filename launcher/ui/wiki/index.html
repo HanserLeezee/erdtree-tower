@@ -762,17 +762,17 @@ nav.searching .nav-sep{display:none}
 </div>
 <div class="stats">
 <div class="stat"><b>6</b>职业</div><div class="stat"><b>41</b>余烬</div>
-<div class="stat"><b>12</b>Boss 词条</div><div class="stat"><b>34</b>律法节点</div>
+<div class="stat"><b>11</b>启用 Boss 词条</div><div class="stat"><b>34</b>律法节点</div>
 <div class="stat"><b>21</b>装备词条</div><div class="stat"><b>4</b>品质档</div>
 </div>
 </div>
 </div>
 <nav>
 <a href="#s1">职业</a><a href="#s9">灵药/骨灰/投掷壶</a><a href="#s2">余烬</a><a href="#s3">Boss 词条</a>
-<a href="#s4">苦难律法</a><a href="#s5">装备前缀</a><a href="#s6">强化机制</a><a href="#s7">新增护符</a><a href="#s8">旅程档案</a>
+<a href="#s4">苦难律法</a><a href="#s5">装备前缀</a><a href="#s6">强化机制</a><a href="#s7">新增护符</a><a href="#s8">旅程档案</a><a href="#s10">启动排障</a>
 <span class="nav-sep"></span>
 <div class="search"><input autocomplete="off" id="q" placeholder="全表搜索关键词…" type="search"/><span class="cnt" id="cnt">245 / 245</span></div>
-</nav><p class="note">依据截至 2026-11-16 的本地代码与已安装修复更新。文中“本地补丁”已包含在此包中，历史旅程可能沿用旧规则。内置无缝 2.0.3，联机玩家需使用相同版本。</p>
+</nav><p class="note">依据截至 2026-11-18 的本地测试版 v12311 更新，不代表线上整合包已发布同样改动。历史旅程可能沿用旧规则；适应词条需要新开旅程。内置无缝 2.0.3，联机玩家需使用相同版本。</p>
 <section id="s1">
 <div class="sec-head"><span aria-hidden="true" class="sec-no"></span><h2>初始职业</h2><span class="sec-meta">6 个职业 · 常驻被动</span></div>
 <p class="note">当前版本有六大职业，每个职业都有专属机制，不叠加局外数值成长；<br/>开局时会赠送一枚护符，随着职业熟练度提高，开局赠送的护符会有更多的选择， <b>Lv1 / 3 / 6 / 10</b> 各解锁一种选择。<br/>全职业开局自带基础砥石小刀、空灵药瓶、灵唤铃；新旅程另赠送并调配一枚铅化硬露滴（暂时提高强韧度）与 5 个龟裂壶，灵药改为可累积消耗品（每次使用消耗一瓶，最多 999 瓶）。单人模式下自带徘徊赐福 ×2（可死亡 2 次）；事件房宝箱爆炸致死也会优先消耗赐福并返回原房间，已触发的事件不能重复选择或领奖；并内置「死亡不掉卢恩」常驻效果（联机时也生效）。</p>
@@ -1030,8 +1030,9 @@ nav.searching .nav-sep{display:none}
 </section>
 <div class="sec-div"><i></i></div>
 <section id="s3">
-<div class="sec-head"><span aria-hidden="true" class="sec-no"></span><h2>Boss 强化词条</h2><span class="sec-meta">10 条启用 · 2 条已移除</span></div>
-<p class="note">Boss会出现随机强化词条，第一幕/第二幕/第三幕Boss分别有 <b>2 / 4 / 6</b> 点预算点数来抽取强化词条，强化词条最多为 3 条；<br/>Boss每使用1点预算点数，胜利额外获得该幕基础 Boss 卢恩的 <b>15%</b>。<br/>各幕基础 Boss 卢恩为 <b>9000 / 18000 / 30000</b>，精英为其 1/3；词条带来的额外卢恩受「贫瘠」打折，但精英的词条预算不受「词条蔓延」影响。<br/>词条之间存在互斥性，有的词条无法同时出现。互斥组：防御（铁壁、黄金律法）、续航（再生、不屈、吸血）、增攻（狂暴、嫉妒）各只出一条。</p>
+<div class="sec-head"><span aria-hidden="true" class="sec-no"></span><h2>Boss 强化词条</h2><span class="sec-meta">11 条启用 · 2 条已移除</span></div>
+<p class="note">Boss会出现随机强化词条，第一幕/第二幕/第三幕Boss分别有 <b>2 / 4 / 6</b> 点预算点数来抽取强化词条，强化词条最多为 3 条；<br/>Boss每使用1点预算点数，胜利额外获得该幕基础 Boss 卢恩的 <b>15%</b>。<br/>各幕基础 Boss 卢恩为 <b>9000 / 18000 / 30000</b>，精英为其 1/3；词条带来的额外卢恩受「贫瘠」打折，但精英的词条预算不受「词条蔓延」影响。<br/>词条之间存在互斥性，有的词条无法同时出现。互斥组：防御（铁壁、黄金律法、适应）、续航（再生、不屈、吸血）、增攻（狂暴、嫉妒）各只出一条。</p>
+<p class="note plain">刷怪准备阶段：首波 1 秒、后续波次 3 秒，敌人暂不行动且不受伤害，余烬额外伤害与捕捉也不生效；准备结束后恢复正常。不影响正常战斗硬直和处决。</p>
 <table class="tbl"><thead><tr><th>#</th><th>词条</th><th>点数</th><th>开放幕</th><th>效果</th></tr></thead><tbody>
 <tr class="" data-row="" data-text="01 坚毅的 1 第一幕起 Boss韧性翻倍"><td class="num">01</td>
 <td class="nm" style="color:#C4B696;text-shadow:0 0 12px #F4E2B255"><i class="dot" style="background:#C4B696"></i>坚毅的</td><td class="pt">1</td><td>第一幕起</td><td>Boss韧性翻倍</td></tr>
@@ -1047,23 +1048,16 @@ nav.searching .nav-sep{display:none}
 <td class="nm" style="color:#A060D6;text-shadow:0 0 12px #D2AAF055"><i class="dot" style="background:#A060D6"></i>嫉妒的</td><td class="pt">2</td><td>第一幕起</td><td>玩家喝圣杯瓶后，攻击 +30%，持续 15 秒（词条强化后攻击 +45%，持续时间不变）</td></tr>
 <tr class="removed" data-row="" data-text="07 傲慢的 1 — 已移除 原效果：8 秒没挨打时攻击 +20%，被打中后清除"><td class="num">07</td>
 <td class="nm" style="color:#F4EEE0;text-shadow:0 0 12px #FFD68C55"><i class="dot" style="background:#F4EEE0"></i>傲慢的</td><td class="pt">1</td><td>—</td><td><span class="tag t-x">已移除</span>原效果：8 秒没挨打时攻击 +20%，被打中后清除</td></tr>
-<tr class="" data-row="" data-text="08 黄金律法的 2 第一幕起 每 20 秒展开 5 秒金色护盾，受到的伤害 −70%（强化后每 15 秒）"><td class="num">08</td>
-<td class="nm" style="color:#F2C85C;text-shadow:0 0 12px #FFF8D255"><i class="dot" style="background:#F2C85C"></i>黄金律法的</td><td class="pt">2</td><td>第一幕起</td><td>每 20 秒展开 5 秒金色护盾，受到的伤害 −70%（强化后每 15 秒）</td></tr>
+<tr class="" data-row="" data-text="08 黄金律法的 2 第一幕起 每 25 秒展开 5 秒金色护盾，受到的伤害 −60%（强化后间隔与减伤不变）"><td class="num">08</td>
+<td class="nm" style="color:#F2C85C;text-shadow:0 0 12px #FFF8D255"><i class="dot" style="background:#F2C85C"></i>黄金律法的</td><td class="pt">2</td><td>第一幕起</td><td>每 25 秒展开 5 秒金色护盾，受到的伤害 −60%（强化后间隔与减伤不变）</td></tr>
 <tr class="" data-row="" data-text="09 不屈的 3 第一幕起 生命首次降到 10% 以下时回复至 40%，仅一次（原「涅槃的」）（强化后回复至 60%）"><td class="num">09</td>
 <td class="nm" style="color:#F4963E;text-shadow:0 0 12px #FFE08055"><i class="dot" style="background:#F4963E"></i>不屈的</td><td class="pt">3</td><td>第一幕起</td><td>生命首次降到 10% 以下时回复至 40%，仅一次（原「涅槃的」）（强化后回复至 60%）</td></tr>
-<tr class="" data-row="" data-text="10 吸血的 1 第三幕起 每次击中玩家，回复其最大生命 1.5%（强化后 2.5%）"><td class="num">10</td>
-<td class="nm" style="color:#CC2036;text-shadow:0 0 12px #FF607455"><i class="dot" style="background:#CC2036"></i>吸血的</td><td class="pt">1</td><td><b>第三幕起</b></td><td>每次击中玩家，回复其最大生命 1.5%（强化后 2.5%）</td></tr>
-<<<<<<< HEAD
-<tr class="" data-row="" data-text="11 荆棘的 2 第一幕起 受到伤害的 8% 反弹给玩家，一次最多 200 点，不会致死（词条强化后反弹 12%，上限仍为 200 点）"><td class="num">11</td>
-<td class="nm" style="color:#AC2A2A;text-shadow:0 0 12px #E8605455"><i class="dot" style="background:#AC2A2A"></i>荆棘的</td><td class="pt">2</td><td>第一幕起</td><td>受到伤害的 8% 反弹给玩家，一次最多 200 点，不会致死（词条强化后反弹 12%，上限仍为 200 点）</td></tr>
+<tr class="" data-row="" data-text="10 吸血的 1 第三幕起 每次实际攻击玩家并造成掉血，回复该 Boss 最大生命 1%（强化后 1.5%）；限时扣血不触发，联机由房主去重结算"><td class="num">10</td>
+<td class="nm" style="color:#CC2036;text-shadow:0 0 12px #FF607455"><i class="dot" style="background:#CC2036"></i>吸血的</td><td class="pt">1</td><td><b>第三幕起</b></td><td>每次实际攻击玩家并造成掉血，回复该 Boss 最大生命 1%（强化后 1.5%）；限时扣血不触发，联机由房主去重结算</td></tr>
+<tr class="" data-row="" data-text="11 荆棘的 2 第一幕起 受到伤害的 8% 反弹给玩家，法术、祷告、弓箭等远程命中反伤减半；一次最多 100 点，不会致死（强化后反弹 12%，上限仍为 100 点）"><td class="num">11</td>
+<td class="nm" style="color:#AC2A2A;text-shadow:0 0 12px #E8605455"><i class="dot" style="background:#AC2A2A"></i>荆棘的</td><td class="pt">2</td><td>第一幕起</td><td>受到伤害的 8% 反弹给玩家，法术、祷告、弓箭等远程命中反伤减半；一次最多 100 点，不会致死（强化后反弹 12%，上限仍为 100 点）</td></tr>
 <tr class="retired" data-row="" data-text="迅猛的 已移除 不再抽取 律法停用"><td class="num">12</td><td class="nm">迅猛的</td><td>—</td><td>已移除</td><td>不再出现，对应律法已停用；旧存档勾选也不再触发。</td></tr>
 <tr data-row="" data-text="13 适应的 2 第一幕起 同类伤害减免 每次10% 上限50% 混合伤害不受影响"><td class="num">13</td><td class="nm" style="color:#6CBCD8">适应的</td><td class="pt">2</td><td>第一幕起</td><td>首次受到单一类型伤害不减免，此后同类伤害减免每次增加 10%，上限 50%。换类型重新累计；混合伤害不减免，也不改变已有适应。与铁壁、黄金律法互斥；新开旅程生效。</td></tr>
-=======
-<tr class="" data-row="" data-text="11 荆棘的 2 第一幕起 受到伤害的 10% 反弹给玩家，法术、祷告、弓箭等远程打的减半，一次最多 100 点，不会致死（词条强化后反弹 12%，上限仍为 100 点）"><td class="num">11</td>
-<td class="nm" style="color:#AC2A2A;text-shadow:0 0 12px #E8605455"><i class="dot" style="background:#AC2A2A"></i>荆棘的</td><td class="pt">2</td><td>第一幕起</td><td>受到伤害的 10% 反弹给玩家，法术、祷告、弓箭等远程打的减半，一次最多 100 点，不会致死（词条强化后反弹 12%，上限仍为 100 点）</td></tr>
-<tr class="" data-row="" data-text="12 迅猛的 1 第一幕起 动作速度 +10%：出招、收招、移动更快（词条强化后 +30%）"><td class="num">12</td>
-<td class="nm" style="color:#5CDECC;text-shadow:0 0 12px #CCFFF655"><i class="dot" style="background:#5CDECC"></i>迅猛的</td><td class="pt">1</td><td>第一幕起</td><td>动作速度 +10%：出招、收招、移动更快（词条强化后 +30%）</td></tr>
->>>>>>> origin/main
 </tbody></table>
 <p class="note plain" style="margin-top:10px"><b>苦难律法</b>中的<b>词条强化</b>，会进一步提升数值：坚毅削韧 ×0.35、铁壁 −35%、狂暴攻击 +35%／受伤 +10%、再生每秒 0.45%、嫉妒攻击 +45%、傲慢 <span class="tag t-x">已移除</span>攻击 +30%。</p>
 </section>
@@ -1352,7 +1346,7 @@ nav.searching .nav-sep{display:none}
 <div class="sec-div"><i></i></div>
 <section id="s7">
 <div class="sec-head"><span aria-hidden="true" class="sec-no"></span><h2>新增护符</h2><span class="sec-meta">109 类 · 370 件品质变体</span></div>
-<p class="note">新开局抽到护符时，有 <b>50%</b> 概率替换为<b>词条护符</b>；奖励、宝箱／事件、商店均接入。<span class="qtag q1">普通</span>／<span class="qtag q2">稀有</span>／<span class="qtag q3">史诗</span>／<span class="qtag q4">传说</span>的基础权重为 <b>45 / 30 / 18 / 7</b>。领取后固定，不占用原版护符编号，需要装备并占用护符栏位才生效。</p>
+<p class="note">当前规则生成护符奖励或商店商品时，约 <b>50%</b> 走<b>原版护符＋品质被动</b>，另约 <b>50%</b> 走 RNG Land 的<b>命中触发护符</b>，后者包含 <b>24 类、41 个品质版本</b>，如雷龙爆发、恶神火球、黑焰爆发、天矛突袭。品质遵循当前旅程的品质权重与来源保底，只抽取该系列实际存在的品质；奖励去重后无可选触发护符时回退到原版品质护符。新生成的奖励、宝箱／事件奖励及商店库存生效；已保存的商店库存不会自动重抽，旧规则旅程保留旧抽取方式。</p>
 <p class="note plain" style="margin-top:-4px">下表每行是一类护符，右侧四列是该品质档的数值；效果里的 <b class="ph" style="color:var(--gold-hi)">◇</b> 表示随品质变化的数值，标 <b>●</b> 表示这一档存在但不带可变数值。图标为 1.6.2 重绘的专属图标（109 类词条护符各一枚）；原版护符沿用游戏图标。</p>
 <table class="tbl tal-tbl"><thead><tr><th>图标</th><th>护符系列</th><th>效果</th><th class="v">普通</th><th class="v">稀有</th><th class="v">史诗</th><th class="v">传说</th></tr></thead><tbody>
 <tr data-row="" data-text="力量护符 属性 力气增加 ◇ 。 2 5 8 12"><td class="tic"><i class="ti" style="background-image:url(data:image/webp;base64,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)"></i></td><td class="tn"><b>力量护符</b><br/><span class="cat c-attr">属性</span></td><td class="eff">力气增加 <b class="ph">◇</b>。</td><td class="v v1">2</td><td class="v v2">5</td><td class="v v3">8</td><td class="v v4">12</td></tr>
@@ -1836,3 +1830,15 @@ nav.searching .nav-sep{display:none}
 })();
 </script>
 </body></html>
+<li>自定义骨灰共 56 种；其中后追加的 44 种按强度调整品质与单次召唤数量，分别为 28 种单体、9 种双体、7 种三体。召唤数量不随强化等级改变。</li>
+<li>参数引用校验不等于全场地实测通过。流刑士兵、亚人女王、巨型螯虾、神皮使徒已有成功生成记录；遇到召唤异常，请记录骨灰名称、强化等级、所在场地及主客机，并保留 Mod 日志。</li>
+<p class="note plain">下表保留历史护符资料，<b>不表示所有 109 类都在当前随机池中</b>。恢复的是命中触发类；同稀有度的命中触发护符不能同时装备。本次恢复抽取不等于所有特效已通过双人联机实测。</p>
+<section id="s10">
+<div class="sec-head"><span aria-hidden="true" class="sec-no"></span><h2>启动排障</h2><span class="sec-meta">文件系统 · 日志</span></div>
+<div class="subsec-b">
+<h3>提示“函数不正确”（Incorrect function）</h3>
+<p>本 MOD 请放在 <b>NTFS</b> 格式的分区中运行。位于 <b>exFAT</b> 磁盘时，可能在启动过程中出现“函数不正确”。</p>
+<ol><li>在资源管理器中右键 MOD 所在磁盘，选择“属性”，查看“文件系统”。</li><li>若为 exFAT，先退出游戏和启动器，将<b>整个 MOD 文件夹</b>复制到 NTFS 分区。</li><li>从新位置打开启动器，确认游戏目录后重新启动。</li></ol>
+<p class="note plain">若已在 NTFS 分区仍报错，保留启动日志反馈；“函数不正确”并不只可能由文件系统引起。启动器的设置 → 排障页面也提供此说明。</p>
+</div></section>
+<div class="sec-div"><i></i></div>

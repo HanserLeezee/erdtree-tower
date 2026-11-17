@@ -106,9 +106,9 @@ if(args.Length==5&&args[3]=="english-theme") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     LocalizationAssets.BuildTheme(args[2],args[1],args[4]);return;
 }
-if(args.Length==5&&args[3]=="english-text") {
+if(args.Length==5&&args[3] is "english-text" or "traditional-text") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
-    LocalizationAssets.Build(args[0],args[2],args[1],args[4]);return;
+    LocalizationAssets.Build(args[0],args[2],args[1],args[4],args[3]=="traditional-text"?"zhotw":"engus");return;
 }
 if(args.Length==4&&args[3]=="localization-export") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));

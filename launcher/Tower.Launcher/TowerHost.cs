@@ -1036,8 +1036,9 @@ namespace Tower.Launcher
             catch (Exception e) when (e is IOException || e is Win32Exception || e is UnauthorizedAccessException || e is InvalidOperationException)
             {
                 Log.Write("启动失败：" + e);
-                launchProgress.End("failed", "启动失败", e.Message); PushLaunchProgress();
-                Toast("启动失败：" + e.Message, "error", 0, "打开日志", "openLogs");
+                var reason = LaunchResult.WithHint(e.Message);
+                launchProgress.End("failed", "启动失败", reason); PushLaunchProgress();
+                Toast("启动失败：" + reason, "error", 0, "打开日志", "openLogs");
             }
             finally {
                 launching = false;
