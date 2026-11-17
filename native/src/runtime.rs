@@ -3202,7 +3202,6 @@ fn member_embers(state:&mut Runtime,world:&mut WorldChrMan) {
     let events=state.ember_fight.tick(world,key,&embers,&foes,false,true,flasks,keeper,false);
     super::starsurge::fight(world,&foes.iter().map(|f|f.0).collect::<Vec<_>>());
     if events.feast {grant_feast(state.flasks.as_mut(),world);}
-    if let Some(player)=world.main_player.as_mut() {super::passives::kill_fp(&mut player.chr_ins,state.view.run.as_ref(),&events.gains);}
     grant_captures(state,world,&events.captures);
     record_ember_gains(state,events.gains,key);
     // 作用在敌人身上的余烬交给房主执行

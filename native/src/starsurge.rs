@@ -36,7 +36,8 @@ const FX_TRACE:bool=false;
 const NEARBY_REACH:f32=60.0;
 /// 同一魔法这么久内生成的弹体算同一次施法
 const SAME_CAST:Duration=Duration::from_millis(1000);
-/// 原版「大型蓝露滴粪金龟」（击杀恢复一瓶蓝瓶）：调试台生成在身边；返还蓝瓶时生成在脚下看不见的地方并立刻击杀，借原版回蓝特效与音效
+/// 原版「大型蓝露滴粪金龟」（击杀恢复一瓶蓝瓶）：调试台生成在身边，用于对照回蓝效果。
+/// SCARAB_GIFT（在脚下生成并击杀、借原版回蓝特效）是试过的备用方案，目前 victory() 不再使用，返还蓝瓶改用染蓝凶刀特效
 const CERULEAN_SCARAB:(i32,i32,i32)=(4190,41901000,41900000);
 const SCARAB_DEBUG:u8=1;
 const SCARAB_GIFT:u8=2;
@@ -135,7 +136,7 @@ fn restore_haima(force:bool) {
     let Ok(mut pending)=ATK_RESTORE.lock() else{return};
     let Some((at,rows))=pending.as_ref() else{return};
     if !force&&Instant::now()<*at {return;}
-    if let Ok(params)=(unsafe {SoloParamRepository::instance_mut()}) {
+    if let Ok(params)=unsafe {SoloParamRepository::instance_mut()} {
         for (id,[phys,mag,fire,thun,dark]) in rows.iter().copied() {
             if let Some(row)=params.get_mut::<AtkParam_Pc>(id) {row.set_atk_phys(phys);row.set_atk_mag(mag);row.set_atk_fire(fire);row.set_atk_thun(thun);row.set_atk_dark(dark);}
         }
@@ -264,7 +265,7 @@ pub fn take_flask_gift()->bool {FLASK_GIFT.swap(false,Ordering::AcqRel)}
 static GIFT_SHOW:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 fn show_gift(chr:&mut ChrIns) {
     if !GIFT_SHOW.swap(false,Ordering::AcqRel) {return;}
-    if let Ok(params)=(unsafe {SoloParamRepository::instance_mut()}) {
+    if let Ok(params)=unsafe {SoloParamRepository::instance_mut()} {
         let template=params.get::<SpEffectParam>(NEUTRAL_TEMPLATE).map(|r|std::ptr::from_ref(r));
         if let (Some(template),Some(row))=(template,params.get_mut::<SpEffectParam>(GIFT_FX as u32)) {
             unsafe {std::ptr::copy_nonoverlapping(template,std::ptr::from_mut(row),1);}
@@ -655,7 +656,7 @@ fn burst(world:&mut WorldChrMan,handle:&FieldInsHandle,pos:[f32;3],damage:i32)->
     let amount=damage.saturating_mul(BURST_FACTOR);
     // 上一次的还没恢复就先恢复，再记下原值、临时清零
     restore_haima(true);
-    if let Ok(params)=(unsafe {SoloParamRepository::instance_mut()}) {
+    if let Ok(params)=unsafe {SoloParamRepository::instance_mut()} {
         let mut saved=Vec::new();
         for bullet in [HAIMA_SHOT,HAIMA_BURST] {
             let Some(atk)=params.get::<Bullet>(bullet as u32).map(|b|b.atk_id_bullet()).filter(|id|*id>0) else{continue};
