@@ -25,20 +25,21 @@ window.HOYO_CONFIG = {
     ],
   },
 
-  /* 右侧栏：网址用系统浏览器打开；action 交给宿主 */
+  /* 右侧栏：网址用系统浏览器打开；action 交给宿主。short 是图标下方的小字，label 是悬停提示 */
   social: [
-    { icon: 'social-qq', label: 'QQ 交流群', panel:
+    { icon: 'social-qq', label: 'QQ 交流群', short: 'QQ群', panel:
       '<p>黄金树爬塔玩家交流群</p>' +
       '<p style="user-select:text;font-size:20px;color:#fff">1 群：1127474860</p>' +
       '<p style="user-select:text;font-size:20px;color:#fff">2 群：996356584</p>' +
       '<p>选中群号后按 Ctrl+C 复制，在 QQ 中搜索群号加入。</p>' },
-    { icon: 'social-bilibili', label: '作者 B 站', href: 'https://space.bilibili.com/472900263' },
-    { icon: 'social-home', label: '项目主页', href: 'https://github.com/tamikip/erdtree-tower' },
-    { icon: 'social-lobby', label: '联机大厅', action: 'lobby' },
-    { icon: 'social-wiki', label: 'Wiki 百科', action: 'openWiki' },
-    { icon: 'social-feedback', label: '问题修复', action: 'troubleshoot' },
-    { icon: 'social-history', label: '更新日志与历史', action: 'releaseHistory' },
-    { icon: 'social-folder', label: 'Mod 日志目录', action: 'openModLogs' },
+    { icon: 'social-bilibili', label: '作者 B 站', short: 'B站', href: 'https://space.bilibili.com/472900263' },
+    { icon: 'social-afdian', label: '爱发电 · 支持作者', short: '爱发电', href: 'https://ifdian.net/a/tamikip' },
+    { icon: 'social-home', label: '项目主页', short: '主页', href: 'https://github.com/tamikip/erdtree-tower' },
+    { icon: 'social-lobby', label: '联机大厅', short: '大厅', action: 'lobby' },
+    { icon: 'social-wiki', label: 'Wiki 百科', short: '百科', action: 'openWiki' },
+    { icon: 'social-feedback', label: '问题修复', short: '修复', action: 'troubleshoot' },
+    { icon: 'social-history', label: '更新日志与历史', short: '更新', action: 'releaseHistory' },
+    { icon: 'social-folder', label: 'Mod 日志目录', short: '日志', action: 'openModLogs' },
   ],
 
   windowControls: ['settings', 'minimize', 'close'],

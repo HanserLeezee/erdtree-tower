@@ -286,6 +286,8 @@
     'social-feedback': '<path d="M5 3h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H8l-5 3V5a2 2 0 0 1 2-2Z"/><path d="M12 7v5M12 15h.01"/>',
     'social-history': '<path d="M3 4v5h5M3 9a9 9 0 1 1 0 6"/><path d="M12 7v5l3 2"/>',
     'social-folder': '<path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Zm0 3h18"/>',
+    /* 爱发电：心形里一道闪电 */
+    'social-afdian': '<path d="M12 20.5s-8-4.6-8-10.6A4.4 4.4 0 0 1 12 7.3a4.4 4.4 0 0 1 8 2.6c0 6-8 10.6-8 10.6Z"/><path d="m12.8 9.2-2.3 3.6h3l-2.3 3.6"/>',
   };
 
   function renderSocial() {
@@ -302,7 +304,8 @@
           : SOCIAL_ICONS[item.icon]
           ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + SOCIAL_ICONS[item.icon] + '</svg>'
           : '<img src="assets/icons/' + esc(item.icon) + '.png" alt="">') +
-        (item.badge ? '<i class="badge"></i>' : '');
+        (item.badge ? '<i class="badge"></i>' : '') +
+        (item.short ? '<span class="social-cap">' + esc(item.short) + '</span>' : '');
       b.addEventListener('click', function () {
         if (item.popup === 'account') { openAccountPopup(b); return; }
         /* href 用浏览器打开网页；action 交给宿主（打开日志目录、安装教程等本地功能） */

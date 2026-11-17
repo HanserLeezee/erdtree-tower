@@ -143,7 +143,7 @@ impl Ember {
     pub fn effect(self)->String {match self {
         Self::Mind=>format!("最大生命增加\n相当于最大专注的 {MIND_HP_TIMES} 倍"),
         Self::Glintblade=>"魔法命中敌人时\n召唤一把魔力辉剑追击它\n每次施法最多一把".into(),
-        Self::Capture=>format!("投掷壶命中生命低于 {CAPTURE_FROM_PERCENT}% 的敌人时\n有机会捕捉：{CAPTURE_FROM_PERCENT}% 时 {CAPTURE_BASE_CHANCE}%，越低越高\n{CAPTURE_SURE_PERCENT}% 以下必定捕捉\n捕捉视为击杀，并获得它的骨灰（有的话）\nBoss 也能捕捉"),
+        Self::Capture=>format!("投掷壶命中残血敌人可捕捉\n{CAPTURE_FROM_PERCENT}% 生命时 {CAPTURE_BASE_CHANCE}%，{CAPTURE_SURE_PERCENT}% 以下必定\n视为击杀，并获得其骨灰\nBoss 也能捕捉"),
         Self::Tent=>"每个篝火可以免费使用一次\n圣杯瓶补给，不占营地服务次数".into(),
         Self::FrostShackle=>"敌人触发冻伤后，持续 10 秒\n行动速度 -30%，造成伤害 -20%\n再次触发刷新持续时间，不叠加".into(),
         Self::Execution=>format!("致命一击后 {EXECUTION_SECONDS} 秒内\n精力消耗 -{EXECUTION_STAMINA_CUT}%"),
