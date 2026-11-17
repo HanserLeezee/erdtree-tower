@@ -289,6 +289,18 @@ static PLAYER_POS:[std::sync::atomic::AtomicU32;3]=[const {std::sync::atomic::At
 /// 同一魔法在离玩家这么远处生成、且上一次施法在这段时间内：算上一次施法的后续
 const FOLLOW_REACH:f32=4.0;
 const FOLLOW_UP:Duration=Duration::from_secs(6);
+/// 同一魔法 FOLLOW_UP 内又生成弹体：弹体编号和上一次施法起手的那颗不同（如蕾拉娜的双月最后砸下的那一下），
+/// 或者生成在离玩家较远处，就算上一次施法的后续；重新施放同一魔法时起手的弹体编号相同，仍算新的一发
+fn follow_up(spawns:&[Spawned],data:&[u8;0x110],bullet:i32,spell:u32,now:Instant)->Option<u64> {
+    let prev=spawns.iter().rev().find(|s|s.spell==spell&&now.duration_since(s.at)<FOLLOW_UP)?;
+    let first=spawns.iter().find(|s|s.cast==prev.cast).map_or(prev.bullet,|s|s.bullet);
+    let far=far_from_player(data);
+    let joined=first!=bullet||far;
+    if DIAG_FOLLOW.fetch_add(1,Ordering::Relaxed)<30 {
+        super::log(format!("STARSURGE_FOLLOW spell={spell} bullet={bullet} first={first} far={far} after={}ms joined={joined}",now.duration_since(prev.at).as_millis()));
+    }
+    joined.then_some(prev.cast)
+}
 fn far_from_player(data:&[u8;0x110])->bool {
     let at=[0x80,0x84,0x88].map(|o|f32::from_le_bytes(data[o..o+4].try_into().unwrap()));
     let me=PLAYER_POS.each_ref().map(|v|f32::from_bits(v.load(Ordering::Relaxed)));
@@ -301,6 +313,7 @@ static DIAG_SPAWNS:AtomicU64=AtomicU64::new(0);
 static DIAG_MISSES:AtomicU64=AtomicU64::new(0);
 static DIAG_ANY:AtomicU64=AtomicU64::new(0);
 static DIAG_FOREIGN:AtomicU64=AtomicU64::new(0);
+static DIAG_FOLLOW:AtomicU64=AtomicU64::new(0);
 static UNKNOWN_SPAWNS:Mutex<Vec<i32>>=Mutex::new(Vec::new());
 /// 最近一次自己施放魔法时的生成数据，爆炸弹体以它为模板
 static TEMPLATE:Mutex<Option<[u8;0x110]>>=Mutex::new(None);
@@ -356,7 +369,7 @@ pub fn observe_spawn(data:&[u8;0x110]) {
         // 同一魔法 1 秒内连着生成的弹体算同一次施法：岩石弹的三颗、辉剑的多把；辉石魔砾一次施法会先后生成两颗（相隔约 0.57 秒）
         let same=spawns.last().filter(|s|s.spell==spell&&now.duration_since(s.at)<SAME_CAST).map(|s|s.cast)
             // 离玩家较远处生成的同一魔法弹体是上一次施法的后续（如蕾拉娜的双月最后砸下的那一下），不是新的一发
-            .or_else(||far_from_player(data).then(||spawns.iter().rev().find(|s|s.spell==spell&&now.duration_since(s.at)<FOLLOW_UP)).flatten().map(|s|s.cast));
+            .or_else(||follow_up(&spawns,data,bullet,spell,now));
         if same.is_none() {if let Ok(mut t)=TEMPLATE.try_lock(){*t=Some(*data);}}
         (spell,same.unwrap_or_else(||NEXT_CAST.fetch_add(1,Ordering::Relaxed)))
     };
