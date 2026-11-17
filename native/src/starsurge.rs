@@ -191,34 +191,36 @@ pub enum Outcome {
     Stack(u32),
     /// 漏了法术：从这一发重新开始（第 1 层）
     Restart,
-    /// 单一法术连发满 3 发：清零，没有爆炸
-    Wrap,
     /// 两种以上法术交替打满上限：爆炸并清零
     Burst,
 }
 /// 叠层规则（纯逻辑，记在玩家身上，打中哪个敌人都算）：
 /// - 每一发命中的魔法算一层，第 N 发就是第 N 层。
-/// - 只要和上一发不是同一个魔法就能叠层；上限 = 这一轮里用过的不同魔法数 × 3，用了新魔法上限立刻更新。
-///   例：ABABAC → 6/9；ABABACABDC → 10/12。
-/// - 连续两发是同一个魔法：清零，这一发算新一轮的第 1 层。
-/// - 打满上限时爆炸并清零（只用一种魔法到不了上限）。
+/// - 上限 = 这一轮里用过的不同魔法数 × 3，用了新魔法上限立刻更新。例：ABABAC → 6/9；ABABACABDC → 10/12。
+/// - 只用一种魔法复读：最多叠到 3/3（AA → 2/3，AAA → 3/3），再来一发同一个魔法回到 1/3；不会爆炸。
+/// - 复读之后换新魔法：复读只留最后一发，和新魔法组成交替链（AAB、AAAB → 2/6）。
+/// - 两种以上魔法交替时，连续两发同一个魔法打断循环：清零，这一发算第 1 层（ABCA → 4/9，再一发 A → 1/3）。
+/// - 两种以上魔法打满上限时爆炸并清零。
+/// 只用一种魔法复读时最多叠到的层数
+const SINGLE_CAP:u32=3;
 #[derive(Default,Debug,Clone,PartialEq)]
 pub struct Cycle {known:Vec<u32>,last:Option<u32>,pub layers:u32}
 impl Cycle {
     pub fn cap(&self)->u32 {3*self.known.len() as u32}
     pub fn hit(&mut self,spell:u32)->Outcome {
+        let single=self.known.len()<=1;
         if self.last==Some(spell) {
+            // 单一魔法复读：叠到 3 层为止
+            if single&&self.layers<SINGLE_CAP {self.layers+=1;return Outcome::Stack(self.layers);}
             *self=Self{known:vec![spell],last:Some(spell),layers:1};
             return Outcome::Restart;
         }
+        // 复读之后换了新魔法：复读只留最后一发
+        if single&&self.layers>1 {self.layers=1;}
         if !self.known.contains(&spell) {self.known.push(spell);}
         self.last=Some(spell);
         self.layers+=1;
-        if self.layers>=self.cap() {
-            let burst=self.known.len()>=2;
-            *self=Self::default();
-            return if burst {Outcome::Burst}else{Outcome::Wrap};
-        }
+        if self.layers>=self.cap() {*self=Self::default();return Outcome::Burst;}
         Outcome::Stack(self.layers)
     }
 }
@@ -282,6 +284,16 @@ static STATE:Mutex<Option<State>>=Mutex::new(None);
 static COMBAT:Mutex<Option<Combat>>=Mutex::new(None);
 /// 本机星辉术士的 FieldInsHandle（按 u64 读）；不是星辉术士时为 0
 static OWNER:AtomicU64=AtomicU64::new(0);
+/// 本机玩家的位置（x、y、z 的位模式），供生成钩子判断弹体是不是从手上发出
+static PLAYER_POS:[std::sync::atomic::AtomicU32;3]=[const {std::sync::atomic::AtomicU32::new(0)};3];
+/// 同一魔法在离玩家这么远处生成、且上一次施法在这段时间内：算上一次施法的后续
+const FOLLOW_REACH:f32=4.0;
+const FOLLOW_UP:Duration=Duration::from_secs(6);
+fn far_from_player(data:&[u8;0x110])->bool {
+    let at=[0x80,0x84,0x88].map(|o|f32::from_le_bytes(data[o..o+4].try_into().unwrap()));
+    let me=PLAYER_POS.each_ref().map(|v|f32::from_bits(v.load(Ordering::Relaxed)));
+    at.iter().chain(me.iter()).all(|v|v.is_finite())&&me!=[0.0;3]&&distance(at,me)>FOLLOW_REACH
+}
 static SPAWNS:Mutex<Vec<Spawned>>=Mutex::new(Vec::new());
 static NEXT_CAST:AtomicU64=AtomicU64::new(1);
 /// 诊断日志计数（各自有上限，避免刷屏）
@@ -342,7 +354,9 @@ pub fn observe_spawn(data:&[u8;0x110]) {
             return;
         };
         // 同一魔法 1 秒内连着生成的弹体算同一次施法：岩石弹的三颗、辉剑的多把；辉石魔砾一次施法会先后生成两颗（相隔约 0.57 秒）
-        let same=spawns.last().filter(|s|s.spell==spell&&now.duration_since(s.at)<SAME_CAST).map(|s|s.cast);
+        let same=spawns.last().filter(|s|s.spell==spell&&now.duration_since(s.at)<SAME_CAST).map(|s|s.cast)
+            // 离玩家较远处生成的同一魔法弹体是上一次施法的后续（如蕾拉娜的双月最后砸下的那一下），不是新的一发
+            .or_else(||far_from_player(data).then(||spawns.iter().rev().find(|s|s.spell==spell&&now.duration_since(s.at)<FOLLOW_UP)).flatten().map(|s|s.cast));
         if same.is_none() {if let Ok(mut t)=TEMPLATE.try_lock(){*t=Some(*data);}}
         (spell,same.unwrap_or_else(||NEXT_CAST.fetch_add(1,Ordering::Relaxed)))
     };
@@ -376,6 +390,7 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>,blue:Option<u8>) {
     // 新的一局：清掉上一局的记录与叠层
     if guard.as_ref().is_some_and(|s|s.seed!=seed) {*guard=None;end_combat(chr);}
     OWNER.store(handle_bits(&chr.field_ins_handle),Ordering::Relaxed);
+    {let q=chr.modules.physics.position;for (slot,v) in PLAYER_POS.iter().zip([q.0,q.1,q.2]) {slot.store(v.to_bits(),Ordering::Relaxed);}}
     let now=Instant::now();
     let state=guard.get_or_insert_with(||State{seed,regen:Regen::default(),blue,last:None,drank:false,topped:false,seen:vec![]});
     let drank=match (state.blue,blue) {(Some(before),Some(after)) if after<before=>u32::from(before-after),_=>0};
@@ -738,9 +753,24 @@ mod tests {
         assert_eq!(run(&mut c,"BAB"),stacks(2,4),"the new cycle keeps growing");
     }
     #[test]
-    fn single_spell_never_stacks_past_one() {
+    fn single_spell_repeats_up_to_three_then_starts_over() {
         let mut c=Cycle::default();
-        assert_eq!(run(&mut c,"AAA"),[Stack(1),Restart,Restart]);assert_eq!(c.layers,1);
+        assert_eq!(run(&mut c,"AA"),stacks(1,2));assert_eq!((c.layers,c.cap()),(2,3),"AA -> 2/3");
+        assert_eq!(c.hit(u32::from(b'A')),Stack(3));assert_eq!((c.layers,c.cap()),(3,3),"AAA -> 3/3, no burst");
+        assert_eq!(c.hit(u32::from(b'A')),Restart);assert_eq!((c.layers,c.cap()),(1,3),"AAAA -> 1/3");
+    }
+    #[test]
+    fn a_new_spell_after_repeats_keeps_only_the_last_repeat() {
+        let mut c=Cycle::default();
+        assert_eq!(run(&mut c,"AAB"),[Stack(1),Stack(2),Stack(2)]);assert_eq!((c.layers,c.cap()),(2,6),"AAB -> 2/6");
+        let mut c=Cycle::default();
+        run(&mut c,"AAA");assert_eq!(c.hit(u32::from(b'B')),Stack(2));assert_eq!((c.layers,c.cap()),(2,6),"AAAB -> 2/6");
+    }
+    #[test]
+    fn a_repeat_breaks_an_alternating_cycle() {
+        let mut c=Cycle::default();
+        assert_eq!(run(&mut c,"ABCA"),stacks(1,4));assert_eq!((c.layers,c.cap()),(4,9),"ABCA -> 4/9");
+        assert_eq!(c.hit(u32::from(b'A')),Restart);assert_eq!((c.layers,c.cap()),(1,3),"ABCAA -> 1/3");
     }
     #[test]
     fn a_new_spell_before_the_cap_raises_it() {
