@@ -727,8 +727,8 @@ fn apply_party_order(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan
             if let Some(flasks)=state.flasks.as_mut() {
                 let data=unsafe {world.main_player.as_mut().ok_or("律法同步时角色未加载")?.player_game_data.as_mut()};
                 flasks.set_bonus(data,next.class,next.flask_bonus,law.flask_cut())?;
-                flasks.restore(data,next.flasks)?;
-                next.flasks=flasks.total().min(next.flask_limit);
+                flasks.restore(data,next.flasks,next.flask_blue)?;
+                flasks.stamp(&mut next);next.flasks=next.flasks.min(next.flask_limit);next.clamp_flask_blue();
             }
             record_checked(&next)?;state.view.run=Some(next);
             report(state,format!("已同步房主苦难律法：{} 分，律法码 {}",law.score(),law.code()));Ok(())
@@ -1211,7 +1211,7 @@ fn return_to_retry_room(state:&mut Runtime,world:&mut WorldChrMan,game:&mut Game
         let run=state.view.run.as_ref().unwrap();let player=world.main_player.as_mut().ok_or("角色尚未复活")?;
         let data=unsafe {player.player_game_data.as_mut()};
         let mut flasks=super::flasks::Flasks::bind_bonus(data,run.class,run.flask_bonus,run.law.flask_cut())?;
-        flasks.restore(data,run.flasks)?;state.flasks=Some(flasks);
+        flasks.restore(data,run.flasks,run.flask_blue)?;state.flasks=Some(flasks);
         let vitals=&mut player.chr_ins.modules.data;
         vitals.hp=((i64::from(vitals.max_hp)*i64::from(run.hp)/i64::from(run.max_hp)) as i32).max(1);
         state.retry_item.tick(data,Some(run),true);
@@ -2306,7 +2306,7 @@ fn tick_locked() {
         let (bonus,cut)=state.view.run.as_ref().map_or((0,[0,0]),|r|(r.flask_bonus,r.law.flask_cut()));
         match super::flasks::Flasks::bind_bonus(player_data, class.unwrap(),bonus,cut) {
             Ok(mut flasks) => {
-                if let Some(run)=&state.view.run {if let Err(error)=flasks.restore(player_data,run.flasks){report(&mut state,error);return;}}
+                if let Some(run)=&state.view.run {if let Err(error)=flasks.restore(player_data,run.flasks,run.flask_blue){report(&mut state,error);return;}}
                 state.flasks = Some(flasks);
                 if let Some(run)=&state.view.run {player_data.unlocked_magic_slots=2+run.memory_bonus;}
             },
@@ -2394,9 +2394,9 @@ fn tick_locked() {
             report(&mut state, error);
             return;
         }
-        let count = flasks.total();
+        let (count,blue)=(flasks.total(),flasks.remaining[1]);
         if let Some(run) = &mut state.view.run {
-            run.flasks = count;
+            run.flasks = count;run.flask_blue = Some(blue);
             run.physick_empty=super::physick::empty(player_data);
             if !matches!(run.phase,Phase::Reward{..}) {
                 // 磨刀石等是重要物品：无缝联机下 items() 读不到，改按背包的全部列表找
@@ -2407,7 +2407,7 @@ fn tick_locked() {
             }
         }
         if let Some(pending) = &mut state.pending {
-            pending.next_run.flasks = count;
+            pending.next_run.flasks = count;pending.next_run.flask_blue = Some(blue);
         }
     }
 
@@ -2578,7 +2578,7 @@ fn tick_locked() {
                 if let Some(link)=state.party.as_mut(){if let Err(error)=link.open_rewards(){link.stop(error.clone());report(&mut state,error);return;}}
                 let _ = super::native_talk::set_flag(45020970, false);
                 let _ = super::native_talk::set_flag(45020971, false);
-                next.flasks = state.flasks.as_ref().map_or(next.flasks, |f| f.total());
+                if let Some(flasks)=state.flasks.as_ref() {flasks.stamp(&mut next);}
                 next.casting_tools=Some(super::loot::casting_tools(player_data));
                 // 本局历史最高：只升不降（原来直接换成当前背包最高，卖掉或存仓后会掉下来）
                 if let Ok(params)=unsafe {SoloParamRepository::instance()} {
@@ -2862,7 +2862,7 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
     let message=match command {
         Command::Heal=>{
             let vitals=&mut player.chr_ins.modules.data;vitals.hp=vitals.max_hp;vitals.fp=vitals.max_fp;
-            if let Some(flasks)=state.flasks.as_mut() {flasks.fill(data)?;next.flasks=flasks.total();}
+            if let Some(flasks)=state.flasks.as_mut() {flasks.fill(data)?;flasks.stamp(&mut next);}
             if matches!(next.phase,Phase::Combat{..}) {next.hp=100;} else {next.hp=next.max_hp;}
             "已回满生命、专注与圣杯瓶".to_owned()
         },
@@ -2909,7 +2909,7 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
             if let Some(flasks)=state.flasks.as_mut() {
                 if next.law.flask_cut()!=flask_cut {flasks.set_bonus(data,next.class,next.flask_bonus,next.law.flask_cut())?;}
                 if next.act!=state.view.run.as_ref().map_or(next.act,|r|r.act) {flasks.fill(data)?;let vitals=&mut player.chr_ins.modules.data;vitals.hp=vitals.max_hp;vitals.fp=vitals.max_fp;}
-                flasks.restore(data,next.flasks)?;next.flasks=flasks.total();
+                flasks.restore(data,next.flasks,next.flask_blue)?;flasks.stamp(&mut next);
             }
             state.view.prompt=state.view.prompt.wrapping_add(1);
             message
@@ -3383,7 +3383,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
         next_hp=vitals.max_hp;
         next_fp=vitals.max_fp;
         state.flasks.as_mut().ok_or("圣杯瓶未绑定")?.fill(unsafe {player.player_game_data.as_mut()})?;
-        next.flasks=state.flasks.as_ref().unwrap().total();
+        state.flasks.as_ref().unwrap().stamp(&mut next);
     }
     if next.weapon_level > old.weapon_level {
         super::weapons::upgrade(unsafe { player.player_game_data.as_mut() })?;
@@ -3392,14 +3392,14 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
     if let Some(blue) = camp_refill {
         state.flasks.as_mut().ok_or("圣杯瓶未绑定")?
             .camp_refill(unsafe {player.player_game_data.as_mut()}, blue)?;
-        next.flasks = state.flasks.as_ref().unwrap().total();
+        state.flasks.as_ref().unwrap().stamp(&mut next);
     } else if effect.refill {
         state
             .flasks
             .as_mut()
             .ok_or("圣杯瓶未绑定")?
             .refill(unsafe { player.player_game_data.as_mut() })?;
-        next.flasks = state.flasks.as_ref().unwrap().total();
+        state.flasks.as_ref().unwrap().stamp(&mut next);
     }
     if next.blessings != old.blessings {
         super::blessings::Blessings::deliver(unsafe {player.player_game_data.as_mut()}, &mut next)?;

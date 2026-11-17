@@ -12,6 +12,14 @@ fn capacity(_class:Class,bonus:u8,cut:[u8;2])->Result<[u8;2],String> {
     Ok([5+bonus-cut[0],5+bonus-cut[1]])
 }
 
+/// 总数按记录的蓝瓶数分回红蓝；某一色超出容量时多出来的给另一色
+fn split_total(total:u8,blue:Option<u8>,capacity:[u8;2])->[u8;2] {
+    let Some(blue)=blue else {let red=total.min(capacity[0]);return [red,total.saturating_sub(red).min(capacity[1])];};
+    let blue=blue.min(total).min(capacity[1]);
+    let red=(total-blue).min(capacity[0]);
+    let blue=(blue+(total-blue-red)).min(capacity[1]);
+    [red,blue]
+}
 impl Flasks {
     pub fn missing(data: &PlayerGameData) -> (bool, bool) {
         let items = &data.equipment.equip_inventory_data.items_data;
@@ -55,9 +63,12 @@ impl Flasks {
         if let Err(error)=self.write(data){self.capacity=old;return Err(error);}
         Ok(())
     }
-    pub fn restore(&mut self,data:&mut PlayerGameData,total:u8)->Result<(),String>{
-        let red=total.min(self.capacity[0]);self.remaining=[red,total.saturating_sub(red).min(self.capacity[1])];self.write(data)
+    /// 按存档恢复瓶数：blue 是其中的蓝瓶数（Run::flask_blue）；旧存档没有记录时先红后蓝
+    pub fn restore(&mut self,data:&mut PlayerGameData,total:u8,blue:Option<u8>)->Result<(),String>{
+        self.remaining=split_total(total,blue,self.capacity);self.write(data)
     }
+    /// 把当前瓶数写回旅程：总数与其中的蓝瓶数
+    pub fn stamp(&self,run:&mut erdtree_tower::Run) {run.flasks=self.total();run.flask_blue=Some(self.remaining[1]);}
 
     pub fn observe(&mut self, data: &mut PlayerGameData, loading: bool) -> Result<(), String> {
         if loading {
@@ -314,6 +325,15 @@ fn camp_supply(current: [u8; 2], capacity: [u8; 2], added: [u8;2]) -> [u8; 2] {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn restoring_keeps_the_recorded_red_blue_split() {
+        assert_eq!(super::split_total(5,Some(3),[5,5]),[2,3],"2 red 3 blue stays 2 red 3 blue");
+        assert_eq!(super::split_total(5,None,[5,5]),[5,0],"old saves without a record: red first");
+        assert_eq!(super::split_total(7,Some(1),[5,5]),[5,2],"red overflow goes to blue");
+        assert_eq!(super::split_total(7,Some(6),[5,5]),[2,5],"blue over capacity goes to red");
+        assert_eq!(super::split_total(3,Some(9),[5,5]),[0,3],"record above the total is clamped");
+        assert_eq!(super::split_total(0,Some(2),[5,5]),[0,0]);
+    }
     use super::*;
     #[test]
     fn restoration_upgrade_bounds_corrupted_twenty_charge_stacks() {

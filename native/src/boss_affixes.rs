@@ -25,7 +25,12 @@ struct Tuning {
 const NORMAL:Tuning=Tuning{rot_per_hit:1,leech_permille:10,thorn_percent:8,swift_speed:1.1,shield_every:25,reborn_percent:40,proud_after:8};
 const STRONG:Tuning=Tuning{rot_per_hit:2,leech_permille:15,thorn_percent:12,swift_speed:1.3,shield_every:25,reborn_percent:60,proud_after:6};
 /// 荆棘：一次反弹最多扣这么多生命（同一帧打出的伤害合算一次）
-const THORN_CAP:i64=200;
+const THORN_CAP:i64=100;
+/// 荆棘：远程（法术、祷告、弓箭、投掷物等弹体）打出的伤害按这个百分比反弹（近战的一半）
+const THORN_RANGED_PERCENT:i64=50;
+/// 最近这么久内落在 Boss 附近的自己的弹体，算这一下是远程打的
+const THORN_BULLET_MEMORY:Duration=Duration::from_millis(700);
+const THORN_BULLET_REACH:f32=10.0;
 const BAR_MARKER:i32=FIRST+99;
 /// text-update 为新增词条的组合也写好血条名称后加入的第二个标记
 const BAR_MARKER_V2:i32=FIRST+98;
@@ -93,7 +98,14 @@ struct Foe {handle:FieldInsHandle,hp:i32,hurt:Instant,proud:bool,reborn:bool}
 #[derive(Default)]
 pub struct Fight {key:Option<(u64,u8,usize)>,affixes:Vec<Affix>,empowered:bool,foes:Vec<Foe>,flasks:Option<u8>,shield_at:Option<Instant>,shield_until:Option<Instant>,rot_at:Option<Instant>,missing:bool,player_hp:Option<i32>,
     /// 房主：每个玩家上一帧的生命（吸血按全队受到的伤害）
-    players:Vec<(FieldInsHandle,i32)>,drinks:erdtree_tower::party_law::DrinkDeltas}
+    players:Vec<(FieldInsHandle,i32)>,drinks:erdtree_tower::party_law::DrinkDeltas,
+    /// 荆棘：最近的自己（与自己召唤物）弹体的位置，用来判断伤害是不是远程打的
+    bullets:Vec<(Instant,[f32;3])>}
+/// 一次伤害的反弹量：远程减半
+fn thorn_reflect(damage:i64,percent:i64,ranged:bool)->i64 {
+    let full=damage*percent/100;
+    if ranged {full*THORN_RANGED_PERCENT/100}else{full}
+}
 impl Fight {
     /// empowered：苦难律法「词条强化」
     pub fn begin(&mut self,key:(u64,u8,usize),affixes:Vec<Affix>,empowered:bool) {
@@ -138,6 +150,16 @@ impl Fight {
         }else{taken};
         let own:Vec<FieldInsHandle>=world.main_player.as_ref().map(|p|p.chr_ins.field_ins_handle).into_iter().chain(world.summon_buddy_chr_set.characters().map(|c|c.field_ins_handle)).collect();
         let mut reflected=0i64;
+        let thorned=self.affixes.contains(&Affix::Thorned);
+        if thorned {
+            self.bullets.retain(|(at,_)|now.duration_since(*at)<=THORN_BULLET_MEMORY);
+            if let Ok(manager)=unsafe {eldenring::cs::CSBulletManager::instance()} {
+                for bullet in manager.bullets().filter(|b|own.contains(&b.targeting_owner.owner_chr_handle)) {
+                    let q=bullet.physics.position;self.bullets.push((now,[q.0,q.1,q.2]));
+                }
+            }
+            if self.bullets.len()>256 {let excess=self.bullets.len()-256;self.bullets.drain(..excess);}
+        }
         for handle in handles {
             let Some(chr)=world.chr_ins_by_handle_mut(handle) else{continue};
             if chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag(){continue;}
@@ -145,7 +167,12 @@ impl Fight {
             let foe=&mut self.foes[index];
             let (hp,max)=(chr.modules.data.hp,chr.modules.data.max_hp);
             // 荆棘：单人按 Boss 受到的伤害；联机只按自己与自己召唤物打的（看 last_hit_by），由各自在本机反弹给自己
-            if hp<foe.hp&&self.affixes.contains(&Affix::Thorned)&&(!party||own.contains(&chr.last_hit_by)) {reflected+=i64::from(foe.hp-hp)*tuning.thorn_percent/100;}
+            // 远程（附近刚有自己的弹体）打的反弹减半
+            if hp<foe.hp&&thorned&&(!party||own.contains(&chr.last_hit_by)) {
+                let q=chr.modules.physics.position;
+                let ranged=self.bullets.iter().any(|(_,p)|((p[0]-q.0).powi(2)+(p[1]-q.1).powi(2)+(p[2]-q.2).powi(2)).sqrt()<=THORN_BULLET_REACH);
+                reflected+=thorn_reflect(i64::from(foe.hp-hp),tuning.thorn_percent,ranged);
+            }
             if hp<foe.hp {foe.hurt=now;}
             // 减伤、攻击等效果房主和成员都在本机挂上：效果不随网络同步，只有房主挂时成员那边的 Boss 更“软”，
             // 成员算出的伤害偏高，本机副本先被打到 0、卡住不倒。护盾、吸血、涅槃这些改 Boss 状态的仍只由房主做
@@ -176,7 +203,7 @@ impl Fight {
             }
         }
         let Some(player)=world.main_player.as_mut().filter(|p|p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag()) else{return};
-        // 荆棘：反弹给本机玩家，一次最多 200，不会致死
+        // 荆棘：反弹给本机玩家，一次最多 100，不会致死
         let reflected=reflected.min(THORN_CAP);
         if reflected>0 {
             let data=&mut player.chr_ins.modules.data;
@@ -187,5 +214,16 @@ impl Fight {
             for _ in 0..tuning.rot_per_hit {player.chr_ins.apply_speffect(ROT_BUILDUP,true);}
             self.rot_at=Some(now+Duration::from_millis(400));
         }
+    }
+}
+
+#[cfg(test)]
+mod thorn_tests {
+    #[test]
+    fn thorns_reflect_half_for_ranged_hits() {
+        assert_eq!(super::thorn_reflect(1000,10,false),100);
+        assert_eq!(super::thorn_reflect(1000,10,true),50);
+        assert_eq!(super::thorn_reflect(1000,12,true),60);
+        assert_eq!(super::THORN_CAP,100);
     }
 }

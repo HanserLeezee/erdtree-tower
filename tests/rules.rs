@@ -507,3 +507,23 @@ fn tent_refill_is_kept_in_the_save() {
     assert!(!restored.tent_available());
     assert_eq!(restored.tent_refill, r.tent_refill);
 }
+
+#[test]
+fn the_blue_flask_split_survives_death_retry_and_reload() {
+    let mut r = Run::new(5, Class::Astrologer);
+    r.flasks = 5; r.flask_blue = Some(3);
+    let id = *r.available().iter().find(|&&id| r.nodes[id].kind.combat()).unwrap();
+    r.enter(id).unwrap();
+    // 战斗中喝掉几瓶，运行时按背包写回
+    r.flasks = 2; r.flask_blue = Some(0);
+    let reloaded = Run::decode(&r.encode().unwrap()).unwrap();
+    assert_eq!((reloaded.flasks, reloaded.flask_blue), (5, Some(3)), "reloading mid-fight restores the entry split");
+    r.retries = 1;
+    assert!(r.retry_floor());
+    assert_eq!((r.flasks, r.flask_blue), (5, Some(3)), "retrying the floor restores the entry split");
+    let mut old = Run::new(5, Class::Astrologer);
+    old.flask_blue = Some(old.flasks + 1);
+    assert!(Run::decode(&old.encode().unwrap()).is_err(), "more blue than flasks is rejected");
+    let legacy = Run::new(5, Class::Astrologer);
+    assert!(!legacy.encode().unwrap().contains("flask_blue"), "saves without a record stay unchanged");
+}
