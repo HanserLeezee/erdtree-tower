@@ -206,7 +206,7 @@ fn dlc_shop_pools_are_reachable_with_affixes_and_native_categories() {
             seen[0]|=item.kind==0&&base==64500000;
             seen[1]|=item.kind==1&&(5000000..6000000).contains(&base);
             seen[2]|=item.kind==2&&base==8220;
-            seen[3]|=item.kind==3&&item.id==2004320;
+            seen[3]|=item.kind==3&&base==2004320;
             seen[4]|=item.kind==4&&item.id==409000;
             seen[5]|=item.kind==3&&(2011000..=2011070).contains(&item.id);
         }
@@ -440,9 +440,22 @@ fn stock_capped(run:&Run,spirit_cap:u32)->Vec<Stock> {
     withdraw_goods(&mut result);
     result
 }
+fn affix_spell(run:&Run,visit:usize,slot:usize,item:&mut Stock)->bool {
+    let original=0x40000000|item.id as u32;
+    if item.quantity<=0||!run.spell_affixes||!is_spell(item)||erdtree_tower::spell_affixes::variant(original).is_some(){return false;}
+    let Some(id)=erdtree_tower::spell_affixes::roll(run,original,(visit as u64).wrapping_mul(7919)^slot as u64,true,0) else{return false;};
+    item.id=(id&0x0fffffff) as i32;id!=original
+}
+fn migrate_shop_spells(run:&Run,stock:&mut [Stock]) {
+    let visit=run.visited.iter().filter(|&&i|run.nodes[i].kind==NodeKind::Shop).count();
+    for (slot,item) in stock.iter_mut().enumerate() {
+        if affix_spell(run,visit,slot,item){item.price=final_price(run,weapon_price(super::reward_ui::item_quality(0x40000000|item.id as u32)));}
+    }
+}
 fn affix_stock(run:&Run,visit:usize,result:&mut [Stock]) {
     let mut talismans=std::collections::HashSet::new();
     for (slot,item) in result.iter_mut().enumerate() {
+        affix_spell(run,visit,slot,item);
         if item.kind==2&&item.quantity==1 {
             let original=0x20000000|item.id as u32;
             let mut id=erdtree_tower::talismans::roll(run,original,(visit as u64).wrapping_mul(7919)^slot as u64,true);
@@ -454,6 +467,29 @@ fn affix_stock(run:&Run,visit:usize,result:&mut [Stock]) {
             if let Some(id)=erdtree_tower::affixes::roll(run,tag|item.id as u32,(visit as u64).wrapping_mul(7919)^slot as u64,true){item.id=(id&0x0fffffff) as i32;}
         }
     }
+}
+#[test]
+fn shop_spells_receive_variants_and_keep_legacy_opt_out() {
+    for seed in 0..40 {
+        let mut run=Run::new(seed,erdtree_tower::Class::Astrologer);
+        let rows=stock(&run);
+        let spells:Vec<_>=rows.iter().filter(|s|is_spell(s)).collect();assert_eq!(spells.len(),6);
+        for item in spells {assert!(erdtree_tower::spell_affixes::variant(0x40000000|item.id as u32).is_some());}
+        run.spell_affixes=false;
+        assert!(stock(&run).iter().filter(|s|is_spell(s)).all(|s|erdtree_tower::spell_affixes::variant(0x40000000|s.id as u32).is_none()));
+    }
+}
+#[test]
+fn saved_shop_spell_migration_preserves_sold_stock_and_does_not_reroll() {
+    let run=Run::new(42,erdtree_tower::Class::Astrologer);
+    let mut rows=vec![Stock{kind:3,id:4000,price:1800,quantity:1},Stock{kind:3,id:4000,price:1800,quantity:0},Stock{kind:3,id:900,price:100,quantity:3}];
+    let original=rows.clone();migrate_shop_spells(&run,&mut rows);
+    assert_eq!(&rows[1..],&original[1..]);assert!(is_spell(&rows[0]));
+    let variant=erdtree_tower::spell_affixes::variant(0x40000000|rows[0].id as u32).unwrap();
+    assert_eq!(variant.base,0x40000000|4000);
+    assert_eq!(rows[0].price,final_price(&run,weapon_price(variant.tier)));
+    let once=rows.clone();migrate_shop_spells(&run,&mut rows);assert_eq!(rows,once);
+    let mut legacy=run;legacy.spell_affixes=false;let mut rows=original.clone();migrate_shop_spells(&legacy,&mut rows);assert_eq!(rows,original);
 }
 pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) -> Result<erdtree_tower::ShopStock, String> {
     let params = unsafe { SoloParamRepository::instance_mut() }.map_err(|_| "商店参数未加载")?;
@@ -483,6 +519,7 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
         for item in &mut stock {item.price=final_price(run,item.price);}
         stock
     };
+    migrate_shop_spells(run,&mut stock);
     withdraw_goods(&mut stock);
     withdraw_owned_whetblades(&mut stock,run);
     refresh_special_prices(&mut stock,run);

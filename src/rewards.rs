@@ -60,6 +60,7 @@ const VANILLA_SPIRITS:[(i32,u32);44]=[
 ];
 /// 捕灵壶捕捉到这种怪物时给的骨灰（+0 的完整物品编号）；没有对应骨灰时 None
 pub fn spirit_for_model(model:i32)->Option<u32> {
+    let model=match model {4601=>4600,_=>model}; // Bols uses the existing troll ash family.
     let id=VANILLA_SPIRITS.iter().find(|(m,_)|*m==model).map(|(_,id)|*id)
         .or_else(||CUSTOM_SPIRITS.iter().find(|(_,m,_)|*m==model).map(|(id,_,_)|*id))?;
     let full=0x40000000|id;
@@ -392,6 +393,14 @@ mod tests {
         assert_eq!(spirit_for_model(2500),Some(0x40000000|273000),"same model: the first custom ash");
         assert_eq!(spirit_for_model(4311),Some(0x40000000|250000));
         assert_eq!(spirit_for_model(1),None);
+    }
+    #[test]
+    fn bols_capture_grants_the_existing_troll_ash_at_supported_levels() {
+        let base=spirit_for_model(4601).expect("Bols capture reward");
+        assert_eq!(base,0x40000000|301000);
+        assert_eq!(Some(base),spirit_for_model(4600));
+        for level in 0..=SPIRIT_MAX {assert!(lookup(base+u32::from(level)).is_some_and(|i|i.kind==ItemKind::Spirit));}
+        assert_eq!(spirit_for_model(9999),None);
     }
     #[test]
     fn pre_custom_spirit_reward_pages_remain_valid_without_rerolling() {

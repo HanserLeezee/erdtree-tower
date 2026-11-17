@@ -28,6 +28,7 @@ pub mod physick_supply;
 pub mod affixes;
 pub mod talismans;
 pub mod boss_affixes;
+pub mod leech;
 pub mod embers;
 pub mod scaling;
 pub mod law;
@@ -716,7 +717,7 @@ impl Run {
             talisman_passives: true,
             ruby_spells: false,
             boss_affixes: true,
-            boss_affix_rules: 1,
+            boss_affix_rules: 2,
             scaling_rules: 1,
             law: law::Law::default(),
             start_talisman: 0,
@@ -1298,7 +1299,7 @@ impl Run {
         if self.boss_test.is_some_and(|t|!self.debug||!(1..=3).contains(&t.act)||t.encounter>=4096){return fail();}
         if self.mausoleum_test.is_some_and(|(act,id)|!self.debug||!(1..=3).contains(&act)||act==self.act&&self.nodes.get(id).is_none_or(|n|n.kind!=NodeKind::Event)){return fail();}
         if self.event_test.is_some_and(|(act,id,_)|!self.debug||!(1..=3).contains(&act)||act==self.act&&self.nodes.get(id).is_none_or(|n|n.kind!=NodeKind::Event)){return fail();}
-        if ![1,2,3,4,5,6,7].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>2||self.class_rules!=1||self.boss_affix_rules>1||self.ember_rules>3||self.battlemage.len()>embers::BATTLEMAGE_WEAPONS||self.battlemage.iter().any(|(_,stat)|*stat>1)||self.scaling_rules>1
+        if ![1,2,3,4,5,6,7].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>2||self.class_rules!=1||self.boss_affix_rules>2||self.ember_rules>3||self.battlemage.len()>embers::BATTLEMAGE_WEAPONS||self.battlemage.iter().any(|(_,stat)|*stat>1)||self.scaling_rules>1
             || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
             || self.elite_buffs.iter().any(|id|!elite::BUFFS.contains(id))

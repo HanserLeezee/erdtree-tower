@@ -22,7 +22,9 @@ use hudhook::{
 
 mod blessings;
 mod spawn_guard;
+mod spawn_grace;
 mod glintblade;
+mod capture;
 mod suspension;
 mod frost_shackle;
 mod pad;
@@ -62,6 +64,8 @@ mod reward_delay;
 mod rebirth;
 mod elite;
 mod boss_affixes;
+mod adaptation;
+mod leech;
 mod fancy_text;
 mod scaling;
 #[allow(dead_code)]
@@ -576,7 +580,10 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
         if let Err(error)=unsafe {star_stream::install()} {log(format!("Star stream unavailable: {error}"));}
         if let Err(error)=unsafe {radahn_entity::install()} {log(format!("Radahn event binding unavailable: {error}"));}
         if let Err(error)=unsafe {embers::install_critical_trace()} {log(format!("Critical stack detection unavailable: {error}"));}
-        if let Err(error)=unsafe {damage::install()} {log(format!("Damage interface unavailable: {error}"));}
+        match unsafe {damage::install()} {
+            Ok(())=>adaptation::install(),
+            Err(error)=>log(format!("Damage interface unavailable: {error}")),
+        }
         if let Err(error) = wait_for_system_init(&program, Duration::from_secs(60)) {
             log(format!("Game system initialization failed: {error}"));
             return;

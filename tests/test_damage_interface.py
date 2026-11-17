@@ -44,5 +44,13 @@ class DamageInterface(unittest.TestCase):
         self.assertIn(("movups","xmm0, xmmword ptr [r15]"),self.instructions(0x447df2,4))
         self.assertIn(("movss","xmm0, dword ptr [r15 + 0x10]"),self.instructions(0x447e0c,6))
 
+    def test_observer_runs_after_hp_change_with_validated_attacker(self):
+        code=self.instructions(0x448a2e,0x3c)
+        self.assertIn(("cmp","eax, 1"),code)
+        self.assertIn(("mov","rsi, rbx"),code)
+        self.assertIn(("xor","esi, esi"),code)
+        self.assertEqual(self.instructions(0x448b7b,5),[("call",hex(self.base+0x436b70))])
+        self.assertEqual(self.instructions(0x448b80,10),[("mov","edx, dword ptr [r14 + 0x228]"),("mov","rcx, r15")])
+
 if __name__=="__main__":
     unittest.main()

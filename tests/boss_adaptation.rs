@@ -1,6 +1,24 @@
 use erdtree_tower::boss_affixes::adaptation::Adaptation;
 
 #[test]
+fn adaptation_rolls_in_new_runs_and_keeps_old_rules_unchanged() {
+    use erdtree_tower::{Class,Run,NodeKind,boss_affixes::{self,Affix}};
+    let mut seen=false;
+    for seed in 0..300 {
+        let mut run=Run::new(seed,Class::Samurai);
+        assert_eq!(run.boss_affix_rules,2);
+        let node=run.nodes.iter().position(|n|n.kind==NodeKind::Boss).unwrap();
+        seen|=boss_affixes::roll(&run,node).contains(&Affix::Adaptive);
+        for rules in [0,1] {
+            run.boss_affix_rules=rules;
+            assert!(!boss_affixes::roll(&run,node).contains(&Affix::Adaptive));
+            assert_eq!(Run::decode(&run.encode().unwrap()).unwrap().boss_affix_rules,rules);
+        }
+    }
+    assert!(seen);
+}
+
+#[test]
 fn first_hit_is_full_then_ten_percent_steps_stop_at_fifty() {
     for channel in 0..5 {
         let mut state=Adaptation::default();

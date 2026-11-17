@@ -90,7 +90,7 @@ impl Travel {
         let remaining =
             PREPARATION.saturating_sub(elapsed.saturating_sub(self.ready_since.unwrap()));
         if remaining.is_zero() {
-            Progress::Spawn
+            if grounded {Progress::Spawn}else{Progress::Loading}
         } else {
             Progress::Countdown(remaining.as_secs_f64().ceil() as u64)
         }
@@ -148,6 +148,17 @@ mod tests {
     }
     fn ms(value: u64) -> Duration {
         Duration::from_millis(value)
+    }
+    #[test]
+    fn completed_countdown_waits_for_landing_before_spawn_and_keeps_node() {
+        let mut travel=Travel::new(40);
+        assert_eq!(travel.poll_circle(ms(0),true,true,true),Progress::Loading);
+        assert_eq!(travel.poll_circle(ms(500),true,true,true),Progress::Countdown(3));
+        assert_eq!(travel.poll_circle(ms(3500),true,true,true),Progress::Spawn);
+        // Party spawn permission may arrive on a later frame while the host is airborne.
+        assert_eq!(travel.poll_circle(ms(3750),true,false,true),Progress::Loading);
+        assert!(travel.is_preparing());assert_eq!(travel.node,40);
+        assert_eq!(travel.poll_circle(ms(4000),true,true,true),Progress::Spawn);
     }
     #[test]
     fn loading_does_not_consume_preparation_time() {

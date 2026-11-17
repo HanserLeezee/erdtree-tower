@@ -69,8 +69,6 @@ struct Break {key:u64,bursts:Vec<i32>,effects:Vec<i32>,hp:i32}
 const FLASH:i32=FIRST+40;
 /// 捕灵壶：捕捉成功时挂在敌人身上的一次性扣血（一下扣满最大生命，走游戏自己的死亡流程；scene-builder capture-patch）
 pub const CAPTURE:i32=FIRST+29;
-/// 投掷壶的使用动作（EquipParamGoods.goodsUseAnim）：3 与 42 投掷壶、20 附绳壶、67 双手投出的重壶
-const POT_ANIMS:[u8;4]=[3,20,42,67];
 /// 灵唤铃的号令：挂在召唤物身上
 const SPIRIT_COMMAND:i32=FIRST+50;
 fn frenzy_effect(stack:u8)->i32 {if stack<=8 {FIRST+30+i32::from(stack)}else{FIRST+100+i32::from(stack)-9}}
@@ -84,8 +82,9 @@ static CHAIN_OWNER:AtomicUsize=AtomicUsize::new(0);
 static CRITICAL_PENDING:AtomicBool=AtomicBool::new(false);
 static CRITICAL_HOOK_READY:AtomicBool=AtomicBool::new(false);
 fn own_critical(owner:usize,source:usize,effect:i32)->bool {owner!=0&&source==owner&&effect==350501}
-unsafe extern "C" fn observe_native_critical(_target:usize,effect:i32,source:usize) {
+unsafe extern "C" fn observe_native_critical(target:usize,effect:i32,source:usize) {
     if own_critical(CHAIN_OWNER.load(Ordering::Relaxed),source,effect){CRITICAL_PENDING.store(true,Ordering::Release);}
+    super::capture::observe_hit(target,effect,source);
 }
 #[unsafe(naked)]
 unsafe extern "C" fn critical_entry() {
@@ -305,6 +304,8 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>,fight:&Fight,spirit_alive:bool,grea
     let mut want=Vec::new();
     let embers=held(run);
     sync_pouch(embers.contains(&Ember::Pouch));
+    super::capture::sync(embers.contains(&Ember::Capture));
+    if chr.modules.data.hp<=0||!run.is_some_and(|r|matches!(r.phase,Phase::Combat{..}|Phase::Node{..})) {super::capture::deactivate();}
     sync_mercy(embers.contains(&Ember::Mercy));
     let battlemage=embers.contains(&Ember::Battlemage);BATTLEMAGE_HELD.store(battlemage,Ordering::Relaxed);
     sync_battlemage(if battlemage {run.map_or(&[][..],|r|r.battlemage.as_slice())}else{&[]});
@@ -408,8 +409,7 @@ pub struct Fight {
     attributed:[bool;2],
     /// 鲜血骑士的破势：每只敌人的发作状态；probes：本场已记的校准日志条数
     breaks:Vec<Break>,probes:u8,
-    /// 捕灵壶：最近一次扔出投掷壶的时间（只给之后 CAPTURE_WINDOW_MS 内的第一次命中用），上一帧的投掷道具与它的数量
-    pot:Option<Instant>,pot_item:Option<u32>,pot_count:u64,capture_seed:u64,
+    capture_seed:u64,
 }
 impl Fight {
     pub fn observe_practice_refill(&mut self,world:&WorldChrMan) {
@@ -456,11 +456,12 @@ impl Fight {
         super::glintblade::set_owner(world.main_player.as_ref().filter(|_|held.contains(&Ember::Glintblade)).map(|p|&p.chr_ins.field_ins_handle));
         let drank=matches!((self.flasks,flasks),(Some(before),Some(after)) if after<before);self.flasks=flasks;
         let mut events=Events::default();
+        if !held.contains(&Ember::Capture) {super::capture::deactivate();}
         if held.is_empty()&&!track_kills {return events;}
         let has=|e:Ember|held.contains(&e);
         let now=Instant::now();
         let Some(player)=world.main_player.as_ref() else{return events};
-        if player.chr_ins.modules.data.hp<=0||player.chr_ins.chr_flags1c5.death_flag() {return events;}
+        if player.chr_ins.modules.data.hp<=0||player.chr_ins.chr_flags1c5.death_flag() {super::capture::deactivate();return events;}
         // 致命一击（原生处决事件，见 install_critical_trace）：处刑之链加层，无声处刑挂上精力减半
         if has(Ember::Chain)||has(Ember::Execution)||has(Ember::Harvest) {
             let marked=CRITICAL_PENDING.swap(false,Ordering::AcqRel);
@@ -477,15 +478,11 @@ impl Fight {
             }
         }
         let Some(player)=world.main_player.as_ref() else{return events};
-        // 捕灵壶：正在使用的道具是投掷壶时记下扔出的时间。刚换成壶、或同一种壶的数量变少都算新扔了一只（无底囊下不消耗，只能靠前者）
-        if has(Ember::Capture) {
-            let pot=player.chr_ins.tae_queued_use_item.as_valid().filter(|item|item.category()==eldenring::cs::ItemCategory::Goods).map(|item|item.param_id())
-                .filter(|id|unsafe {SoloParamRepository::instance()}.ok().and_then(|p|p.get::<EquipParamGoods>(*id)).is_some_and(|row|POT_ANIMS.contains(&row.goods_use_anim())));
-            let count=pot.map_or(0,|id|super::items::stack_count(unsafe {player.player_game_data.as_ref()},id));
-            let thrown=pot.is_some()&&(pot!=self.pot_item||count<self.pot_count);
-            if thrown {self.pot=Some(now);super::log(format!("TOWER_EMBER capture pot thrown item={:?} count={count}",pot));}
-            (self.pot_item,self.pot_count)=(pot,count);
-        }
+        let captures=if has(Ember::Capture) {
+            let targets=foes.iter().filter_map(|(handle,_,_)|world.chr_ins_by_handle(handle))
+                .filter(|chr|chr.modules.data.hp>0).map(|chr|super::capture::Hit{target:chr.field_ins_handle,hp:chr.modules.data.hp,max:chr.modules.data.max_hp}).collect();
+            super::capture::begin(&player.chr_ins,key,targets)
+        } else {Vec::new()};
         let data=&player.chr_ins.modules.data;
         let (hp,max_hp,stamina,max_stamina)=(data.hp,data.max_hp,data.stamina,data.max_stamina);
         // 法师余烬：施法键（主手、副手，含武器上的施法）按住即算施法，松开后再保持一会儿，出招动作放完前都算
@@ -548,7 +545,6 @@ impl Fight {
                 self.foes.push(Foe{handle:*handle,hp:foe_hp,max:foe_max,pos,alive,boss:rank<=1,rank,slot,hit_at:None,participation:Default::default()});continue;
             };
             let foe=&mut self.foes[index];
-            let before=foe.hp;
             let drop=foe.hp-foe_hp;let lost=(foe.hp-foe_hp.max(0)).max(0);
             let died=foe.alive&&!alive;
             if !foe.alive&&alive {foe.participation=Default::default();}
@@ -564,19 +560,19 @@ impl Fight {
                 self.attributed[usize::from(!mine)]=true;
                 super::log(format!("TOWER_EMBER party {} by {attacker} counted={mine}{}",if died{"kill"}else{"hit"},if !attacker.is_empty(){""}else if by_bullet.is_some(){" (bullet)"}else{" (nearest)"}));
             }
-            if !mine {continue;}
-            // 捕灵壶：扔出的壶之后第一次打中自己这边的敌人（Boss 也算），按命中前的生命掷一次（每只壶只掷一次）；这一下直接打死也算捕捉到
-            if has(Ember::Capture)&&drop>0&&self.pot.is_some_and(|t|now.duration_since(t)<=Duration::from_millis(embers::CAPTURE_WINDOW_MS)) {
-                self.pot=None;
-                if let Some(chance)=embers::capture_chance_permille(before,foe_max) {
+            // Native pot hits carry their own source attribution; later hits cannot overwrite it.
+            for capture in captures.iter().filter(|hit|hit.target==*handle&&!chr.debug_flags.disabled_hit()) {
+                let before=capture.hp;
+                if let Some(chance)=embers::capture_chance_permille(before,capture.max) {
                     if self.capture_seed==0 {self.capture_seed=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0x9e37_79b9,|d|d.as_nanos() as u64)|1;}
                     self.capture_seed^=self.capture_seed<<13;self.capture_seed^=self.capture_seed>>7;self.capture_seed^=self.capture_seed<<17;
                     let roll=(self.capture_seed%1000) as u32;
                     let caught=roll<chance;
                     super::log(format!("TOWER_EMBER capture model={} hp={before}/{foe_max} chance={chance}permille roll={roll} caught={caught} killed_by_hit={died}",chr.npc_id));
-                    if caught {captured.push(index);events.captures.push(chr.npc_id);}
-                }
+                    if caught {captured.push(index);events.captures.push(chr.npc_id);break;}
+                } else {super::log(format!("TOWER_CAPTURE above threshold model={} hp={}/{}",chr.npc_id,before,capture.max));}
             }
+            if !mine {continue;}
             // 魔力辉剑：自己的弹体刚落在这只敌人附近、它掉了血，且还有一次没换过辉剑的施法
             if has(Ember::Glintblade)&&drop>0&&alive
                 &&self.bullets.iter().any(|&(t,p,own)|own&&now.duration_since(t)<=BULLET_MEMORY&&distance(p,pos)<=BULLET_REACH)
@@ -696,7 +692,7 @@ impl Fight {
         if !ready(&[BLOOD,FROST,FLASH]) {if !self.missing{super::log("TOWER_EMBER missing ember effects; update regulation.bin");self.missing=true;}return;}
         let foe=&mut self.foes[index];
         let Some(chr)=world.chr_ins_by_handle_mut(&foe.handle) else{return};
-        if chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag() {return;}
+        if chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag()||chr.debug_flags.disabled_hit() {return;}
         let max=chr.modules.data.max_hp;
         let damage=match strike {
             Strike::Capture{..}=>{

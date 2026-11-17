@@ -219,6 +219,7 @@ struct Foe {
     spawn_gap:erdtree_tower::encounter::SpawnGap,
     /// 后续波次的出招保护期：从这只敌人绑定上算起（WAVE_GRACE 内禁止攻击，到点放开后记 None 并标记 graced）
     grace:Option<Instant>,graced:bool,
+    spawn_protection:super::spawn_grace::HitProtection,
 }
 type MemberSpawnGaps=((u64,u64,u8,usize),Vec<erdtree_tower::encounter::SpawnGap>);
 struct Pending {
@@ -2519,6 +2520,9 @@ fn tick_locked() {
                 );
             }
             super::travel::Progress::Spawn => {
+                if !grounded||!state.view.ready {
+                    report(&mut state,"等待角色站稳，随后继续开战。");return;
+                }
                 if let Some(link)=state.party.as_mut(){link.arrived=true;if !link.spawn {report(&mut state,"已抵达，等待全员准备完成");return;}}
                 let (travel, _, _, _) = state.travel.take().unwrap();
                 let _=super::native_talk::set_flag(45007992,false);
@@ -2737,7 +2741,8 @@ fn tick_locked() {
             let authority=runtime.party.as_ref().is_none_or(|p|p.host());
             let flasks=runtime.flasks.as_ref().map(|f|f.total());
             let team=runtime.party.as_ref().map(|p|p.gate.flask_uses());
-            runtime.boss_fight.tick(world,&handles,authority,runtime.party.is_some(),flasks,team.as_deref());
+            let hits=runtime.party.as_ref().filter(|p|p.host()).map(|p|p.gate.leech_hits(p.config.player)).unwrap_or_default();
+            runtime.boss_fight.tick(world,&handles,authority,runtime.party.is_some(),flasks,team.as_deref(),&hits);
             runtime.growth.tick(world,(run.seed,run.act,id),erdtree_tower::scaling::growth_step(run,id),&handles);
             runtime.view.boss_affixes=runtime.boss_fight.title();runtime.view.boss_alert=runtime.boss_fight.alert();runtime.view.boss_affix_list=runtime.boss_fight.affixes().to_vec();
             // Boss 房的 Boss 卡在 1 点生命太久：视为转阶段锁血，直接放行
@@ -3110,10 +3115,18 @@ fn record_ember_gains(state:&mut Runtime,gains:Vec<erdtree_tower::embers::Gain>,
 fn grant_captures(state:&mut Runtime,world:&mut WorldChrMan,models:&[i32]) {
     let Some(run)=state.view.run.as_ref() else{return};
     for &model in models {
-        let Some(base)=erdtree_tower::rewards::spirit_for_model(model)
-            .filter(|id|erdtree_tower::dlc::item_allowed(*id)&&!run.law.lone_wolf()) else {
-            super::log(format!("TOWER_EMBER capture model={model}: no spirit ash granted"));state.view.status="捕捉成功".into();state.view.prompt=state.view.prompt.wrapping_add(1);continue;
+        let reward=erdtree_tower::rewards::spirit_for_model(model);
+        let reason=match reward {
+            None=>Some("该敌人暂无对应骨灰"),
+            Some(id) if !erdtree_tower::dlc::item_allowed(id)=>Some("当前模式未启用对应 DLC 骨灰"),
+            Some(_) if run.law.lone_wolf()=>Some("当前律法禁止获得骨灰"),
+            _=>None,
         };
+        if let Some(reason)=reason {
+            super::log(format!("TOWER_EMBER capture model={model}: no spirit ash granted: {reason}"));
+            state.view.status=format!("捕捉成功，但未获得骨灰：{reason}");state.view.prompt=state.view.prompt.wrapping_add(1);continue;
+        }
+        let Some(base)=reward else{continue;};
         let id=base+u32::from(erdtree_tower::rewards::spirit_level_now(run));
         let name=erdtree_tower::rewards::lookup(id).map_or("骨灰",|i|i.name);
         if world.main_player.is_none() {return;}
@@ -3225,7 +3238,7 @@ fn member_combat(state:&mut Runtime,world:&mut WorldChrMan) {
         state.law_fight.tick(world,key,run.law,&handles,false,flasks,None);
         state.view.law_clock=state.law_fight.clock();
         state.boss_fight.begin(key,erdtree_tower::boss_affixes::roll(run,id),run.law.empowered_affixes());
-        state.boss_fight.tick(world,&handles,false,true,flasks,None);
+        state.boss_fight.tick(world,&handles,false,true,flasks,None,&[]);
         state.view.boss_affixes=state.boss_fight.title();state.view.boss_alert=state.boss_fight.alert();state.view.boss_affix_list=state.boss_fight.affixes().to_vec();
     }
     if member_fighting(state) {member_embers(state,world);}
@@ -4016,7 +4029,7 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
             if roster.iter().any(|e|params.get::<NpcParam>(e.npc as u32).is_none()||params.get::<NpcThinkParam>(e.think).is_none()) {return Err("事件守卫参数缺失".into());}
             state.pending=Some(Pending {
                 entity_base:None,networked:false,
-                spirits:Default::default(),foes:roster.into_iter().map(|spec|Foe{spec,fight:Encounter::default(),requested:None,entity_address:None,respawn:None,spawn_gap:Default::default(),grace:None,graced:false}).collect(),
+                spirits:Default::default(),foes:roster.into_iter().map(|spec|Foe{spec,fight:Encounter::default(),requested:None,entity_address:None,respawn:None,spawn_gap:Default::default(),grace:None,graced:false,spawn_protection:Default::default()}).collect(),
                 next_run:run.clone(),block:room.block,completed:false,stall:None,
             });
         }
@@ -4265,7 +4278,7 @@ fn request_spawn(state: &mut Runtime, world: &mut WorldChrMan, id: usize) -> Res
     state.pending = Some(Pending {
         entity_base:None,networked:state.party.is_some(),
         spirits:Default::default(),
-        foes: roster.into_iter().map(|spec| Foe { spec, fight: Encounter::default(), requested: None, entity_address: None, respawn: None,spawn_gap:Default::default(),grace:None,graced:false }).collect(),
+        foes: roster.into_iter().map(|spec| Foe { spec, fight: Encounter::default(), requested: None, entity_address: None, respawn: None,spawn_gap:Default::default(),grace:None,graced:false,spawn_protection:Default::default() }).collect(),
         next_run, block: i32::from(player.current_block_id), completed: false, stall: None,
     });
     state.spawn_used = true;
@@ -4396,10 +4409,15 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
             }
         }
         spawning |= foe.fight.handle().is_none() && foe.requested.is_some();
-        // 首波出场后 1 秒、后续波次 WAVE_GRACE 内不出招，由单人或房主控制。
-        if authority&&!foe.graced && let Some(chr)=foe.fight.handle().and_then(|h|world.chr_ins_by_handle_mut(&h)) {
+        // 准备阶段同时禁止出招与受击；结束时恢复原受击状态。
+        if authority&&!foe.graced && let Some(chr)=foe.fight.handle().and_then(|h|world.chr_ins_by_handle_mut(&h))
+            &&foe.entity_address==Some(std::ptr::from_ref(chr) as usize) {
             let started=*foe.grace.get_or_insert_with(Instant::now);
-            let holding=foe.spawn_gap.holds_attacks(started.elapsed());
+            let alive=chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag();
+            let holding=alive&&foe.spawn_gap.holds_attacks(started.elapsed());
+            if let Some(protected)=foe.spawn_protection.update(holding,alive,chr.debug_flags.disabled_hit()) {
+                chr.debug_flags.set_disabled_hit(protected);
+            }
             chr.debug_flags.set_disabled_secondary_actions(holding);
             if !holding {foe.graced=true;foe.grace=None;}
         }
@@ -4491,7 +4509,10 @@ fn retire_group(pending:&Pending,world:&mut WorldChrMan){
     }
     for foe in &pending.foes {
         if let Some(chr)=foe.fight.handle().and_then(|h|world.chr_ins_by_handle_mut(&h)) {
-            if foe.entity_address==Some(std::ptr::from_ref(chr) as usize){chr.debug_flags.set_character_disabled(true);}
+            if foe.entity_address==Some(std::ptr::from_ref(chr) as usize){
+                if let Some(previous)=foe.spawn_protection.previous {chr.debug_flags.set_disabled_hit(previous);chr.debug_flags.set_disabled_secondary_actions(false);}
+                chr.debug_flags.set_character_disabled(true);
+            }
         }
     }
 }

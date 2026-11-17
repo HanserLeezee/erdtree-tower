@@ -13,9 +13,8 @@ static class EmberPickupAssets {
         var names=Regex.Matches(source,@"Self::(\w+)=>""([^""]+)""").GroupBy(m=>m.Groups[1].Value).ToDictionary(g=>g.Key,g=>g.First().Groups[2].Value);
         if(keys.Length!=41||keys.Distinct().Count()!=41||keys[36]!="FrostShackle"||keys[37]!="Tent"||keys[38]!="Capture"||keys[39]!="Glintblade"||keys[40]!="Mind"||keys.Any(k=>!names.ContainsKey(k)))throw new Exception("Ember catalogue mismatch");
         int Index(int i)=>i>=36?i+1:i;
-        // 寒霜枷锁借永冻吐息（2）的图标，帐篷借圣杯余响（9），捕灵壶借灵唤铃的号令（15），魔力辉剑借辉石的余韵（23），由心及物借亚兹勒的冥想（22）
-        int Icon(int i)=>i==36?2:i==37?9:i==38?15:i==39?23:i==40?22:i;
-        const int ArtCount=36;
+        int Icon(int i)=>Index(i);
+        const int ArtCount=42;
         Directory.CreateDirectory(output);
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
         var file=reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name)=="EquipParamGoods");
@@ -31,8 +30,9 @@ static class EmberPickupAssets {
             var old=goods.Rows.SingleOrDefault(r=>r.ID==GoodsBase+Index(i));
             if(old!=null&&old.Name!="Tower ember display "+keys[i])throw new Exception("Goods ID collision");
             if(old!=null)goods.Rows.Remove(old);
-            var row=new PARAM.Row(goods.Rows.Single(r=>r.ID==10000)){ID=GoodsBase+Index(i),Name="Tower ember display "+keys[i]};
-            foreach(var (key,value) in new[]{("iconId",IconBase+Icon(i)),("refId_default",-1),("refId_1",-1),("showDialogCondType",1),("showLogCondType",0),("isEquip",0),("enable_live",0),("isDrop",0)})Set(row,key,value);
+            var row=new PARAM.Row(old??goods.Rows.Single(r=>r.ID==10000)){ID=GoodsBase+Index(i),Name="Tower ember display "+keys[i]};
+            if(old==null)foreach(var (key,value) in new[]{("refId_default",-1),("refId_1",-1),("showDialogCondType",1),("showLogCondType",0),("isEquip",0),("enable_live",0),("isDrop",0)})Set(row,key,value);
+            Set(row,"iconId",IconBase+Icon(i));
             goods.Rows.Add(row);
         }
         goods.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));file.Bytes=goods.Write();
@@ -47,7 +47,7 @@ static class EmberPickupAssets {
             var dir=Path.Combine(input,"menu",quality);var tpf=TPF.Read(Path.Combine(dir,"01_common.tpf.dcx"));var layout=BND4.Read(Path.Combine(dir,"01_common.sblytbnd.dcx"));
             foreach(var f in layout.Files.Where(f=>f.Name.EndsWith(".layout")&&!f.Name.EndsWith(Atlas+".layout"))) {
                 var xml=XElement.Parse(Encoding.UTF8.GetString(f.Bytes));
-                foreach(var e in xml.Elements())if(Regex.Match((string)e.Attribute("name")??"",@"MENU_ItemIcon_(\d+)") is var m&&m.Success&&int.Parse(m.Groups[1].Value)>=IconBase&&int.Parse(m.Groups[1].Value)<IconBase+keys.Length)throw new Exception("Native icon ID collision");
+                foreach(var e in xml.Elements())if(Regex.Match((string)e.Attribute("name")??"",@"MENU_ItemIcon_(\d+)") is var m&&m.Success&&int.Parse(m.Groups[1].Value)>=IconBase&&int.Parse(m.Groups[1].Value)<IconBase+ArtCount)throw new Exception("Native icon ID collision");
             }
             var originalTextures=tpf.Textures.Where(t=>t.Name!=Atlas).ToArray();var originalLayouts=layout.Files.Where(f=>!f.Name.EndsWith(Atlas+".layout")).ToArray();
             tpf.Textures.RemoveAll(t=>t.Name==Atlas);layout.Files.RemoveAll(f=>f.Name.EndsWith(Atlas+".layout"));
@@ -76,7 +76,9 @@ static class EmberPickupAssets {
             foreach(var t in originalTextures)if(!check.Textures.Single(x=>x.Name==t.Name).Bytes.SequenceEqual(t.Bytes))throw new Exception("Unrelated texture changed");
             foreach(var f in originalLayouts)if(!checkLayout.Files.Single(x=>x.ID==f.ID).Bytes.SequenceEqual(f.Bytes))throw new Exception("Unrelated layout changed");
             if(!check.Textures.Single(t=>t.Name==Atlas).Bytes.SequenceEqual(dds))throw new Exception("Ember atlas roundtrip failed");
-            Console.WriteLine($"{quality}: {keys.Length} native icons added, existing resources preserved");
+            var checkedXml=XElement.Parse(Encoding.UTF8.GetString(checkLayout.Files.Single(f=>f.Name.EndsWith(Atlas+".layout")).Bytes));
+            if(!XNode.DeepEquals(checkedXml,xmlOut))throw new Exception("Ember icon layout roundtrip failed");
+            Console.WriteLine($"{quality}: {ArtCount} native icons verified, existing resources preserved");
         }
         var msgPath="msg/zhocn/item_dlc02.msgbnd.dcx";var msg=BND4.Read(Path.Combine(input,msgPath));
         foreach(var f in msg.Files.Where(f=>Path.GetFileNameWithoutExtension(f.Name).Split("_dlc")[0]=="GoodsName")) {

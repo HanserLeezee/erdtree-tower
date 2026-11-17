@@ -296,5 +296,7 @@
   "胸部": "Chest",
   "手部": "Arms",
   "登顶一次后解锁防具幻化": "Complete one ascent to unlock armor transmog.",
-  "该外观不属于此防具部位": "This appearance does not belong to that armor slot."
+  "该外观不属于此防具部位": "This appearance does not belong to that armor slot.",
+  "适应的": "Adaptive",
+  "受到单一类型伤害后，下次同类伤害减免增加 10%，最多 50%；换类型重计，混合伤害不受影响且不改变适应": "After a single-type hit, resistance to the next hit of that type increases by 10%, up to 50%. Switching types resets resistance. Mixed damage bypasses resistance and leaves it unchanged."
 }

@@ -2,16 +2,16 @@ use crate::{NodeKind,Run};
 pub mod adaptation;
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
-pub enum Affix {Stalwart,Bulwark,Frenzied,Regenerating,Rot,Envious,Proud,Golden,Reborn,Leeching,Thorned,Swift}
+pub enum Affix {Stalwart,Bulwark,Frenzied,Regenerating,Rot,Envious,Proud,Golden,Reborn,Leeching,Thorned,Swift,Adaptive}
 impl Affix {
     /// 前 9 个是最早的词条（Boss 词条规则 0 只用这些），顺序不能变：血条名称按组合序号取
-    pub const ALL:[Affix;12]=[Affix::Stalwart,Affix::Bulwark,Affix::Frenzied,Affix::Regenerating,Affix::Rot,Affix::Envious,Affix::Proud,Affix::Golden,Affix::Reborn,
-        Affix::Leeching,Affix::Thorned,Affix::Swift];
+    pub const ALL:[Affix;13]=[Affix::Stalwart,Affix::Bulwark,Affix::Frenzied,Affix::Regenerating,Affix::Rot,Affix::Envious,Affix::Proud,Affix::Golden,Affix::Reborn,
+        Affix::Leeching,Affix::Thorned,Affix::Swift,Affix::Adaptive];
     pub fn index(self)->usize {Self::ALL.iter().position(|a|*a==self).unwrap()}
     pub fn name(self)->&'static str {
         match self {Affix::Stalwart=>"坚毅的",Affix::Bulwark=>"铁壁的",Affix::Frenzied=>"狂暴的",Affix::Regenerating=>"再生的",Affix::Rot=>"腐败的",
             Affix::Envious=>"嫉妒的",Affix::Proud=>"傲慢的",Affix::Golden=>"黄金律法的",Affix::Reborn=>"不屈的",
-            Affix::Leeching=>"吸血的",Affix::Thorned=>"荆棘的",Affix::Swift=>"迅猛的"}
+            Affix::Leeching=>"吸血的",Affix::Thorned=>"荆棘的",Affix::Swift=>"迅猛的",Affix::Adaptive=>"适应的"}
     }
     pub fn description(self)->&'static str {
         match self {
@@ -27,15 +27,16 @@ impl Affix {
             Affix::Leeching=>"每次打中你，回复其最大生命 1%",
             Affix::Thorned=>"受到伤害的 8% 反弹给你，远程打的减半，一次最多 100（不会致死）",
             Affix::Swift=>"动作速度 +10%：出招、收招、移动都更快，压得更紧",
+            Affix::Adaptive=>"受到单一类型伤害后，下次同类伤害减免增加 10%，最多 50%；换类型重计，混合伤害不受影响且不改变适应",
         }
     }
     /// 最早出现的幕：再生的第二幕起，吸血的第三幕起
     pub fn first_act(self)->u8 {match self {Affix::Regenerating=>2,Affix::Leeching=>3,_=>1}}
-    pub fn cost(self)->u8 {match self {Affix::Bulwark|Affix::Regenerating|Affix::Envious|Affix::Golden|Affix::Thorned=>2,Affix::Reborn=>3,_=>1}}
+    pub fn cost(self)->u8 {match self {Affix::Bulwark|Affix::Regenerating|Affix::Envious|Affix::Golden|Affix::Thorned|Affix::Adaptive=>2,Affix::Reborn=>3,_=>1}}
     /// 互斥组：同组只能出一个。规则 0 的分组（只有防御、续航两组）用于还原最早的组合表
     fn group(self)->u8 {
         match self {
-            Affix::Bulwark|Affix::Golden=>1,
+            Affix::Bulwark|Affix::Golden|Affix::Adaptive=>1,
             Affix::Regenerating|Affix::Reborn|Affix::Leeching=>2,
             Affix::Frenzied|Affix::Envious|Affix::Proud|Affix::Swift=>5,
             _=>0,
@@ -58,6 +59,9 @@ pub const LATE_BOSS_FIRST:i32=140;
 /// 新增词条后的组合里，名称序号 144 起的 Boss 放在第三段，每个组合 64 个编号（序号 144–207）
 pub const BAR_NAME_THIRD:i32=9740000;
 pub const BAR_NAME_THIRD_STRIDE:i32=64;
+pub const PRE_ADAPTIVE_COMBOS:usize=215;
+pub const BAR_NAME_ADAPTIVE:i32=9750000;
+pub const BAR_NAME_ADAPTIVE_STRIDE:i32=256;
 pub const POOL_BAR_NAME_FIRST:i32=98000000;
 pub const POOL_BAR_NAME_STRIDE:i32=256;
 pub fn pool_bar_name(affixes:&[Affix],name:i32,first:i32)->Option<i32> {
@@ -81,19 +85,22 @@ fn enumerate(pool:&[Affix],group:fn(Affix)->u8)->Vec<Vec<Affix>> {
 /// 先是最早的组合（顺序不变），再接上含新词条、按新分组允许的组合
 static COMBOS:std::sync::LazyLock<(Vec<Vec<Affix>>,usize)>=std::sync::LazyLock::new(|| {
     let mut combos=enumerate(&Affix::ALL[..LEGACY_AFFIXES],Affix::legacy_group);let legacy=combos.len();
-    for combo in enumerate(&Affix::ALL,Affix::group) {if !combos.contains(&combo){combos.push(combo);}}
+    for pool in [&Affix::ALL[..12],&Affix::ALL[..]] {
+        for combo in enumerate(pool,Affix::group) {if !combos.contains(&combo){combos.push(combo);}}
+    }
     (combos,legacy)
 });
 pub fn combos()->&'static [Vec<Affix>] {&COMBOS.0}
 /// 最早的组合数：之后的组合需要重新生成血条名称（text-update 写入第二个标记）后才显示带词条的名字
 pub fn legacy_combos()->usize {COMBOS.1}
 /// 所有带词条的血条名称编号
-pub fn bar_name_range()->std::ops::Range<i32> {BAR_NAME_FIRST..BAR_NAME_THIRD+(combos().len()-legacy_combos()) as i32*BAR_NAME_THIRD_STRIDE}
+pub fn bar_name_range()->std::ops::Range<i32> {BAR_NAME_FIRST..BAR_NAME_ADAPTIVE+(combos().len()-PRE_ADAPTIVE_COMBOS) as i32*BAR_NAME_ADAPTIVE_STRIDE}
 pub fn combo_table()->String {combos().iter().enumerate().map(|(i,c)|format!("{i}|{}\n",title(c))).collect()}
 /// 血条名称：最早的组合 9700000 + 序号 × 200 + Boss 名称序号；之后的组合 9722200 + (序号 − 最早组合数) × 144 + Boss 名称序号，
 /// 名称序号 144 起放在第三段 9740000 + (序号 − 最早组合数) × 64 + (Boss 名称序号 − 144)
 pub fn bar_name(affixes:&[Affix],boss_name:i32,first:i32)->Option<i32> {
     let index=combos().iter().position(|c|c==affixes)?;let offset=boss_name-first;
+    if index>=PRE_ADAPTIVE_COMBOS {return (0..BAR_NAME_ADAPTIVE_STRIDE).contains(&offset).then(||BAR_NAME_ADAPTIVE+(index-PRE_ADAPTIVE_COMBOS) as i32*BAR_NAME_ADAPTIVE_STRIDE+offset);}
     let legacy=legacy_combos();
     if index<legacy {return (0..BAR_NAME_STRIDE).contains(&offset).then(||BAR_NAME_FIRST+index as i32*BAR_NAME_STRIDE+offset);}
     let late=(index-legacy) as i32;
@@ -113,7 +120,7 @@ pub fn roll(run:&Run,node:usize)->Vec<Affix> {
     let budget=node_budget(run,node);
     if !run.boss_affixes||budget==0 {return vec![];}
     // 规则 0（旧存档）只用最早的 9 个词条和原来的分组
-    let (count,group):(usize,fn(Affix)->u8)=if run.boss_affix_rules>=1 {(Affix::ALL.len(),Affix::group)}else{(LEGACY_AFFIXES,Affix::legacy_group)};
+    let (count,group):(usize,fn(Affix)->u8)=match run.boss_affix_rules {0=>(LEGACY_AFFIXES,Affix::legacy_group),1=>(12,Affix::group),_=>(Affix::ALL.len(),Affix::group)};
     // 停用词条保留枚举和组合编号，避免旧血条名称错位。
     let mut pool:Vec<_>=Affix::ALL[..count].iter().copied().filter(|a|!RETIRED.contains(a)&&run.act>=a.first_act()).collect();
     pool.sort_by_key(|a|crate::mix(run.seed^(node as u64).wrapping_mul(7919)^(u64::from(run.act)<<40)^a.index() as u64^0xb055_af1c));
@@ -196,15 +203,18 @@ mod tests {
         assert_eq!(include_str!("../scene-assets/boss-affix-combos.txt").replace("\r\n","\n"),combo_table(),"regenerate scene-assets/boss-affix-combos.txt from boss_affixes::combo_table()");
         assert_eq!(legacy_combos(),111,"the earliest combos keep their indices");
         assert_eq!(BAR_NAME_FIRST+legacy_combos() as i32*BAR_NAME_STRIDE,BAR_NAME_SECOND);
-        assert!(BAR_NAME_SECOND+(combos().len()-legacy_combos()) as i32*BAR_NAME_SECOND_STRIDE<=BAR_NAME_THIRD);
-        assert!(BAR_NAME_THIRD+(combos().len()-legacy_combos()) as i32*BAR_NAME_THIRD_STRIDE<9799999,"stays below the colour tag test name");
+        assert!(combos()[..PRE_ADAPTIVE_COMBOS].iter().all(|c|!c.contains(&Affix::Adaptive)));
+        assert!(combos()[PRE_ADAPTIVE_COMBOS..].iter().all(|c|c.contains(&Affix::Adaptive)));
+        assert!(BAR_NAME_SECOND+(PRE_ADAPTIVE_COMBOS-legacy_combos()) as i32*BAR_NAME_SECOND_STRIDE<=BAR_NAME_THIRD);
+        assert!(BAR_NAME_THIRD+(PRE_ADAPTIVE_COMBOS-legacy_combos()) as i32*BAR_NAME_THIRD_STRIDE<BAR_NAME_ADAPTIVE);
+        assert!(bar_name_range().end<9799999,"stays below the colour tag test name");
         let mut names=std::collections::HashSet::new();
-        for seed in 0..500 {for act in 1..=3 {for rules in [0,1] {
+        for seed in 0..500 {for act in 1..=3 {for rules in [0,1,2] {
             let mut run=Run::new(seed,Class::Samurai);run.act=act;run.boss_affix_rules=rules;let affixes=roll(&run,boss(&run));
             let index=combos().iter().position(|c|c==&affixes).expect("every roll has a combo");
             if rules==0 {assert!(index<legacy_combos(),"old saves only roll the earliest combos");}
             let name=bar_name(&affixes,9600139,9600000).unwrap();names.insert(name);
-            let (first,stride)=if index<legacy_combos() {(BAR_NAME_FIRST,BAR_NAME_STRIDE)}else{(BAR_NAME_SECOND,BAR_NAME_SECOND_STRIDE)};
+            let (first,stride)=if index<legacy_combos() {(BAR_NAME_FIRST,BAR_NAME_STRIDE)}else if index<PRE_ADAPTIVE_COMBOS {(BAR_NAME_SECOND,BAR_NAME_SECOND_STRIDE)}else{(BAR_NAME_ADAPTIVE,BAR_NAME_ADAPTIVE_STRIDE)};
             assert_eq!((name-first)%stride,139);
         }}}
         assert_eq!(bar_name(&[],9600005,9600000),None);assert_eq!(bar_name(&[Affix::Rot],9600000+BAR_NAME_STRIDE,9600000),None);
@@ -259,7 +269,7 @@ mod tests {
             json.as_object_mut().unwrap().remove("boss_affix_rules");
             assert_eq!(Run::decode(&json.to_string()).unwrap().boss_affix_rules,0);
         }}
-        assert_eq!(new_seen.len(),2,"Swift is excluded without its law");
+        assert_eq!(new_seen.len(),3,"Leeching, Thorned and Adaptive are available in new runs");
     }
     #[test]
     fn party_members_share_affixes_but_not_reward_seeds() {

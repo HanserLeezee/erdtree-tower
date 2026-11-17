@@ -676,6 +676,7 @@ impl Link {
                 report.merchant_bound=self.event.merchant_bound;
                 report.drawing=self.drawing.request();
                 report.flask_uses=self.law_flasks.uses;
+                report.leech_hits=super::leech::report().filter(|h|h.key.0==run.seed&&h.key.1==run.act&&run.phase==erdtree_tower::Phase::Combat{id:h.key.2});
                 report.has_stonesword_key=unsafe {eldenring::cs::PlayerIns::local_player()}.is_ok_and(|p|super::loot::count(unsafe {p.player_game_data.as_ref()},0x40001f40)>0);
                 report.rest_end=rest_end;report.portal=self.portal&&self.victory;report.title=self.title;
                 report.event_request=self.event.request;report.event_bound=self.event.bound;report.event_applied=self.event.applied;

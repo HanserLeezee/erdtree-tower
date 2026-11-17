@@ -37,12 +37,14 @@ const BAR_MARKER_V2:i32=FIRST+98;
 /// text-update 为之后追加的 Boss（名称序号 140 起）写好全部带词条名称后加入的第三个标记
 const BAR_MARKER_V3:i32=FIRST+97;
 const BAR_MARKER_V4:i32=FIRST+100;
+const BAR_MARKER_V5:i32=FIRST+101;
 static BAR_NAMES:std::sync::atomic::AtomicU8=std::sync::atomic::AtomicU8::new(0);
-/// 名称资源版本：1 最早组合，2 全部组合，3 追加 Boss，4 精英与普通敌人
+/// 名称资源版本：1 最早组合，2 扩展组合，3 追加 Boss，4 精英，5 适应
 fn bar_names_version()->u8 {
     let known=BAR_NAMES.load(std::sync::atomic::Ordering::Relaxed);
-    if known==4 {return 4;}
-    let version=unsafe {SoloParamRepository::instance()}.map_or(0,|p|if p.get::<SpEffectParam>(BAR_MARKER_V4 as u32).is_some(){4}
+    if known==5 {return 5;}
+    let version=unsafe {SoloParamRepository::instance()}.map_or(0,|p|if p.get::<SpEffectParam>(BAR_MARKER_V5 as u32).is_some(){5}
+        else if p.get::<SpEffectParam>(BAR_MARKER_V4 as u32).is_some(){4}
         else if p.get::<SpEffectParam>(BAR_MARKER_V3 as u32).is_some(){3}
         else if p.get::<SpEffectParam>(BAR_MARKER_V2 as u32).is_some(){2}else if p.get::<SpEffectParam>(BAR_MARKER as u32).is_some(){1}else{0});
     BAR_NAMES.store(version,std::sync::atomic::Ordering::Relaxed);version
@@ -58,14 +60,16 @@ pub fn bar_name(affixes:&[Affix],name:i32)->i32 {
     if bar_tag_test() {return BAR_TAG_TEST_NAME;}
     if affixes.is_empty() {return name;}
     let version=bar_names_version();
+    if affixes.contains(&Affix::Adaptive)&&version<5 {return name;}
     let index=erdtree_tower::boss_affixes::combos().iter().position(|c|c==affixes);
     let late=name-super::enemies::BOSS_NAME_FIRST>=erdtree_tower::boss_affixes::LATE_BOSS_FIRST;
-    let covered=if late {version>=3}else{match version {2..=4=>true,1=>index.is_some_and(|i|i<erdtree_tower::boss_affixes::legacy_combos()),_=>false}};
+    let covered=if late {version>=3}else{match version {2..=5=>true,1=>index.is_some_and(|i|i<erdtree_tower::boss_affixes::legacy_combos()),_=>false}};
     if !covered {return name;}
     erdtree_tower::boss_affixes::bar_name(affixes,name,super::enemies::BOSS_NAME_FIRST).unwrap_or(name)
 }
 pub fn elite_bar_name(affixes:&[Affix],name:i32)->i32 {
     if affixes.is_empty()||bar_names_version()<4 {return name;}
+    if affixes.contains(&Affix::Adaptive)&&bar_names_version()<5 {return name;}
     erdtree_tower::boss_affixes::pool_bar_name(affixes,name,super::enemies::POOL_NAME_FIRST)
         .or_else(||erdtree_tower::boss_affixes::bar_name(affixes,name,super::enemies::BOSS_NAME_FIRST)).unwrap_or(name)
 }
@@ -94,13 +98,12 @@ pub fn validate(empowered:bool)->Result<(),String> {
     if EFFECTS.iter().chain(EMPOWERED.iter().filter(|_|empowered)).any(|id|params.get::<SpEffectParam>(*id as u32).is_none()){return Err("缺少 Boss 词条参数，请使用完整启动包".into());}Ok(())
 }
 struct Foe {handle:FieldInsHandle,hp:i32,hurt:Instant,proud:bool,reborn:bool}
-/// 联机：房主按所有玩家的掉血算吸血；成员只算自己的（腐败、荆棘），护盾的时机跟房主（看 Boss 身上的护盾效果）
+/// 联机：各端记录本机玩家的实际受击，房主按新增命中结算对应 Boss 的吸血。
 #[derive(Default)]
 pub struct Fight {key:Option<(u64,u8,usize)>,affixes:Vec<Affix>,empowered:bool,foes:Vec<Foe>,flasks:Option<u8>,shield_at:Option<Instant>,shield_until:Option<Instant>,rot_at:Option<Instant>,missing:bool,player_hp:Option<i32>,
-    /// 房主：每个玩家上一帧的生命（吸血按全队受到的伤害）
-    players:Vec<(FieldInsHandle,i32)>,drinks:erdtree_tower::party_law::DrinkDeltas,
+    leech:super::leech::Tracker,leech_deltas:erdtree_tower::leech::Deltas,drinks:erdtree_tower::party_law::DrinkDeltas,
     /// 荆棘：最近的自己（与自己召唤物）弹体的位置，用来判断伤害是不是远程打的
-    bullets:Vec<(Instant,[f32;3])>}
+    bullets:Vec<(Instant,[f32;3])>,adaptation:super::adaptation::Tracker}
 /// 一次伤害的反弹量：远程减半
 fn thorn_reflect(damage:i64,percent:i64,ranged:bool)->i64 {
     let full=damage*percent/100;
@@ -126,9 +129,21 @@ impl Fight {
         self.shield_at.filter(|at|*at>now&&at.duration_since(now)<=Duration::from_secs(2)).map(|_|("黄金护盾即将展开".to_owned(),true))
     }
     /// authority：房主或单人（只有它改 Boss 的状态）；party：联机（荆棘只按自己与自己召唤物的伤害反弹）；team：联机时全队的喝药次数
-    pub fn tick(&mut self,world:&mut WorldChrMan,handles:&[FieldInsHandle],authority:bool,party:bool,flasks:Option<u8>,team:Option<&[(u64,u64)]>) {
+    pub fn tick(&mut self,world:&mut WorldChrMan,handles:&[FieldInsHandle],authority:bool,party:bool,flasks:Option<u8>,team:Option<&[(u64,u64)]>,hits:&[(u64,erdtree_tower::leech::Hits)]) {
         if self.affixes.is_empty(){return;}
         if let Err(error)=validate(self.empowered){if !self.missing{super::log(error);self.missing=true;}return;}
+        if self.affixes.contains(&Affix::Adaptive) {
+            if !super::adaptation::ready()&&!self.missing {super::log("ADAPTATION unavailable: pre-HP interface failed to install");self.missing=true;}
+            self.adaptation.sync(world,handles);
+        }
+        let mut leech_hits=Vec::new();
+        if self.affixes.contains(&Affix::Leeching)&&let Some(key)=self.key {
+            self.leech.sync(world,key,handles);
+            if authority {
+                if let Some(local)=super::leech::report() {leech_hits.extend(self.leech_deltas.take(key,0,&local));}
+                for (player,report) in hits {leech_hits.extend(self.leech_deltas.take(key,*player,report));}
+            }
+        }
         let now=Instant::now();let tuning=self.tuning();
         let (pride,envy)=if self.empowered {(PRIDE+1,ENVY+1)}else{(PRIDE,ENVY)};
         let drank=team.map_or_else(||u64::from(matches!((self.flasks,flasks),(Some(before),Some(after)) if after<before)),|counts|self.drinks.take(counts));self.flasks=flasks;
@@ -140,14 +155,9 @@ impl Fight {
             &&handles.iter().filter_map(|h|world.chr_ins_by_handle(h)).any(|c|c.special_effect.entries().any(|e|e.param_id==SHIELD)) {
             self.shield_until=Some(now+Duration::from_secs(5));
         }
-        // 本机玩家这一帧受到的伤害（腐败）；房主再算全队受到的伤害（吸血）
+        // 腐败仍使用本机血量差；吸血独立按真实命中计数。
         let player_hp=world.main_player.as_ref().map(|p|p.chr_ins.modules.data.hp);
         let taken=match (self.player_hp,player_hp) {(Some(before),Some(after)) if after<before=>before-after,_=>0};self.player_hp=player_hp;
-        let team_taken=if authority&&party {
-            let now_hp:Vec<_>=world.player_chr_set.characters().map(|p|(p.chr_ins.field_ins_handle,p.chr_ins.modules.data.hp)).collect();
-            let lost=now_hp.iter().map(|(h,hp)|self.players.iter().find(|(p,_)|p==h).map_or(0,|(_,before)|(before-hp).max(0))).sum::<i32>();
-            self.players=now_hp;lost
-        }else{taken};
         let own:Vec<FieldInsHandle>=world.main_player.as_ref().map(|p|p.chr_ins.field_ins_handle).into_iter().chain(world.summon_buddy_chr_set.characters().map(|c|c.field_ins_handle)).collect();
         let mut reflected=0i64;
         let thorned=self.affixes.contains(&Affix::Thorned);
@@ -186,8 +196,9 @@ impl Fight {
             }
             if !authority {foe.hp=hp;continue;}
             if hp<foe.hp&&foe.proud {chr.remove_speffect(pride);foe.proud=false;}
-            if self.affixes.contains(&Affix::Leeching)&&team_taken>0&&max>0 {
-                chr.modules.data.hp=(i64::from(hp)+i64::from(max)*tuning.leech_permille/1000).min(i64::from(max)) as i32;
+            let hits=leech_hits.iter().filter(|(id,_)|*id==super::leech::entity(chr)).fold(0u64,|n,(_,count)|n.saturating_add(*count));
+            if hits>0&&max>0 {
+                chr.modules.data.hp=(i64::from(hp)+i64::from(max)*tuning.leech_permille/1000*hits.min(1000) as i64).min(i64::from(max)) as i32;
                 chr.apply_speffect(LEECH_FLASH,false);
             }
             let hp=chr.modules.data.hp;

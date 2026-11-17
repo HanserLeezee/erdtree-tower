@@ -11,6 +11,7 @@ pub fn repair_item_icons(data:&mut PlayerGameData) {
     let equipment=&mut data.equipment;
     clear_empty_icons(&equipment.equip_item_data.quick_slots,&mut equipment.equipment_entries.quick_tems);
     clear_empty_icons(&equipment.equip_item_data.pouch_slots,&mut equipment.equipment_entries.pouch);
+    super::physick::repair_duplicates(data);
 }
 fn invalid_empty_weapon(id:i32,handle:u32,index:u32)->bool {
     id==-1 && handle==u32::MAX && index==u32::MAX
