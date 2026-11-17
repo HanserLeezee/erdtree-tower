@@ -23,7 +23,7 @@ def build_gate(project):
     sdk = Path(os.environ.get('TOWER_STEAMWORKS_SDK', str(cache / 'steamworks')))
     if not (sdk / 'include/steam/steam_api.h').exists():
         raise RuntimeError('Build the integrated transmog dependency first to prepare the Steam SDK.')
-    build = project.parents[1] / 'work/session-gate-build'
+    build = Path(os.environ.get('TOWER_GATE_BUILD_DIR', str(project.parents[1] / 'work/session-gate-build')))
     subprocess.run([cmake, '-S', str(project / 'seamless-gate'), '-B', str(build), '-A', 'x64', '-DSTEAMWORKS_ROOT=' + str(sdk)], check=True)
     subprocess.run([cmake, '--build', str(build), '--config', 'Release', '--parallel', '6'], check=True)
     subprocess.run([str(build / 'Release/gate-tests.exe')], check=True)

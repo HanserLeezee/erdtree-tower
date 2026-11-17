@@ -37,7 +37,7 @@ def build_transmog(project):
     sdk = Path(os.environ.get('TOWER_STEAMWORKS_SDK', str(cache / 'steamworks')))
     if not (sdk / 'include/steam/steam_api.h').exists():
         extract_asset('repos/julianxhokaxhiu/SteamworksSDKCI/releases/assets/157344737', sdk)
-    build = cache / 'build'
+    build = Path(os.environ.get('TOWER_TRANSMOG_BUILD_DIR', str(cache / 'build')))
     subprocess.run([cmake, '-S', str(project / 'native/vendor/tower-transmog'), '-B', str(build),
                     '-A', 'x64', '-DCMAKE_POLICY_VERSION_MINIMUM=3.5',
                     '-DSTEAMWORKS_ROOT=' + str(sdk)], check=True)
