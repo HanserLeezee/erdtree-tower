@@ -5,7 +5,7 @@ fn definitions()->Vec<Vec<&'static str>> {
 }
 #[test]
 fn all_custom_spirits_have_names_quality_and_forty_levels() {
-    let defs=definitions();assert_eq!(defs.len(),56);
+    let defs=definitions();assert_eq!(defs.len(),98);
     let rarities:std::collections::HashMap<u32,u8>=include_str!("../scene-assets/reward-rarities.tsv").lines().map(|l|{
         let (id,tier)=l.split_once('\t').unwrap();(id.parse().unwrap(),tier.parse().unwrap())
     }).collect();
@@ -13,7 +13,10 @@ fn all_custom_spirits_have_names_quality_and_forty_levels() {
     for d in defs {
         let base=0x40000000|d[0].parse::<u32>().unwrap();assert!(ids.insert(base));
         let item=rewards::lookup(base).expect("custom spirit in reward catalog");
-        assert_eq!(item.kind,ItemKind::Spirit);assert_eq!(item.name,d[7]);assert!(item.random_eligible());
+        assert_eq!(item.kind,ItemKind::Spirit);assert_eq!(item.name,d[7]);
+        // 只能捕捉获得的（Boss 骨灰）不进奖励与商店
+        let capture=d.get(9).is_some_and(|f|f.split(',').any(|f|f=="capture"));
+        assert_eq!(item.random_eligible(),!capture,"{}",d[7]);assert_eq!(rewards::capture_only(base),capture);
         assert_eq!(rarities[&base],d[4].parse::<u8>().unwrap());
         for level in 0..=39 {
             assert_eq!(rewards::spirit_level(base+level),Some(level as u8));

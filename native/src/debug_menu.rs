@@ -504,8 +504,8 @@ mod tests {
             }
         }
         assert!(super::new_spirits(40).is_empty());
-        for id in [0,0x40000000|200000,0x40000000|270040,0x40000000|326000] {assert!(!super::valid_spirit_test_item(id));}
-        for param in [0,1599999999,1600000001,1600000000+56*40000] {assert_eq!(super::custom_buddy_item(param),None);}
+        for id in [0,0x40000000|200000,0x40000000|270040,0x40000000|368000] {assert!(!super::valid_spirit_test_item(id));}
+        for param in [0,1599999999,1600000001,1600000000+98*40000] {assert_eq!(super::custom_buddy_item(param),None);}
     }
     #[test]
     fn god_mode_leaves_global_hit_and_enemy_protection_off() {

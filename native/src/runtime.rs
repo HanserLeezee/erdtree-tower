@@ -3048,10 +3048,11 @@ fn record_ember_gains(state:&mut Runtime,gains:Vec<erdtree_tower::embers::Gain>,
 }
 /// 捕灵壶：捕捉到的敌人给一份它的骨灰，等级按当前骨灰等级（与奖励里刷出的骨灰同一档）。
 /// 没有对应骨灰、没有 DLC 时的 DLC 骨灰、律法禁用骨灰时只算击杀
-fn grant_captures(state:&mut Runtime,world:&mut WorldChrMan,models:&[i32]) {
+fn grant_captures(state:&mut Runtime,world:&mut WorldChrMan,captures:&[(i32,u8)],thinks:&[u32]) {
     let Some(run)=state.view.run.as_ref() else{return};
-    for &model in models {
-        let Some(base)=erdtree_tower::rewards::spirit_for_model(model)
+    for &(model,slot) in captures {
+        let think=thinks.get(usize::from(slot)).copied();
+        let Some(base)=erdtree_tower::rewards::spirit_for_enemy(model,think)
             .filter(|id|erdtree_tower::dlc::item_allowed(*id)&&!run.law.lone_wolf()) else {
             super::log(format!("TOWER_EMBER capture model={model}: no spirit ash granted"));state.view.status="捕捉成功".into();state.view.prompt=state.view.prompt.wrapping_add(1);continue;
         };
@@ -3087,10 +3088,11 @@ fn host_embers(state:&mut Runtime,world:&mut WorldChrMan) {
     let keeper=run.ember_stacks.level(erdtree_tower::embers::Ember::SpiritKeeper);
     let key=(run.seed,run.act,id);
     let astro=run.class==erdtree_tower::Class::Astrologer;
+    let thinks:Vec<u32>=pending.foes.iter().map(|f|f.spec.think).collect();
     let events=state.ember_fight.tick(world,key,&embers,&foes,authority,state.party.is_some(),flasks,keeper,astro);
     if events.feast {grant_feast(state.flasks.as_mut(),world);}
     if let Some(player)=world.main_player.as_mut() {super::passives::kill_fp(&mut player.chr_ins,Some(&pending.next_run),&events.gains);}
-    grant_captures(state,world,&events.captures);
+    grant_captures(state,world,&events.captures,&thinks);
     record_ember_gains(state,events.gains,key);
     // 鲜血骑士的破势：自己持有，或联机时任一在场队员持有，都由房主（单人即自己）执行
     let breaker=erdtree_tower::embers::Ember::Breaker;
@@ -3188,10 +3190,11 @@ fn member_embers(state:&mut Runtime,world:&mut WorldChrMan) {
     let keeper=run.ember_stacks.level(erdtree_tower::embers::Ember::SpiritKeeper);
     let flasks=state.flasks.as_ref().map(|f|f.total());
     let astro=run.class==erdtree_tower::Class::Astrologer;
+    let thinks:Vec<u32>=roster.iter().map(|spec|spec.think).collect();
     let events=state.ember_fight.tick(world,key,&embers,&foes,false,true,flasks,keeper,astro);
     if events.feast {grant_feast(state.flasks.as_mut(),world);}
     if let Some(player)=world.main_player.as_mut() {super::passives::kill_fp(&mut player.chr_ins,state.view.run.as_ref(),&events.gains);}
-    grant_captures(state,world,&events.captures);
+    grant_captures(state,world,&events.captures,&thinks);
     record_ember_gains(state,events.gains,key);
     // 作用在敌人身上的余烬交给房主执行
     if !events.strikes.is_empty() && let Some(link)=state.party.as_mut() {link.push_strikes(&events.strikes);}

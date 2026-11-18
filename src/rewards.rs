@@ -14,7 +14,7 @@ impl ItemKind {
 pub struct Item {pub id:u32,pub name:&'static str,pub kind:ItemKind}
 impl Item {
     pub fn random_eligible(&self)->bool {
-        crate::dlc::item_allowed(self.id)&&self.id!=(0x40000000|11019)&&self.kind!=ItemKind::Armor&&(self.kind!=ItemKind::Talisman||(!self.name.contains(['+','＋'])
+        crate::dlc::item_allowed(self.id)&&!capture_only(self.id)&&self.id!=(0x40000000|11019)&&self.kind!=ItemKind::Armor&&(self.kind!=ItemKind::Talisman||(!self.name.contains(['+','＋'])
             &&!matches!(self.id&0x0fffffff,1100|2140|4060|6040|6060|6070|6080|6090)))
     }
 }
@@ -42,12 +42,17 @@ pub const SPIRIT_MAX:u8=39;
 pub const CUSTOM_SPIRIT_FIRST:u32=270000;
 /// 第一批 12 种之后追加的、按怪池补齐的骨灰从这里开始
 pub const ENEMY_SPIRIT_FIRST:u32=282000;
-/// (编号, 怪物模型, 是否 DLC 模型)
-pub static CUSTOM_SPIRITS:LazyLock<Vec<(u32,i32,bool)>>=LazyLock::new(||include_str!("../scene-assets/custom-spirit-definitions.tsv").lines().filter(|l|!l.trim().is_empty()).enumerate().map(|(row,line)|{
+/// 一种自制骨灰：编号、怪物模型、取自的 AI 参数；dlc 为 DLC 怪物的模型，capture 为只能用捕灵壶抓到（不进奖励与商店）
+#[derive(Clone,Copy,Debug)]
+pub struct CustomSpirit {pub id:u32,pub model:i32,pub think:u32,pub dlc:bool,pub capture:bool}
+/// 定义表第 10 列是逗号分隔的标记：dlc、capture
+pub static CUSTOM_SPIRITS:LazyLock<Vec<CustomSpirit>>=LazyLock::new(||include_str!("../scene-assets/custom-spirit-definitions.tsv").lines().filter(|l|!l.trim().is_empty()).enumerate().map(|(row,line)|{
     let p:Vec<_>=line.split('|').collect();
     let id:u32=p[0].parse().expect("Invalid custom spirit id");
     assert_eq!(id,CUSTOM_SPIRIT_FIRST+row as u32*1000,"Custom spirit ids must be contiguous");
-    (id,p[1].parse().expect("Invalid custom spirit model"),p.get(9)==Some(&"dlc"))
+    let flags:Vec<&str>=p.get(9).map(|f|f.split(',').map(str::trim).collect()).unwrap_or_default();
+    assert!(flags.iter().all(|f|matches!(*f,"dlc"|"capture")),"Invalid custom spirit flag");
+    CustomSpirit{id,model:p[1].parse().expect("Invalid custom spirit model"),think:p[3].parse().expect("Invalid custom spirit think"),dlc:flags.contains(&"dlc"),capture:flags.contains(&"capture")}
 }).collect());
 /// 怪池里已有原版骨灰的怪物：模型 → 原版骨灰（+0 的物品编号）。其余怪物用自制骨灰（按定义表的模型，同模型取第一种）
 const VANILLA_SPIRITS:[(i32,u32);44]=[
@@ -58,10 +63,32 @@ const VANILLA_SPIRITS:[(i32,u32);44]=[
     (4315,254000),(4240,2217000),(5040,2200000),(5080,2201000),(5160,2203000),(5192,2204000),(5250,2214000),(5260,2212000),
     (5840,2208000),(5311,2205000),(5900,2211000),(3600,276000),
 ];
+/// Boss 池里没有自己骨灰、但属于已有骨灰同类的变体：模型 → 那种骨灰（+0 的物品编号）
+const VARIANT_SPIRITS:[(i32,u32);11]=[
+    (4050,231000), // 凯丹佣兵 → 凯丹佣兵的骨灰
+    (4341,243000), // 连枷南瓜头士兵 → 发狂南瓜头士兵
+    (2272,284000), // 黑蟹 → 巨蟹
+    (3630,314000), // 巨大神谕众使者 → 大神谕众使者
+    (4384,323000), // 大型辉石矿工 → 矿工
+    (4602,301000), // 雪原山妖 → 山妖
+    (4603,301000), // 挖石山妖 → 山妖
+    (3250,270000), // 龙装大树守卫 → 大树守卫
+    (3510,212000), // 骷髅 → 骸骨民兵
+    (3701,217000), // 调香师托莉夏 → 调香师托莉夏
+    (4481,245000), // 米兰达之花（小花）→ 小米兰达
+];
 /// 捕灵壶捕捉到这种怪物时给的骨灰（+0 的完整物品编号）；没有对应骨灰时 None
-pub fn spirit_for_model(model:i32)->Option<u32> {
-    let id=VANILLA_SPIRITS.iter().find(|(m,_)|*m==model).map(|(_,id)|*id)
-        .or_else(||CUSTOM_SPIRITS.iter().find(|(_,m,_)|*m==model).map(|(id,_,_)|*id))?;
+pub fn spirit_for_model(model:i32)->Option<u32> {spirit_for_enemy(model,None)}
+/// 同一模型有多种自制骨灰时（持剑 / 法杖看门犬、剑盾 / 长枪熔炉骑士），按敌人的 AI 参数段（编号去掉后三位）挑对应的那种；
+/// think 不明或对不上时取第一种
+pub fn spirit_for_enemy(model:i32,think:Option<u32>)->Option<u32> {
+    let custom=||{
+        let mut same=CUSTOM_SPIRITS.iter().filter(|s|s.model==model);
+        let first=same.clone().next().map(|s|s.id);
+        think.and_then(|t|same.find(|s|s.think/1000==t/1000).map(|s|s.id)).or(first)
+    };
+    let id=VANILLA_SPIRITS.iter().find(|(m,_)|*m==model).map(|(_,id)|*id).or_else(custom)
+        .or_else(||VARIANT_SPIRITS.iter().find(|(m,_)|*m==model).map(|(_,id)|*id))?;
     let full=0x40000000|id;
     CATALOG.iter().any(|i|i.id==full&&i.kind==ItemKind::Spirit).then_some(full)
 }
@@ -69,9 +96,15 @@ pub fn custom_spirit(id:u32)->bool {
     let raw=id&0x0fffffff;
     id>>28==4&&(CUSTOM_SPIRIT_FIRST..CUSTOM_SPIRIT_FIRST+CUSTOM_SPIRITS.len() as u32*1000).contains(&raw)&&raw%1000<=u32::from(SPIRIT_MAX)
 }
+fn custom_spirit_entry(id:u32)->Option<&'static CustomSpirit> {
+    if !custom_spirit(id) {return None;}
+    CUSTOM_SPIRITS.get(((id&0x0fffffff)-CUSTOM_SPIRIT_FIRST) as usize/1000)
+}
+/// 只能用捕灵壶抓到的骨灰（Boss 等）：不进奖励、宝箱与商店
+pub fn capture_only(id:u32)->bool {custom_spirit_entry(id).is_some_and(|s|s.capture)}
 /// 用 DLC 怪物模型的自制骨灰：没有 DLC 时不出
 pub fn custom_spirit_dlc(id:u32)->bool {
-    custom_spirit(id)&&CUSTOM_SPIRITS.get(((id&0x0fffffff)-CUSTOM_SPIRIT_FIRST) as usize/1000).is_some_and(|(_,_,dlc)|*dlc)
+    custom_spirit(id)&&custom_spirit_entry(id).is_some_and(|s|s.dlc)
 }
 pub(crate) fn before_custom_spirits(run:&Run,node:usize)->Vec<Reward> {
     let mut previous=run.clone();
@@ -294,7 +327,7 @@ fn ranked_pool(run:&Run,node:usize,spirits:bool,catalog:&[Item],base_only:bool)-
     for (index,kind) in [ItemKind::Weapon,ItemKind::Armor,ItemKind::Sorcery,ItemKind::Incantation,ItemKind::Spirit,ItemKind::Talisman,ItemKind::Tool].into_iter().enumerate() {
         if kind==ItemKind::Tool&&!base_only {continue;}
         if kind==ItemKind::Spirit&&!spirits {continue;}
-        let mut pool:Vec<_>=catalog.iter().filter(|item|item.kind==kind&&kind.allowed(run.class)&&!run.claimed_items.contains(&item.id)&&crate::dlc::item_allowed(item.id)&&(!base_only||item.random_eligible())).collect();
+        let mut pool:Vec<_>=catalog.iter().filter(|item|item.kind==kind&&kind.allowed(run.class)&&!run.claimed_items.contains(&item.id)&&crate::dlc::item_allowed(item.id)&&!capture_only(item.id)&&(!base_only||item.random_eligible())).collect();
         // 职业规则 1：武器约七成从职业擅长的类型里出
         if kind==ItemKind::Weapon&&run.preferences().is_empty()&&crate::mix(run.reward_seed()^(node as u64*131)^0xc1a5_5e5)%10<7 {
             let favored:Vec<_>=pool.iter().copied().filter(|i|run.class.weapon_types().contains(&crate::weapon_training::kind(i.id))).collect();
@@ -358,12 +391,12 @@ mod tests {
     use super::*;
     #[test]
     fn enemy_spirits_extend_the_custom_range_and_keep_dlc_models_out_without_the_dlc() {
-        assert_eq!(CUSTOM_SPIRITS.len(),56);
+        assert_eq!(CUSTOM_SPIRITS.len(),98);
         assert!(custom_spirit(0x40000000|281039)&&custom_spirit(0x40000000|282000)&&custom_spirit(0x40000000|325039));
-        assert!(!custom_spirit(0x40000000|326000)&&!custom_spirit(0x40000000|325040)&&!custom_spirit(0x40000000|263000));
-        for (id,_,_) in CUSTOM_SPIRITS.iter() {assert!(lookup(0x40000000|id).is_some_and(|i|i.kind==ItemKind::Spirit),"{id} missing from the reward catalog");}
-        let dlc:Vec<_>=CUSTOM_SPIRITS.iter().filter(|(_,_,dlc)|*dlc).map(|(id,_,_)|*id).collect();
-        assert_eq!(dlc.len(),6);
+        assert!(!custom_spirit(0x40000000|368000)&&custom_spirit(0x40000000|325040-40+39)&&!custom_spirit(0x40000000|263000));
+        for &CustomSpirit{id,..} in CUSTOM_SPIRITS.iter() {assert!(lookup(0x40000000|id).is_some_and(|i|i.kind==ItemKind::Spirit),"{id} missing from the reward catalog");}
+        let dlc:Vec<_>=CUSTOM_SPIRITS.iter().filter(|s|s.dlc).map(|s|s.id).collect();
+        assert_eq!(dlc.len(),15);
         for id in &dlc {assert!(crate::dlc::is_dlc_item(0x40000000|id+10));}
         assert!(!crate::dlc::is_dlc_item(0x40000000|282000));
         for seed in 0..60 {
@@ -392,6 +425,14 @@ mod tests {
         assert_eq!(spirit_for_model(2500),Some(0x40000000|273000),"same model: the first custom ash");
         assert_eq!(spirit_for_model(4311),Some(0x40000000|250000));
         assert_eq!(spirit_for_model(1),None);
+        // 同模型的变体按 AI 参数段区分（Boss 池里的法杖型看门犬、长枪熔炉骑士）
+        assert_eq!(spirit_for_enemy(4260,Some(42601000)),Some(0x40000000|272000),"staff watchdog");
+        assert_eq!(spirit_for_enemy(4260,Some(42600000)),Some(0x40000000|271000),"sword watchdog");
+        assert_eq!(spirit_for_enemy(2500,Some(25001030)),Some(0x40000000|274000),"spear crucible knight");
+        assert_eq!(spirit_for_enemy(2500,Some(25000030)),Some(0x40000000|273000),"sword-and-shield crucible knight");
+        assert_eq!(spirit_for_enemy(4260,Some(99999999)),Some(0x40000000|271000),"unknown think falls back to the first");
+        for (model,id) in VARIANT_SPIRITS {assert_eq!(spirit_for_model(model),Some(0x40000000|id),"variant {model}");}
+        assert_eq!(spirit_for_model(4050),Some(0x40000000|231000));
     }
     #[test]
     fn pre_custom_spirit_reward_pages_remain_valid_without_rerolling() {
@@ -754,5 +795,23 @@ mod claimed_base_tests {
         let old=super::before_claimed_bases(&run,id);run.phase=Phase::Reward{id,offers:old};
         let loaded=Run::decode(&run.encode().unwrap()).unwrap();
         assert_eq!(loaded.phase,Phase::Reward{id,offers:super::offers(&run,id)});
+    }
+}
+#[cfg(test)]
+mod boss_spirit_tests {
+    use super::*;
+    #[test]
+    fn boss_pool_monsters_map_to_spirits_and_boss_ashes_stay_capture_only() {
+        let mut missing=vec![];
+        for line in include_str!("../scene-assets/boss-pool.txt").lines().filter(|l|!l.is_empty()) {
+            let p:Vec<_>=line.split('|').collect();
+            let (model,think):(i32,u32)=(p[3].parse().unwrap(),p[5].parse().unwrap());
+            if spirit_for_enemy(model,Some(think)).is_none() {missing.push(p[7]);}
+        }
+        assert!(missing.is_empty(),"{missing:?}");
+        let boss=0x40000000|spirit_for_model(2130).unwrap();
+        assert!(capture_only(spirit_for_model(2130).unwrap()));
+        assert!(!lookup(boss&0x4fffffff).unwrap().random_eligible());
+        assert!(!capture_only(0x40000000|282000),"pool monster ashes still drop as rewards");
     }
 }

@@ -138,6 +138,11 @@ if(args.Length==4&&args[3]=="ember-pickup-patch") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     EmberPickupAssets.Build(args[2],args[1]);return;
 }
+if(args.Length==4&&args[3]=="spirit-icon-menu") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    SpiritIconAssets.PatchMenu(args[2],args[1]);return;
+}
+if(args.Length==4&&args[3]=="spirit-icon-patch") {SpiritIconAssets.PatchParams(args[2],args[1]);return;}
 if(args.Length==4&&args[3]=="talisman-icon-menu") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     TalismanIconAssets.PatchMenu(args[2],args[1]);return;

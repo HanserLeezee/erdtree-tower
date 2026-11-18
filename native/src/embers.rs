@@ -353,8 +353,8 @@ struct Foe {handle:FieldInsHandle,hp:i32,max:i32,pos:[f32;3],alive:bool,boss:boo
 /// 一帧的结果：噬神之蛇的饱食是否要补红瓶、让叠层余烬加层的事件、联机成员要请房主执行的敌人侧效果
 #[derive(Default)]
 pub struct Events {pub feast:bool,pub gains:Vec<Gain>,pub strikes:Vec<Strike>,
-    /// 捕灵壶：本机玩家捕捉到的敌人模型（由运行时发对应的骨灰）
-    pub captures:Vec<i32>}
+    /// 捕灵壶：本机玩家捕捉到的敌人（模型, 名单位置），由运行时按名单查 AI 参数后发对应的骨灰
+    pub captures:Vec<(i32,u8)>}
 /// 本机玩家与本机召唤物：联机时只算他们的命中与击倒（看敌人的 last_hit_by）
 fn own_handles(world:&WorldChrMan)->Vec<FieldInsHandle> {
     world.main_player.as_ref().map(|p|p.chr_ins.field_ins_handle).into_iter().chain(world.summon_buddy_chr_set.characters().map(|c|c.field_ins_handle)).collect()
@@ -559,7 +559,7 @@ impl Fight {
                     let roll=(self.capture_seed%1000) as u32;
                     let caught=roll<chance;
                     super::log(format!("TOWER_EMBER capture model={} hp={before}/{foe_max} chance={chance}permille roll={roll} caught={caught} killed_by_hit={died}",chr.npc_id));
-                    if caught {captured.push(index);events.captures.push(chr.npc_id);}
+                    if caught {captured.push(index);events.captures.push((chr.npc_id,slot));}
                 }
             }
             // 魔力辉剑：自己的弹体刚落在这只敌人附近、它掉了血，且还有一次没换过辉剑的施法
