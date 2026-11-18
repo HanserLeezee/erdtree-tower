@@ -1003,6 +1003,8 @@ pub fn poll_pad(io:&mut Io,active:bool,map:bool) {
     feed_pad(io,&state.pad,found,map);
 }
 fn feed_pad(io:&mut Io,pad:&Gamepad,found:bool,map:bool) {
+    //[fix] 地图界面右摇杆是当鼠标用的，那上面按「鼠标」算，不算手柄输入（否则一推摇杆箭头就闪没）。
+    if found&&!map&&(pad.buttons!=0||pad.left_trigger>48||pad.right_trigger>48||stick(pad.lx).abs()>0.4||stick(pad.ly).abs()>0.4||stick(pad.rx).abs()>0.4||stick(pad.ry).abs()>0.4) {crate::input::note_pad();}
     MAP_CONFIRM.with(|state|state.borrow_mut().update(found&&map,found&&pad.buttons&0x1000!=0));
     io.backend_flags.set(hudhook::imgui::BackendFlags::HAS_GAMEPAD,found);
     for (key,mask) in [(Key::GamepadDpadUp,1),(Key::GamepadDpadDown,2),(Key::GamepadDpadLeft,4),(Key::GamepadDpadRight,8),(Key::GamepadFaceDown,0x1000),(Key::GamepadFaceRight,0x2000),(Key::GamepadFaceLeft,0x4000),(Key::GamepadFaceUp,0x8000),(Key::GamepadBack,0x20),(Key::GamepadL1,0x100),(Key::GamepadR1,0x200)] {
@@ -1014,6 +1016,8 @@ fn feed_pad(io:&mut Io,pad:&Gamepad,found:bool,map:bool) {
         let button=|mask|if pad.buttons&mask!=0 {1.0}else{0.0};
         let x=stick(pad.lx)+button(8)-button(4);
         let y= -stick(pad.ly)+button(2)-button(1);
+        //[fix] 地图上一直要箭头：右摇杆/十字键在推虚拟指针，跟鼠标一样算。
+        crate::input::note_mouse();
         let point=MAP_POINTER.with(|state|state.borrow_mut().step(true,crate::input::desktop_pointer(),io.mouse_pos,io.display_size,[x,y],io.delta_time));
         if let Some(point)=point {io.add_mouse_pos_event(point);}
         let scroll=stick(pad.ry)+button(0x100)-button(0x200);

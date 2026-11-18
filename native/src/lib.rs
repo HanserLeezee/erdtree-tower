@@ -3,7 +3,7 @@ use std::{
     path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
     sync::{LazyLock, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use eldenring::{
@@ -269,10 +269,12 @@ impl ImguiRenderLoop for TowerPreview {
         let player_present = SNAPSHOT.lock().is_ok_and(|snapshot| snapshot.is_some());
         let capture = runtime::with_view(|view| input::capture_route(self.visible, player_present, view)).unwrap_or(false);
         input::CAPTURE.store(capture, Ordering::Relaxed);
-        ctx.io_mut().mouse_draw_cursor = capture;
+        input::watch_pointer();
+        if {let io=ctx.io();io.mouse_down[0]||io.mouse_wheel!=0.0||io.mouse_delta[0]!=0.0||io.mouse_delta[1]!=0.0} {input::note_mouse();}
         let map=runtime::with_view(|view|view.run.as_ref().is_some_and(|run|
             matches!(run.phase,Phase::Map)&&!run.contract_pending())).unwrap_or(false);
         reward_ui::poll_pad(ctx.io_mut(),capture&&input::active(),map);
+        ctx.io_mut().mouse_draw_cursor = capture&&input::cursor_arrow();
         let io = ctx.io_mut();
         if capture {
             let mut point = io.mouse_pos;
@@ -588,11 +590,24 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
             log(format!("Game system initialization failed: {error}"));
             return;
         }
-        let task = match CSTaskImp::wait_for_instance(Duration::from_secs(30)) {
-            Ok(task) => task,
-            Err(error) => {
-                log(format!("Game scheduler unavailable: {error}"));
-                return;
+        //[fix] 独立窗口不经过 hudhook 的十余秒阻塞，会在游戏建好 CS 任务单例之前就走这里；
+        //一次性的 wait_for_instance 立刻报 "Could not translate RVA to VA" 就放弃，塔的任务、交谈和交互全部装不上，所以改成重试等它出现。
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut attempt = 1u32;
+        let task = loop {
+            match CSTaskImp::wait_for_instance(Duration::from_secs(1)) {
+                Ok(task) => break task,
+                Err(error) => {
+                    if Instant::now() >= deadline {
+                        log(format!("Game scheduler unavailable: {error}"));
+                        return;
+                    }
+                    if attempt == 1 || attempt % 10 == 0 {
+                        log(format!("Game scheduler not ready (attempt {attempt}): {error}"));
+                    }
+                    attempt += 1;
+                    std::thread::sleep(Duration::from_millis(500));
+                }
             }
         };
         if let Err(error)=unsafe {seamless_revival::install()} {log(format!("PARTY_REVIVE unavailable: {error}"));}
