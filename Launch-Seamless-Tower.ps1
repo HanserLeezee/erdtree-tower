@@ -294,7 +294,14 @@ $environment = @{
     ERDTREE_TOWER_PARTY=$PartyConfig
     ERDTREE_TOWER_SEAMLESS_ENTRY='1'; ERDTREE_TOWER_PREVIEW='1'; ERDTREE_TOWER_SEAMLESS_PROBE='0'
     ERDTREE_TOWER_LOG_DIR=$runtime
+    # 给启动器设过兼容模式或“以管理员身份运行”时，Windows 会把兼容层传给所有子进程；
+    # 兼容垫片会挂钩内存分配，和加载器挂钩分配器冲突（直接运行 me3 不经过启动器就没有这个变量）
+    __COMPAT_LAYER=''
 }
+$names = @([Environment]::GetEnvironmentVariables().Keys | ForEach-Object {[string]$_})
+$duplicates = @($names | Group-Object {$_.ToUpperInvariant()} | Where-Object {$_.Count -gt 1} | ForEach-Object {$_.Name})
+Write-Host ("Launch environment: compat_layer=" + $(if ($env:__COMPAT_LAYER) {$env:__COMPAT_LAYER} else {'none'}) +
+    " stdout_redirected=" + [Console]::IsOutputRedirected + " duplicate_names=" + $(if ($duplicates.Count) {$duplicates -join ','} else {'none'}))
 $previous = @{}
 $roomGuard = $null
 try {

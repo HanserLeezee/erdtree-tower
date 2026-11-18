@@ -161,6 +161,7 @@ static class CustomSpiritAssets {
         if(oodle) {
             SpiritBalanceAssets.Patch(output,output,input);
             SpiritVisualAssets.Patch(output,output);
+            SpiritNetAssets.Patch(output,output);
             SpiritModelAssets.Patch(input,output);
         }
         Console.WriteLine($"Verified {specs.Length} custom spirits × 40 levels, friendly NPC/AI, no drops, summon references and texts; model sources found across {arenaModels.Count} maps, existing rows preserved. Live behavior not yet tested.");

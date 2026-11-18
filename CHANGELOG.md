@@ -1,5 +1,19 @@
 # 更新记录
 
+## 2026-11-19 联机领奖励闪退：自制骨灰改用原版骨灰的联机设定
+
+- 反馈：联机进传送门、奖励界面出现后约 2 秒闪退，eldenring.exe+0x4b93e2 读空指针（无缝联机线程遍历角色时某个对象的模块为空），崩时队友在场的是自制骨灰「剑狮」；同局胜利时没人倒地、没有双灵。
+- 对比全部原版骨灰：原版 106 种的多人修正（-1）、算 PvP 伤害（1）、房主同步（0）、npcType（0）完全一致；98 种自制骨灰沿用了敌人的值（多人修正 100–400 / 10000100–10000300、不算 PvP、13 种房主同步、14 种 npcType=1），45 种还带着金眼掉落几率 5261/5262、约 40 种带爬塔敌人强度档 9641xxx。
+- 新增 `SpiritNetAssets`（`spirit-net-patch` / `spirit-net-verify`，Linux 可跑，也接在 `custom-spirit-patch` 后面）：把这些字段统一成原版友军模板 NpcParam 121000000（含 networkWarpDist 72），删掉金眼几率与敌人强度档；模型自己的动作效果不动。regulation.bin 已重新生成，net/visual 两个 verify 通过。
+- 是否根治需要联机实测（带自制骨灰打完一场进传送门领奖励）。顺带：骨灰不再吃敌人的强度档倍率，强度只由骨灰自己的等级效果决定。
+
+## 2026-11-18 个别电脑上启动器拉起游戏即崩（hooking system allocator）
+
+- 现象：点「开始游戏 / 加入」约 1–2 秒后 eldenring.exe 0xC0000005，ME3 停在挂钩系统内存分配器，爬塔与无缝 DLL 都还没加载。对方实测：同一条 me3 命令加 `--disable-arxan true`、在带控制台的进程里运行才稳定。
+- `Tower-Loader.ps1`：ME3 加上 `--disable-arxan true`（与测试入口 `Launch-Tower.ps1` 一致，`ERDTREE_TOWER_LOADER_STABILITY=0` 可关）；改用 `Start-Process -WindowStyle Hidden` 启动，让 me3 有自己的控制台，不再继承启动器无窗口、重定向输出的 PowerShell。启动日志多记一行 `ME3 arguments:`。
+- `Launch-Seamless-Tower.ps1`：启动加载器前清掉继承的 `__COMPAT_LAYER`（退出后恢复），并在启动日志记一行兼容层 / 输出是否重定向 / 大小写重复的环境变量名（只记名字）。
+- 待对方电脑实测；脚本改动发版时需要重新签名。
+
 ## 2026-11-16 荷莱·露共享技能特效
 
 - 荷莱·露的动作依赖葛孚雷 c4720 的共享特效包。将当前公共资源缺少的 23 个原版 FXR、对应清单及地裂模型补入公共特效包，供其在爬塔场地单独出场时使用。

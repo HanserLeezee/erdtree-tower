@@ -8,6 +8,7 @@ if(args.Length==4&&args[3] is "spirit-model-patch" or "spirit-model-verify") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     SpiritModelAssets.Patch(args[2],args[1],args[3]=="spirit-model-verify");return;
 }
+if(args.Length==4&&args[3] is "spirit-net-patch" or "spirit-net-verify") {SpiritNetAssets.Patch(args[2],args[1],args[3]=="spirit-net-verify");return;}
 if(args.Length==4&&args[3] is "spirit-visual-patch" or "spirit-visual-verify") {SpiritVisualAssets.Patch(args[2],args[1],args[3]=="spirit-visual-verify");return;}
 if(args.Length==4&&args[3]=="spirit-visual-inspect") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));

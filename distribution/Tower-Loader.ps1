@@ -132,7 +132,17 @@ function Invoke-TowerLoader([string]$Root,[string]$Loader,[string]$GameExe,[stri
     Write-Host "Tower loader: $Loader"
     Write-Output "TOWER_PROGRESS|starting|0|0|正在启动游戏|$Loader 加载器正在准备游戏进程"
     if($Loader -eq 'ME3'){
-        & $exe launch --exe $GameExe --profile $Profile --auto-detect --online false --skip-steam-init true
+        # 有的电脑上 me3 必须同时满足两点，否则游戏在 hooking system allocator 时 0xC0000005：
+        # 关闭 Arxan（与测试入口 Launch-Tower.ps1 相同，ERDTREE_TOWER_LOADER_STABILITY=0 可关），
+        # 以及有自己的控制台——启动器用无窗口、重定向输出的 PowerShell 拉起脚本，直接 & 调用会让 me3 继承这个环境
+        $stability = if ($env:ERDTREE_TOWER_LOADER_STABILITY -ne '0') { @('--disable-arxan','true') } else { @() }
+        $meArguments = @('launch','--exe',('"'+$GameExe+'"'),'--profile',('"'+$Profile+'"'),'--auto-detect','--online','false','--skip-steam-init','true') + $stability
+        Write-Host ("ME3 arguments: " + ($meArguments -join ' '))
+        $process = Start-Process -FilePath $exe -ArgumentList $meArguments -PassThru -WindowStyle Hidden -WorkingDirectory (Split-Path -Parent $exe)
+        $handle = $process.Handle
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) {throw "ME3 loader exited with code $($process.ExitCode)"}
+        return
     }else{
         $ini=ConvertTo-TowerYafsmlConfig ([IO.File]::ReadAllText($Profile)) (Split-Path -Parent $Profile)
         $config=Join-Path (Split-Path -Parent $Profile) 'yafsml.launch.ini'
