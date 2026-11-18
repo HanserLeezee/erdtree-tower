@@ -3,7 +3,7 @@ use fromsoftware_shared::FromStatic;
 use hudhook::mh::{MH_EnableHook, MhHook};
 use std::{
     ffi::c_void,
-    sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicI64, AtomicIsize, AtomicU64, AtomicUsize, Ordering},
 };
 
 pub static CAPTURE: AtomicBool = AtomicBool::new(false);
@@ -188,6 +188,27 @@ struct DesktopPoint {x:i32,y:i32}
 pub fn desktop_pointer()->Option<[i32;2]> {
     let mut point=DesktopPoint::default();
     (unsafe{GetCursorPos(&mut point)}!=0).then_some([point.x,point.y])
+}
+
+//[fix] 手柄玩家不该看见残留箭头：按最后动过的设备决定画不画光标（原本界面一开就恒画）。
+static PAD_AT: AtomicU64 = AtomicU64::new(0);
+static MOUSE_AT: AtomicU64 = AtomicU64::new(0);
+static CLOCK: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+fn stamp()->u64 {CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64}
+pub fn note_pad() {PAD_AT.store(stamp(),Ordering::Relaxed);}
+pub fn note_mouse() {MOUSE_AT.store(stamp(),Ordering::Relaxed);}
+pub fn cursor_arrow()->bool {
+    let pad=PAD_AT.load(Ordering::Relaxed);
+    let mouse=MOUSE_AT.load(Ordering::Relaxed);
+    //[fix] 还没收到任何输入时不要凭空判定：跟设置里选的提示设备走（手柄提示=先不画，键鼠提示=画）。
+    if pad==mouse {!crate::pad::using_pad()} else {mouse>pad}
+}
+pub fn watch_pointer() {
+    static LAST: AtomicI64 = AtomicI64::new(i64::MIN);
+    let Some(point)=desktop_pointer() else {return;};
+    let packed=((point[0] as i64 & 0xffff_ffff)<<32)|(point[1] as i64 & 0xffff_ffff);
+    let old=LAST.swap(packed,Ordering::Relaxed);
+    if old!=i64::MIN&&old!=packed {note_mouse();}
 }
 
 pub fn active() -> bool {
