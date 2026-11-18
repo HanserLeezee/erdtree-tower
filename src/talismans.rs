@@ -17,13 +17,30 @@ static GROUPS:LazyLock<Vec<Vec<usize>>>=LazyLock::new(||{
 });
 pub fn lookup(id:u32)->Option<&'static Item>{crate::talisman_passives::variant(id).map(|v|&v.item).or_else(||INDEX.get(&id).map(|i|&CATALOG[*i]))}
 pub fn tier(id:u32)->Option<u8>{crate::talisman_passives::variant(id).map(|v|v.tier).or_else(||INDEX.get(&id).map(|i|VARIANTS[*i].tier))}
+const TRIGGER_KINDS:[&str;24]=["Gravity Hammer","beast claw","black flame","chilling circle","chilly breath","death ground",
+    "draconic discharge","extracting spirit","extracting vitality","flame fell God","glintstone pebble","glintstone shards",
+    "greater phalanx guard","immortal will","lava exhaust","light rings","lighting call","magical ground","magma ball",
+    "phalanx guard","sky spear assault","stomping dragon","summoners grace","thorns"];
+static TRIGGERS:LazyLock<Vec<&'static Vec<usize>>>=LazyLock::new(||GROUPS.iter().filter(|g|TRIGGER_KINDS.contains(&VARIANTS[g[0]].kind)).collect());
+fn triggered(run:&Run,seed:u64,repeat:bool,min:u8)->Option<u32> {
+    let floor=min.min(3);let mut value=crate::mix(seed^0x726172697479)%100;let mut tier=3;
+    for (i,odds) in crate::affixes::quality_odds(run).into_iter().enumerate() {if value<u64::from(odds){tier=i as u8;break;}value-=u64::from(odds);}
+    let eligible:Vec<_>=TRIGGERS.iter().filter(|g|g.iter().any(|&i|VARIANTS[i].tier>=floor&&(repeat||!run.claimed_items.contains(&VARIANTS[i].id)))).collect();
+    if eligible.is_empty(){return None;}
+    let group=eligible[(seed>>8) as usize%eligible.len()];
+    let available=||group.iter().map(|&i|&VARIANTS[i]).filter(|v|v.tier>=floor&&(repeat||!run.claimed_items.contains(&v.id)));
+    available().find(|v|v.tier>=tier.max(floor)).or_else(||available().last()).map(|v|v.id)
+}
 pub fn roll(run:&Run,original:u32,entropy:u64,repeat:bool)->u32 {
     roll_min(run,original,entropy,repeat,0)
 }
 pub fn roll_min(run:&Run,original:u32,entropy:u64,repeat:bool,min:u8)->u32 {
     if !run.talisman_affixes||original>>28!=2||lookup(original).is_some(){return original;}
-    if run.talisman_passives&&let Some(id)=crate::talisman_passives::roll(run,original,entropy,repeat,min){return id;}
     let seed=crate::mix(run.reward_seed()^entropy^u64::from(original)^0x74616c69736d616e);
+    if run.talisman_passives {
+        if seed%2==1&&let Some(id)=triggered(run,seed,repeat,min){return id;}
+        if let Some(id)=crate::talisman_passives::roll(run,original,entropy,repeat,min){return id;}
+    }
     if seed%2==0{return original;}
     let start=(seed>>8) as usize%GROUPS.len();
     let tier=match crate::mix(seed^0x726172697479)%100 {0..=44=>0,45..=74=>1,75..=92=>2,_=>3};

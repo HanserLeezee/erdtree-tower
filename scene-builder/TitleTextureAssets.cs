@@ -3,9 +3,10 @@ using System.Xml.Linq;
 using SoulsFormats;
 
 static class TitleTextureAssets {
-    static readonly string[] Art=["title","loading1","loading2","loading3","tips1","tips2"];
 
     public static void Build(string game,string output,string cache) {
+        var Art=Directory.GetFiles(Path.Combine(output,"theme-textures"),"*.dds").Select(Path.GetFileNameWithoutExtension).OrderBy(n=>n,StringComparer.Ordinal).ToArray();
+        if(Art.Length==0||Art.Any(n=>!System.Text.RegularExpressions.Regex.IsMatch(n!,@"^(title|loading[1-9][0-9]*|tips[1-9][0-9]*)$")))throw new Exception("Invalid theme texture list");
         var paths=(from quality in new[]{"hi","low"} from suffix in new[]{"tpf","sblytbnd"} select $"/menu/{quality}/01_common.{suffix}.dcx").ToArray();
         string Cached(string path)=>Path.Combine(cache,path.TrimStart('/'));
         foreach(var archive in new[]{"DLC","Data0","Data1","Data2","Data3"}) {
@@ -23,8 +24,10 @@ static class TitleTextureAssets {
             var originalTpf=Cached($"/menu/{quality}/01_common.tpf.dcx");
             var originalLayout=Cached($"/menu/{quality}/01_common.sblytbnd.dcx");
             var tpf=TPF.Read(originalTpf);var binder=BND4.Read(originalLayout);
+            var replaced=Art.Select(n=>"SB_TowerTheme_"+n).ToHashSet();
+            tpf.Textures.RemoveAll(t=>replaced.Contains(t.Name));
+            binder.Files.RemoveAll(f=>replaced.Contains(Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))));
             var textures=tpf.Textures.ToArray();var layouts=binder.Files.ToArray();
-            if(textures.Any(t=>t.Name.StartsWith("SB_TowerTheme_")))throw new Exception("Use unmodified game texture archives as the cache");
             var template=layouts[0];int id=layouts.Max(f=>f.ID)+1;
             foreach(var name in Art) {
                 string atlas="SB_TowerTheme_"+name, resource="MENU_TowerTheme_"+name;

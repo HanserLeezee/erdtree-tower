@@ -5,6 +5,17 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scene-builder'))
 from loading_rotation import patch_source
 
 class LoadingRotation(unittest.TestCase):
+    def test_extended_rotation_preserves_frame_interval_and_rebases_once(self):
+        source='      public function MainTimeline() { super(); addFrameScript(88,this.frame89,119,this.frame120); }'
+        result=patch_source(source,7,42)
+        self.assertIn('cycle.totalFrames != 10080',result)
+        self.assertIn('tip * 240 + 1',result)
+        self.assertIn('int(Math.random() * 6) * 7',result)
+        self.assertEqual(patch_source(result,7,42,True),result)
+        for previous in range(7):
+            frames={(bg+tip*7)*240+1 for bg in range(7) if bg!=previous for tip in range(6)}
+            self.assertEqual(len(frames),36)
+            self.assertTrue(all(1<=f<=10080 and (f-1)//240%7!=previous for f in frames))
     def test_preserves_native_loop_and_exit_and_adds_fade_in_callback(self):
         source='      public function MainTimeline() { super(); addFrameScript(88,this.frame89,119,this.frame120); }'
         result=patch_source(source)

@@ -28,11 +28,10 @@ static class PortalArchAssets {
         MusicAssets.RefreshArenaManifest(input,output);
         Console.WriteLine($"Removed upright flow from {count} portals; native rune, ground light, map geometry and other events preserved");
     }
-    public static void Patch(string game,string input,string output) {
+    public static void Patch(string game,string input,string output,bool mapOnly=false) {
         if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging required");
-        PortalVisualAssets.Build(game,input,output);
-        PortalRuneFfx.Build(input,output);
-        var effects=BND4.Read(Path.Combine(output,PortalRuneFfx.FileName));
+        if(!mapOnly) {PortalVisualAssets.Build(game,input,output);PortalRuneFfx.Build(input,output);}
+        var effects=BND4.Read(Path.Combine(mapOnly?input:output,PortalRuneFfx.FileName));
         if(PortalRuneFfx.Enabled)throw new Exception("Experimental portal FXRs must remain disabled");
         foreach(int id in new[]{AuraFfxAssets.Gold,PortalReveal.RuneEffect})foreach(string extension in new[]{"fxr","ffxreslist"})
             if(!effects.Files.Any(f=>f.Name.EndsWith($"f{id:D9}.{extension}")))throw new Exception($"Missing portal dependency {id}.{extension}");
@@ -48,7 +47,7 @@ static class PortalArchAssets {
             var baseline=MSBE.Read(Path.Combine(input,mapName));var map=MSBE.Read(Path.Combine(input,mapName));
             var original=EMEVD.Read(Path.Combine(input,eventName));var events=EMEVD.Read(Path.Combine(input,eventName));
             PortalReveal.ClearMap(map,Portal);
-            map.Parts.Assets.Single(a=>a.EntityID==Portal).Position=new(float.Parse(p[3],CultureInfo.InvariantCulture),float.Parse(p[4],CultureInfo.InvariantCulture)+.03f,float.Parse(p[5],CultureInfo.InvariantCulture));
+            map.Parts.Assets.Single(a=>a.EntityID==Portal).Position=PortalReveal.Position(p[0],new(float.Parse(p[3],CultureInfo.InvariantCulture),float.Parse(p[4],CultureInfo.InvariantCulture)+.03f,float.Parse(p[5],CultureInfo.InvariantCulture)));
             PortalReveal.AddRegion(map,Portal);PortalReveal.Apply(events,Portal);
             string mapOut=Path.Combine(output,mapName),eventOut=Path.Combine(output,eventName);
             Directory.CreateDirectory(Path.GetDirectoryName(mapOut)!);Directory.CreateDirectory(Path.GetDirectoryName(eventOut)!);map.Write(mapOut);events.Write(eventOut);
@@ -67,10 +66,10 @@ static class PortalArchAssets {
             foreach(var (region,index) in baseline.Regions.SFX.Select((r,i)=>(r,i)).Where(v=>VisualRegion(v.r.EntityID)))check.Regions.SFX.Insert(index,(MSBE.Region.SFX)region.DeepCopy());
             check.Models.Assets.RemoveAll(m=>!baseline.Models.Assets.Any(b=>b.Name==m.Name));
             if(!check.Write().SequenceEqual(baseline.Write()))throw new Exception("Unrelated map content changed");
-            Console.WriteLine($"{p[0]}: ornate arch, intact native rune, original interaction and unrelated content verified");count++;
+            Console.WriteLine($"{p[0]}: center effect only, original interaction and unrelated content verified");count++;
         }
         if(count==0)throw new Exception("No built arenas found");
-        MusicAssets.RefreshArenaManifest(input,output);PortalVisualAssets.Manifest(output);Console.WriteLine($"Verified ornate portals in {count} arenas");
+        MusicAssets.RefreshArenaManifest(input,output);if(!mapOnly)PortalVisualAssets.Manifest(output);Console.WriteLine($"Verified effect-only portals in {count} arenas");
     }
     static byte[] EventBytes(EMEVD.Event e)=>new EMEVD{Events=[e]}.Write();
 }

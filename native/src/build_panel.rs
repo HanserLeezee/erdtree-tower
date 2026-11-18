@@ -147,8 +147,8 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, icon: &mut dyn FnMut(u32) -> Option
             heading(ui, s, "誓约", Some(oaths.len()).filter(|n| *n > 0));
             if oaths.is_empty() {empty(ui, s, "尚未立下誓约");}
             for oath in oaths {
-                let (boon, bane) = if oath.level == 0 {(oath.kind.boon().to_owned(), oath.kind.bane())} else {(oath.kind.boon_at(oath.level), oath.kind.bane_at())};
-                entry(ui, s, Badge::Level(LEVELS[usize::from(oath.level.min(3))]), oath.kind.name(), WHITE, &[(boon.replace('\n', "，"), BOON), (format!("代价：{bane}"), RED)]);
+                let boon = if oath.level == 0 {oath.kind.boon().to_owned()} else {oath.kind.boon_at(oath.level)};
+                entry(ui, s, Badge::Level(LEVELS[usize::from(oath.level.min(3))]), oath.kind.name(), WHITE, &[(boon.replace('\n', "，"), BOON)]);
             }
             heading(ui, s, "余烬", Some(run.embers.len()).filter(|n| *n > 0));
             if run.embers.is_empty() {empty(ui, s, "还没有余烬：普通战与精英战的奖励里可能出现");}

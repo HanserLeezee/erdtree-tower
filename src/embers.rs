@@ -123,9 +123,9 @@ impl Ember {
     // Retained only for old saves and archived runs.
     pub fn retired(self)->bool {matches!(self,Self::Stride|Self::SpiritTwin)}
     pub fn index(self)->usize {match self {Self::Stride=>36,Self::FrostShackle=>37,Self::Tent=>38,Self::Capture=>39,Self::Glintblade=>40,Self::Mind=>41,_=>Self::ALL.iter().position(|e|*e==self).unwrap()}}
-    /// 奖励卡徽记（reward-icons/990000+n）：后来加的几枚有了自己的徽记；游戏原生拾取提示的图标仍按 icon_index 借用（菜单图集要在 Windows 上重建）
-    pub fn emblem_index(self)->usize {match self {Self::FrostShackle|Self::Tent|Self::Capture|Self::Glintblade|Self::Mind=>self.index(),_=>self.icon_index()}}
-    pub fn icon_index(self)->usize {match self {Self::FrostShackle=>Self::Frost.index(),Self::Tent=>Self::Echo.index(),Self::Capture=>Self::SpiritCommand.index(),Self::Glintblade=>Self::Glintstone.index(),Self::Mind=>Self::Meditation.index(),_=>self.index()}}
+    /// 奖励卡徽记与原生菜单图集共用稳定编号，保留已退役余烬的编号。
+    pub fn emblem_index(self)->usize {self.icon_index()}
+    pub fn icon_index(self)->usize {self.index()}
     pub fn name(self)->&'static str {match self {
         Self::FrostShackle=>"寒霜枷锁",
         Self::Tent=>"帐篷",
@@ -163,7 +163,7 @@ impl Ember {
         Self::SpiritFeast=>format!("敌人倒下时\n召唤物回复 {SPIRIT_FEAST_HEAL_PERCENT}% 生命\n你回复 {SPIRIT_FEAST_FP_PERCENT}% 专注"),
         Self::SpiritCommand=>format!("召唤物造成的伤害 +{SPIRIT_COMMAND_PERCENT}%\n受到的伤害 -{SPIRIT_COMMAND_PERCENT}%"),
         Self::SpiritTwin=>"每场战斗可以再召唤一次骨灰\n两组召唤物同时在场\n胜利时各组存活则返还骨灰".into(),
-        Self::SoulEater=>format!("击倒得魂：小怪{} 精英{} Boss{}\n每 {SOUL_POINTS} 魂一层，每层攻击 +{SOUL_STEP_PERCENT}%\n层数不设上限，整局保留",SOUL_KILL[0],SOUL_KILL[1],SOUL_KILL[2]),
+        Self::SoulEater=>format!("击倒得魂：小怪{} 精英{} Boss{}\n联机造成过伤害即可参与击杀得魂\n每 {SOUL_POINTS} 魂一层，每层攻击 +{SOUL_STEP_PERCENT}%\n层数不设上限，整局保留",SOUL_KILL[0],SOUL_KILL[1],SOUL_KILL[2]),
         Self::Chain=>format!("每次致命一击叠一层，每关最多 {CHAIN_ROOM_LIMIT} 层\n每层致命一击伤害 +{CHAIN_STEP_PERCENT}%\n总层数不设上限，整局保留"),
         Self::Godslayer=>format!("每赢一场精英战或 Boss 战叠一层\n每层最大生命 +{SLAYER_HP_PERCENT}%、攻击 +{SLAYER_ATTACK_PERCENT}%\n层数不设上限，整局保留"),
         Self::SpiritKeeper=>format!("召唤物在场时击倒敌人叠一层\n每层召唤物伤害 +{KEEPER_ATTACK_PERCENT}%\n受到的伤害 -{KEEPER_CUT_PERCENT}%（逐层乘算）\n层数不设上限，整局保留"),
@@ -272,6 +272,8 @@ pub struct StrikeRequest {pub seq:u32,pub strike:Strike}
 pub enum Gain {
     /// 击倒敌人：rank 0 普通、1 精英、2 Boss；spirit 为召唤物当时在场
     Kill{rank:u8,spirit:bool},
+    /// 联机参与击杀，仅供噬魂者获得魂值。
+    Assist{rank:u8},
     Critical,
     /// 赢下一场精英战或 Boss 战
     Slain,
@@ -344,6 +346,7 @@ impl Stacks {
         let before=*self;
         let has=|e|held.contains(&e);
         match event {
+            Gain::Assist{rank}=>if has(Ember::SoulEater) {self.souls=self.souls.saturating_add(SOUL_KILL[usize::from(rank.min(2))]);},
             Gain::Kill{rank,spirit}=>{
                 if has(Ember::SoulEater) {self.souls=self.souls.saturating_add(SOUL_KILL[usize::from(rank.min(2))]);}
                 if has(Ember::SpiritKeeper)&&spirit {self.keeper=self.keeper.saturating_add(1);}
@@ -455,16 +458,16 @@ mod tests {
     fn frost_shackle_keeps_existing_ids_and_is_universal_epic() {
         use super::*;
         assert_eq!(Ember::Battlemage.index(),35);assert_eq!(Ember::Stride.index(),36);
-        assert_eq!(Ember::FrostShackle.index(),37);assert_eq!(Ember::FrostShackle.icon_index(),Ember::Frost.index());
+        assert_eq!(Ember::FrostShackle.index(),37);assert_eq!(Ember::FrostShackle.icon_index(),37);
         assert_eq!(Ember::FrostShackle.quality(),2);assert!(Ember::FrostShackle.classes().is_none());
         assert_eq!(Ember::ALL.iter().map(|e|e.index()).collect::<std::collections::HashSet<_>>().len(),Ember::ALL.len());
         let held:Vec<_>=Ember::ALL.into_iter().filter(|e|*e!=Ember::FrostShackle).collect();
         assert_eq!(offer(1,&held,false,false,None),Some(Ember::FrostShackle));
     }
     #[test]
-    fn late_embers_use_their_own_emblems_but_borrow_native_icons() {
+    fn late_embers_share_their_own_emblems_with_native_icons() {
         use super::*;
-        for e in [Ember::FrostShackle,Ember::Tent,Ember::Capture,Ember::Glintblade,Ember::Mind] {assert_eq!(e.emblem_index(),e.index());assert_ne!(e.icon_index(),e.index());}assert_eq!(Ember::Chain.emblem_index(),Ember::Chain.index());
+        for e in [Ember::FrostShackle,Ember::Tent,Ember::Capture,Ember::Glintblade,Ember::Mind] {assert_eq!(e.emblem_index(),e.index());assert_eq!(e.icon_index(),e.index());}assert_eq!(Ember::Chain.emblem_index(),Ember::Chain.index());
     }
     #[test]
     fn mind_adds_three_times_max_fp_as_a_rate_of_base_hp() {
@@ -477,7 +480,7 @@ mod tests {
     #[test]
     fn glintblade_is_an_astrologer_epic_with_a_new_id() {
         use super::*;
-        assert_eq!(Ember::Glintblade.index(),40);assert_eq!(Ember::Glintblade.icon_index(),Ember::Glintstone.index());
+        assert_eq!(Ember::Glintblade.index(),40);assert_eq!(Ember::Glintblade.icon_index(),40);
         assert_eq!(Ember::Glintblade.quality(),2);assert_eq!(Ember::Glintblade.classes(),Some(&[crate::Class::Astrologer][..]));
         assert_eq!(Ember::ALL.iter().map(|e|e.index()).collect::<std::collections::HashSet<_>>().len(),Ember::ALL.len());
     }
@@ -498,7 +501,7 @@ mod tests {
     fn tent_appends_a_new_id_and_is_universal_epic() {
         use super::*;
         assert_eq!(Ember::FrostShackle.index(),37);assert_eq!(Ember::Tent.index(),38);
-        assert_eq!(Ember::Tent.icon_index(),Ember::Echo.index());
+        assert_eq!(Ember::Tent.icon_index(),38);
         assert_eq!(Ember::Tent.quality(),2);assert!(Ember::Tent.classes().is_none());
         assert_eq!(Ember::ALL.iter().map(|e|e.index()).collect::<std::collections::HashSet<_>>().len(),Ember::ALL.len());
     }

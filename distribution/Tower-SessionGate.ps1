@@ -23,7 +23,6 @@ function Add-TowerSessionGate([string]$Profile) {
 [[natives]]
 id = "tower-session-gate"
 path = 'SeamlessCoop/Tower.SeamlessGate.dll'
-initializer = { function = "TowerGateInitialize" }
 load_before = [{ id = "ersc.dll", optional = false }]
 '@
 }

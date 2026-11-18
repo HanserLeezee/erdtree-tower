@@ -38,8 +38,8 @@ mod tests {
     #[test]
     fn new_rolls_keep_the_base_and_floor_while_old_runs_stay_unchanged() {
         let mut run=Run::new(8,crate::Class::Samurai);let id=0x20000000|1000;
-        let high=crate::affixes::roll_min(&run,id,5,false,3).unwrap();assert_eq!(variant(high).unwrap().tier,3);assert_eq!(base(high),id);
-        assert_eq!(high,crate::affixes::roll_min(&Run::decode(&run.encode().unwrap()).unwrap(),id,5,false,3).unwrap());
+        let high=roll(&run,id,5,false,3).unwrap();assert_eq!(variant(high).unwrap().tier,3);assert_eq!(base(high),id);
+        assert_eq!(high,roll(&Run::decode(&run.encode().unwrap()).unwrap(),id,5,false,3).unwrap());
         run.talisman_passives=false;assert!(variant(crate::talismans::roll(&run,id,5,false)).is_none());
     }
 }

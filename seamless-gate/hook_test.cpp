@@ -7,7 +7,10 @@ int main() {
     auto resolve = reinterpret_cast<Resolve>(GetProcAddress(steam, "SteamInternal_FindOrCreateUserInterface")); assert(resolve);
     auto unwrapped = resolve(1, "SteamMatchMaking009"); assert(unwrapped);
     auto adapter = LoadLibraryW(L".\\Tower.SeamlessGate.dll"); assert(adapter);
-    auto initialize = reinterpret_cast<bool(*)()>(GetProcAddress(adapter, "TowerGateInitialize")); assert(initialize && initialize());
+    auto initialize = reinterpret_cast<bool(*)(void*, void**)>(GetProcAddress(adapter, "modengine_ext_init"));
+    void* extension = nullptr;
+    assert(initialize && initialize(nullptr, &extension));
+    assert(extension == nullptr);
     assert(resolve(1, "SteamMatchMaking009") == unwrapped); // Non-ERSC callers are unchanged.
     auto ersc = LoadLibraryW(L".\\ersc.dll"); assert(ersc);
     auto test = reinterpret_cast<bool(*)()>(GetProcAddress(ersc, "ExerciseGate")); assert(test && test());

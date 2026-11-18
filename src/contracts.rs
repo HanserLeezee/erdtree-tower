@@ -19,18 +19,10 @@ impl Kind {
         Self::Blood=>"生命低于 50%\n伤害 +25%",
         Self::Ascetic=>"胜利恢复最大生命 10%\n最大专注 15%",
     }}
-    pub fn bane(self)->&'static str {match self {
-        Self::Steel|Self::Hunter=>"战技伤害 -20%",Self::Breaker=>"战技专注消耗 +25%",
-        Self::Combo=>"受到伤害 +10%",Self::Guard=>"动作精力消耗 +20%",
-        Self::Mystic=>"法术专注消耗 +20%",
-        Self::Execution=>"非致命攻击伤害 -10%",
-        Self::Feather=>"受到物理伤害 +10%",
-        Self::Blood=>"红圣杯瓶恢复量 -20%",
-        Self::Ascetic=>"红、蓝圣杯瓶恢复量 -35%",
-    }}
+    pub fn bane(self)->&'static str {""}
     pub fn hint(self)->&'static str {match self {
         Self::Steel=>"抓住敌人硬直，以蓄力重击换取爆发。",
-        Self::Breaker=>"以跳跃攻击接近敌人，减少使用战技。",
+        Self::Breaker=>"以跳跃攻击接近敌人并打出爆发。",
         Self::Combo=>"完整打出连段才获得增益；普通连击中途没有加成。",
         Self::Guard=>"格挡后重击反击，注意为后续闪避保留精力。",
         Self::Mystic=>"适配装备附送基础攻击法术；自行装备并记忆。",
@@ -55,10 +47,7 @@ impl Kind {
             Self::Ascetic=>{let (hp,fp)=ASCETIC[l];format!("胜利恢复最大生命 {hp}%\n最大专注 {fp}%")},
         }
     }
-    /// 新规则下的代价：不随等级加重
-    pub fn bane_at(self)->&'static str {match self {
-        Self::Combo=>"受到伤害 +5%",Self::Guard=>"动作精力消耗 +10%",_=>self.bane(),
-    }}
+    pub fn bane_at(self)->&'static str {""}
 }
 // 誓约 I–III 级的增益（%）。I 级不变，II、III 级削弱过一次（原来 II、III 级分别约为 I 级的 1.6 倍、2.3 倍）；
 // 参数里的倍率在 scene-builder/OathAssets.cs，两边一起改

@@ -69,6 +69,7 @@ static class AffixTextFix {
     // 之后追加的 Boss（名称序号 140 起，追忆与 DLC）：序号 144 起的新组合名称放在第三段，写好后加入第三个标记（见 src/boss_affixes.rs）
     public const int LateBossFirst=140,BarNameThird=9740000,BarNameThirdStride=64,BarMarkerV3=9620097;
     public const int PoolBarNameFirst=98000000,PoolBarNameStride=256,BarMarkerV4=9620100;
+    public const int PreAdaptiveCombos=215,BarNameAdaptive=9750000,BarNameAdaptiveStride=256,BarMarkerV5=9620101;
     // 物品名颜色标签测试：把爬塔里用不到的原版道具“饶舌头颅”（2207）的名字换成带颜色标签的文字，调试菜单可以发放，用来确认原版菜单是否支持标签
     public const int TagTestGoods=2207;
     public const string TagTestGoodsName="<font color=\"#F2C85C\">传说</font>·<font color=\"#68CC92\">灵巧</font>/<font color=\"#EECE6C\">信仰</font>·颜色标签测试";
@@ -82,7 +83,8 @@ static class AffixTextFix {
             var boss=names.GetValueOrDefault(BossNameFirst+index)??throw new Exception($"Missing boss name {BossNameFirst+index}");
             foreach(var combo in combos) {
                 int number=int.Parse(combo[0]);
-                int id=number<LegacyCombos?BarNameFirst+number*BarNameStride+index
+                int id=number>=PreAdaptiveCombos?BarNameAdaptive+(number-PreAdaptiveCombos)*BarNameAdaptiveStride+index
+                    :number<LegacyCombos?BarNameFirst+number*BarNameStride+index
                     :index<BarNameSecondStride?BarNameSecond+(number-LegacyCombos)*BarNameSecondStride+index
                     :BarNameThird+(number-LegacyCombos)*BarNameThirdStride+index-BarNameSecondStride;
                 yield return (id,$"{combo[1]} {boss}");
@@ -98,9 +100,9 @@ static class AffixTextFix {
     static bool AddMarker(string input,string output) {
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
         var file=reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="SpEffectParam");
-        var def=PARAMDEF.XmlDeserialize("work/SoulsRandomizers/diste/Defs/SpEffect.xml");var effects=PARAM.Read(file.Bytes);effects.ApplyParamdef(def);
+        var def=PARAMDEF.XmlDeserialize(Path.Combine(Environment.GetEnvironmentVariable("TOWER_PARAMDEFS")??"work/SoulsRandomizers/diste/Defs","SpEffect.xml"));var effects=PARAM.Read(file.Bytes);effects.ApplyParamdef(def);
         // 第一个标记：最早的组合已有名称；第二个标记：新增词条后的全部组合都已有名称
-        var missing=new[]{(BarMarker,"Tower boss affix bar names marker"),(BarMarkerV2,"Tower boss affix bar names marker v2"),(BarMarkerV3,"Tower boss affix bar names marker v3"),(BarMarkerV4,"Tower elite affix bar names marker v4")}.Where(m=>!effects.Rows.Any(r=>r.ID==m.Item1)).ToList();
+        var missing=new[]{(BarMarker,"Tower boss affix bar names marker"),(BarMarkerV2,"Tower boss affix bar names marker v2"),(BarMarkerV3,"Tower boss affix bar names marker v3"),(BarMarkerV4,"Tower elite affix bar names marker v4"),(BarMarkerV5,"Tower adaptive affix bar names marker v5")}.Where(m=>!effects.Rows.Any(r=>r.ID==m.Item1)).ToList();
         if(missing.Count==0)return false;
         foreach(var (id,name) in missing) {
             var marker=new PARAM.Row(effects.Rows.Single(r=>r.ID==BossAffixAssets.First+95)){ID=id,Name=name};
@@ -112,7 +114,7 @@ static class AffixTextFix {
         var check=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(path);
         foreach(var f in check.Files.Where(f=>f.Name!=file.Name))if(!f.Bytes.SequenceEqual(others[f.Name]))throw new Exception($"Unrelated param changed: {f.Name}");
         var actual=PARAM.Read(check.Files.Single(f=>f.Name==file.Name).Bytes);actual.ApplyParamdef(def);
-        if(actual.Rows.Count!=effects.Rows.Count||new[]{BarMarker,BarMarkerV2,BarMarkerV3,BarMarkerV4}.Any(id=>!actual.Rows.Any(r=>r.ID==id)))throw new Exception("Bar name marker not written");
+        if(actual.Rows.Count!=effects.Rows.Count||new[]{BarMarker,BarMarkerV2,BarMarkerV3,BarMarkerV4,BarMarkerV5}.Any(id=>!actual.Rows.Any(r=>r.ID==id)))throw new Exception("Bar name marker not written");
         return true;
     }
     // 侍从的敌人预览（menu_dlc02 第 33 表，9510000+序号×16+数量）：与 melina-patch 写入的内容相同，新增敌人时补上；
@@ -220,5 +222,28 @@ static class AffixTextFix {
             if(!EquipmentStyleAssets.SameName(check[11].GetValueOrDefault(int.Parse(line[1])),line[4]))throw new Exception($"Weapon name differs from catalog: {line[1]}");
         }
         Console.WriteLine($"Updated {previews} enemy preview names; updated {changed} affix weapon text entries (localized scaling labels, captions fit {CaptionLines} lines) and added {added} bar names (enemies {PoolNameFirst}-{PoolNameFirst+poolNames.Count-1}, {barNames.Count} affix boss titles from {BarNameFirst}){(marker?"; wrote regulation.bin with the affix bar name marker":"")}, removed {dropped} retired spell text entries; all other text unchanged");
+    }
+
+    public static void PatchAdaptive(string input,string output) {
+        if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging output required");
+        const string relative="msg/zhocn/item_dlc02.msgbnd.dcx";
+        var messages=BND4.Read(Path.Combine(input,relative));
+        var file=messages.Files.First(f=>f.Name.Contains("NpcName"));var names=FMG.Read(file.Bytes);
+        var before=names.Entries.ToDictionary(e=>e.ID,e=>e.Text);
+        var expected=AffixBarNames(input,before).Where(p=>p.text.Split(' ')[0].Contains("适应的")).ToDictionary(p=>p.id,p=>p.text);
+        if(expected.Count==0)throw new Exception("Adaptive combo table is missing");
+        foreach(var (id,text) in expected) {
+            var existing=names.Entries.SingleOrDefault(e=>e.ID==id);
+            if(existing!=null&&existing.Text!=text)throw new Exception($"Adaptive name collision: {id}");
+            if(existing==null)names.Entries.Add(new FMG.Entry(id,text));
+        }
+        names.Entries.Sort((a,b)=>a.ID.CompareTo(b.ID));file.Bytes=names.Write();
+        var path=Path.Combine(output,relative);Directory.CreateDirectory(Path.GetDirectoryName(path)!);messages.Write(path);
+        var written=BND4.Read(path);var actual=FMG.Read(written.Files.Single(f=>f.ID==file.ID).Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text);
+        foreach(var (id,text) in before)if(actual.GetValueOrDefault(id)!=text)throw new Exception($"Existing NPC name changed: {id}");
+        foreach(var (id,text) in expected)if(actual.GetValueOrDefault(id)!=text)throw new Exception($"Adaptive NPC name missing: {id}");
+        foreach(var other in messages.Files.Where(f=>f.ID!=file.ID))if(!written.Files.Single(f=>f.ID==other.ID).Bytes.SequenceEqual(other.Bytes))throw new Exception($"Unrelated FMG changed: {other.ID}");
+        AddMarker(input,output);
+        Console.WriteLine($"Verified {expected.Count} adaptive boss/elite names; all existing names and unrelated FMGs preserved");
     }
 }

@@ -72,6 +72,9 @@ fn handshake_responses(handshake:&mut erdtree_tower::party_handshake::Handshake,
     }
 }
 impl Pending {
+    pub fn restored(roster:Roster,transport:Transport,handshake:erdtree_tower::party_handshake::Handshake,packets:Vec<(u64,erdtree_tower::party_handshake::Payload)>)->Self {
+        Self{roster,transport,handshake,packets,hello:std::time::Instant::now(),started:std::time::Instant::now(),failure:None}
+    }
     pub fn waiting_reason(&self)->String {self.failure.clone().unwrap_or_else(||self.handshake.waiting_reason())}
     pub fn new(roster:Roster,nonce:u64,seed:u64,dlc:bool,profile:erdtree_tower::party_compat::Compatibility)->Result<Self,String> {
         let handshake=erdtree_tower::party_handshake::Handshake::new(roster.clone(),nonce,seed)?.with_dlc(dlc).with_compatibility(profile)?;

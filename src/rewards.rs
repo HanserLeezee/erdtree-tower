@@ -45,12 +45,12 @@ pub const ENEMY_SPIRIT_FIRST:u32=282000;
 /// 一种自制骨灰：编号、怪物模型、取自的 AI 参数；dlc 为 DLC 怪物的模型，capture 为只能用捕灵壶抓到（不进奖励与商店）
 #[derive(Clone,Copy,Debug)]
 pub struct CustomSpirit {pub id:u32,pub model:i32,pub think:u32,pub dlc:bool,pub capture:bool}
-/// 定义表第 10 列是逗号分隔的标记：dlc、capture
+/// 定义表第 10 列是逗号分隔的标记：dlc、capture（可空）；第 11 列是一次召唤几只（见 SpiritBalanceAssets）
 pub static CUSTOM_SPIRITS:LazyLock<Vec<CustomSpirit>>=LazyLock::new(||include_str!("../scene-assets/custom-spirit-definitions.tsv").lines().filter(|l|!l.trim().is_empty()).enumerate().map(|(row,line)|{
     let p:Vec<_>=line.split('|').collect();
     let id:u32=p[0].parse().expect("Invalid custom spirit id");
     assert_eq!(id,CUSTOM_SPIRIT_FIRST+row as u32*1000,"Custom spirit ids must be contiguous");
-    let flags:Vec<&str>=p.get(9).map(|f|f.split(',').map(str::trim).collect()).unwrap_or_default();
+    let flags:Vec<&str>=p.get(9).map(|f|f.split(',').map(str::trim).filter(|f|!f.is_empty()).collect()).unwrap_or_default();
     assert!(flags.iter().all(|f|matches!(*f,"dlc"|"capture")),"Invalid custom spirit flag");
     CustomSpirit{id,model:p[1].parse().expect("Invalid custom spirit model"),think:p[3].parse().expect("Invalid custom spirit think"),dlc:flags.contains(&"dlc"),capture:flags.contains(&"capture")}
 }).collect());
@@ -433,6 +433,15 @@ mod tests {
         assert_eq!(spirit_for_enemy(4260,Some(99999999)),Some(0x40000000|271000),"unknown think falls back to the first");
         for (model,id) in VARIANT_SPIRITS {assert_eq!(spirit_for_model(model),Some(0x40000000|id),"variant {model}");}
         assert_eq!(spirit_for_model(4050),Some(0x40000000|231000));
+    }
+    #[test]
+    fn bols_capture_grants_his_own_capture_only_ash_at_supported_levels() {
+        let base=spirit_for_model(4601).expect("Bols capture reward");
+        assert_eq!(base,0x40000000|339000);
+        assert!(capture_only(base));
+        assert_eq!(spirit_for_model(4600),Some(0x40000000|301000));
+        for level in 0..=SPIRIT_MAX {assert!(lookup(base+u32::from(level)).is_some_and(|i|i.kind==ItemKind::Spirit));}
+        assert_eq!(spirit_for_model(9999),None);
     }
     #[test]
     fn pre_custom_spirit_reward_pages_remain_valid_without_rerolling() {

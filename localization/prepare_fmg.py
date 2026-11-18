@@ -50,13 +50,16 @@ for name in ('affix-catalog.txt','affix-v2-catalog.txt'):
         cells=line.split('|')
         if cells[0] in ('weapon','armor'):
             identities[(25 if cells[0]=='weapon' else 26,int(cells[1]))]=int(cells[2])
+for line in (assets/'talisman-passives.tsv').read_text(encoding='utf-8').splitlines():
+    cells=line.split('\t');identities[(27,int(cells[0]))]=int(cells[1])
 def prepare(row):
-    table=row['table'];item=row['id']//10000*10000 if table==25 else row['id']
+    table=27 if row['name'].startswith('AccessoryCaption') else row['table']
+    item=row['id']//10000*10000 if table==25 else row['id']
     base=identities.get((table,item))
     original=context.get((row['pack'],table,base))
     if original and '\n\n' in row['text']:
         lore,info=row['text'].rsplit('\n\n',1)
-        if lore and original['source'].startswith(lore):
+        if lore and (table==27 or original['source'].startswith(lore)):
             return original['text']+'\n\n'+info
     return vanilla(row['text'])
 unique={}

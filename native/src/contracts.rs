@@ -5,17 +5,20 @@ use erdtree_tower::{contracts::{ASCETIC,Kind,State},Run,Phase};
 const FIRST:i32=9600000;
 fn effects(kind:Kind)->Vec<i32> {
     let base=FIRST+kind.index() as i32*10;
-    if kind==Kind::Mystic {vec![base,base+1,base+2]}else if kind==Kind::Ascetic{vec![base]}else{vec![base,base+1]}
+    match kind {Kind::Mystic=>vec![base,base+1],Kind::Ascetic=>vec![],_=>vec![base]}
 }
-/// 新规则（oath-patch）：增益按等级换成 +3…+5（秘法另有祷告 +6…+8），代价不随等级加重；连击、坚盾用更轻的代价 +9
+/// 新规则只挂载分级增益；苦修的胜利恢复由 heal_victory 处理。
 fn oath_effects(kind:Kind,level:u8)->Vec<i32> {
     let base=FIRST+kind.index() as i32*10;let level=i32::from(level.clamp(1,3));
-    let mut ids=match kind {Kind::Mystic=>vec![base+2+level,base+5+level],Kind::Ascetic=>vec![],_=>vec![base+2+level]};
-    ids.push(match kind {Kind::Combo|Kind::Guard=>base+9,Kind::Mystic=>base+2,Kind::Ascetic=>base,_=>base+1});
-    ids
+    match kind {Kind::Mystic=>vec![base+2+level,base+5+level],Kind::Ascetic=>vec![],_=>vec![base+2+level]}
+}
+fn retired_effects(kind:Kind)->Vec<i32> {
+    let base=FIRST+kind.index() as i32*10;
+    match kind {Kind::Combo|Kind::Guard=>vec![base+1,base+9],Kind::Mystic=>vec![base+2],Kind::Ascetic=>vec![base],_=>vec![base+1]}
 }
 fn all_effects()->Vec<i32> {
-    let mut ids:Vec<_>=Kind::ALL.into_iter().flat_map(|kind|effects(kind).into_iter().chain((1..=3).flat_map(move|level|oath_effects(kind,level)))).collect();
+    // 保留退役效果 ID，sync 才能清理旧旅程中已挂载的代价。
+    let mut ids:Vec<_>=Kind::ALL.into_iter().flat_map(|kind|effects(kind).into_iter().chain(retired_effects(kind)).chain((1..=3).flat_map(move|level|oath_effects(kind,level)))).collect();
     ids.sort_unstable();ids.dedup();ids
 }
 fn conditional(kind:Kind)->[i32;4] {let base=FIRST+kind.index() as i32*10;[base,base+3,base+4,base+5]}
@@ -133,13 +136,24 @@ pub fn give_with_ash(data:&mut PlayerGameData,id:u32,qty:u32,gem:i32)->Result<()
 mod tests {
     use super::*;
     #[test]
-    fn conditional_boons_switch_without_removing_drawbacks() {
+    fn every_oath_level_excludes_penalties_but_sync_still_cleans_them() {
+        let retired:Vec<_>=Kind::ALL.into_iter().flat_map(retired_effects).collect();
+        let cleanup=all_effects();
+        for id in &retired {assert!(cleanup.contains(id));}
+        for kind in Kind::ALL {
+            assert!(effects(kind).iter().all(|id|!retired.contains(id)));
+            for level in 1..=3 {assert!(oath_effects(kind,level).iter().all(|id|!retired.contains(id)));}
+        }
+        assert!(effects(Kind::Ascetic).is_empty());
+    }
+    #[test]
+    fn conditional_boons_switch_without_drawbacks() {
         let mut run=Run::new(42,erdtree_tower::Class::Samurai);run.contract=Some(State::new(run.reward_seed(),run.class,1,None,0));
         for kind in [Kind::Feather,Kind::Blood] {
             run.contract.as_mut().unwrap().chosen=Some(kind);
             assert_eq!(active_effects(Some(&run),49,100,true),effects(kind));
             let inactive=active_effects(Some(&run),50,100,false);
-            assert_eq!(inactive,vec![FIRST+kind.index() as i32*10+1]);
+            assert!(inactive.is_empty());
             run.phase=Phase::Dead;assert!(active_effects(Some(&run),49,100,true).is_empty());run.phase=Phase::Map;
         }
         assert!(is_light(29.9,100.0));assert!(!is_light(30.0,100.0));assert!(!is_light(0.0,0.0));
@@ -158,14 +172,14 @@ mod tests {
         assert_eq!(ascetic_rates(&run),None,"old rules only heal in the act the contract was made");
     }
     #[test]
-    fn new_oaths_stack_levels_and_keep_one_drawback_each() {
+    fn new_oaths_stack_only_boons_and_retain_legacy_cleanup() {
         use erdtree_tower::contracts::Oath;
         let mut run=Run::new(42,erdtree_tower::Class::Samurai);run.enable_contracts();
         run.contract.as_mut().unwrap().held=vec![Oath{kind:Kind::Steel,level:3},Oath{kind:Kind::Mystic,level:1},Oath{kind:Kind::Combo,level:2}];
-        assert_eq!(desired(Some(&run)),vec![FIRST+5,FIRST+1,FIRST+43,FIRST+46,FIRST+42,FIRST+24,FIRST+29]);
+        assert_eq!(desired(Some(&run)),vec![FIRST+5,FIRST+43,FIRST+46,FIRST+24]);
         run.contract.as_mut().unwrap().held=vec![Oath{kind:Kind::Feather,level:2},Oath{kind:Kind::Blood,level:3}];
-        assert_eq!(active_effects(Some(&run),80,100,false),vec![FIRST+71,FIRST+81],"conditional boons switch off, drawbacks stay");
-        assert_eq!(active_effects(Some(&run),40,100,true),vec![FIRST+74,FIRST+71,FIRST+85,FIRST+81]);
+        assert!(active_effects(Some(&run),80,100,false).is_empty());
+        assert_eq!(active_effects(Some(&run),40,100,true),vec![FIRST+74,FIRST+85]);
         let ids=all_effects();assert_eq!(ids.len(),20+32);
         for kind in Kind::ALL {for level in 1..=3 {assert!(oath_effects(kind,level).iter().all(|id|ids.contains(id)));}}
     }
@@ -175,7 +189,7 @@ mod tests {
         assert!(desired(Some(&run)).is_empty());
         run.contract.as_mut().unwrap().choose(0,run.seed,run.class).unwrap();
         assert_eq!(desired(Some(&run)),effects(Kind::Mystic));
-        assert_eq!(desired(Some(&run)).len(),3);
+        assert_eq!(desired(Some(&run)).len(),2);
         for phase in [Phase::Dead,Phase::Won] {run.phase=phase;assert!(desired(Some(&run)).is_empty());}
         assert!(desired(None).is_empty());
         run.phase=Phase::Map;run.act=2;

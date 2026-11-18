@@ -21,18 +21,26 @@ fn engaged(started:bool,elapsed:Duration)->bool {started&&elapsed>=super::travel
 pub struct Guards {
     specs:Vec<Enemy>,ids:Vec<u32>,bound:Vec<(FieldInsHandle,usize)>,reset:bool,requested:bool,
     clock:Option<Instant>,active:bool,
-    combat:u32,
+    combat:u32,scaled:bool,
 }
 impl Guards {
     pub fn new(specs:Vec<Enemy>)->Result<Self,String> {
         if specs.is_empty()||specs.len()>12{return Err("事件守卫数量无效".into());}
         let ids=enemies::map_entities(&specs)?.into_iter().map(entity).collect::<Result<Vec<_>,_>>()?;
-        Ok(Self{specs,ids,bound:vec![],reset:false,requested:false,clock:None,active:false,combat:COMBAT})
+        Ok(Self{specs,ids,bound:vec![],reset:false,requested:false,clock:None,active:false,combat:COMBAT,scaled:false})
     }
     pub fn merchant()->Result<Self,String> {
         let spec=enemies::debug_encounters().into_iter().flatten().find(|e|e.name=="铃珠猎人").ok_or("缺少铃珠猎人参数")?;
         let ids=enemies::map_entities(&[spec])?;
-        Ok(Self{specs:vec![spec],ids,bound:vec![],reset:false,requested:false,clock:None,active:false,combat:enemies::MAP_COMBAT_FLAG})
+        Ok(Self{specs:vec![spec],ids,bound:vec![],reset:false,requested:false,clock:None,active:false,combat:enemies::MAP_COMBAT_FLAG,scaled:false})
+    }
+    pub fn scale_merchant(&mut self,world:&mut WorldChrMan,run:&erdtree_tower::Run,node:usize)->Result<(),String> {
+        if self.scaled||!self.ready(){return Ok(());}
+        if self.combat!=enemies::MAP_COMBAT_FLAG||self.bound.len()!=1{return Err("铃珠猎人实体配置无效".into());}
+        let (handle,address)=self.bound[0];
+        let chr=world.chr_ins_by_handle_mut(&handle).filter(|c|std::ptr::from_ref(&**c) as usize==address&&c.event_entity_id==self.ids[0]&&c.npc_param_id==self.specs[0].npc).ok_or("铃珠猎人尚未就绪")?;
+        super::scaling::merchant(chr,run,node)?;
+        self.scaled=true;Ok(())
     }
     pub fn ready(&self)->bool {self.bound.len()==self.ids.len()}
     pub fn map_combat_active(&self)->bool {self.active&&self.combat==enemies::MAP_COMBAT_FLAG}
