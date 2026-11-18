@@ -2,7 +2,55 @@ using SoulsFormats;
 using System.Text.Json;
 
 static class CustomSpiritAssets {
+    const string Message="msg/zhocn/item_dlc02.msgbnd.dcx";
     record Spec(int Id,int Model,int Npc,int Think,int Tier,int Hp,int IconSource,string Name,string Info);
+    static bool FillText(FMG fmg,int id,string value) {
+        var entries=fmg.Entries.Where(e=>e.ID==id).ToArray();
+        if(entries.Length>1)throw new Exception($"Duplicate spirit text: {id}");
+        if(entries.Length==1) {
+            if(!string.IsNullOrWhiteSpace(entries[0].Text))return false;
+            entries[0].Text=value;
+        } else fmg.Entries.Add(new FMG.Entry(id,value));
+        return true;
+    }
+    public static void TextTest() {
+        var fmg=new FMG();fmg.Entries.Add(new FMG.Entry(1,"preserved"));fmg.Entries.Add(new FMG.Entry(2,null));
+        if(FillText(fmg,1,"replacement")||!FillText(fmg,2,"repaired")||!FillText(fmg,3,"new")
+            ||FillText(fmg,2,"again")||fmg.Entries.Single(e=>e.ID==1).Text!="preserved"
+            ||fmg.Entries.Single(e=>e.ID==2).Text!="repaired")throw new Exception("Text repair regression");
+        Console.WriteLine("PASS: missing/empty spirit text repaired, existing text retained, repeat repair is idempotent");
+    }
+    public static void PatchText(string input,string output) {
+        if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging required");
+        var specs=File.ReadAllLines(Path.Combine(input,"custom-spirit-definitions.tsv")).Where(l=>!string.IsNullOrWhiteSpace(l)).Select(l=>{
+            var p=l.Split('|');return (Id:int.Parse(p[0]),Name:p[7],Info:p[8]);
+        }).ToArray();
+        if(specs.Length<12||specs.Select(s=>s.Id).Distinct().Count()!=specs.Length
+            ||specs.Where((s,i)=>s.Id!=270000+i*1000).Any()||specs.Any(s=>string.IsNullOrWhiteSpace(s.Name)||string.IsNullOrWhiteSpace(s.Info)))throw new Exception("Invalid spirit text definitions");
+        var text=BND4.Read(Path.Combine(input,Message));
+        var original=text.Files.ToDictionary(f=>f.ID,f=>f.Bytes.ToArray());
+        var managed=specs.SelectMany(s=>Enumerable.Range(0,SpiritLevelAssets.Max+1).Select(level=>s.Id+level)).ToHashSet();
+        int repaired=0;var touched=new HashSet<int>();
+        foreach(var table in new[]{"GoodsName","GoodsInfo","GoodsCaption"}) {
+            var file=text.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name).Split("_dlc")[0]==table&&FMG.Read(f.Bytes).Entries.Any(e=>e.ID==200000&&!string.IsNullOrWhiteSpace(e.Text)));
+            var fmg=FMG.Read(file.Bytes);int changed=0;
+            foreach(var s in specs)for(int level=0;level<=SpiritLevelAssets.Max;level++) {
+                var value=table=="GoodsName"?s.Name+(level==0?"":$"＋{level}"):s.Info+(table=="GoodsCaption"?"\n\n黄金树爬塔的召唤骨灰。可强化至 +39。\n每次召唤消耗一份骨灰；召唤师在胜利时按存活情况返还。":"");
+                if(FillText(fmg,s.Id+level,value))changed++;
+            }
+            if(changed>0){file.Bytes=fmg.Write();touched.Add(file.ID);}
+            repaired+=changed;
+            Console.WriteLine($"{table}: {managed.Count} entries checked, {changed} repaired");
+            var entries=FMG.Read(file.Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text);
+            if(managed.Any(id=>!entries.TryGetValue(id,out var value)||string.IsNullOrWhiteSpace(value)))throw new Exception("Incomplete spirit text");
+            foreach(var entry in FMG.Read(original[file.ID]).Entries)
+                if((!managed.Contains(entry.ID)||!string.IsNullOrWhiteSpace(entry.Text))&&entries[entry.ID]!=entry.Text)throw new Exception($"Unrelated text changed: {entry.ID}");
+        }
+        foreach(var file in text.Files.Where(f=>!touched.Contains(f.ID)))if(!file.Bytes.SequenceEqual(original[file.ID]))throw new Exception("Unrelated FMG changed");
+        var path=Path.Combine(output,Message);Directory.CreateDirectory(Path.GetDirectoryName(path)!);text.Write(path);
+        foreach(var file in BND4.Read(path).Files)if(!file.Bytes.SequenceEqual(text.Files.Single(f=>f.ID==file.ID).Bytes))throw new Exception("Spirit text roundtrip failed");
+        Console.WriteLine($"Verified {specs.Length} spirits x {SpiritLevelAssets.Max+1} levels x 3 text tables; {repaired} repairs; unrelated text preserved");
+    }
     static int I(PARAM.Row row,string field)=>Convert.ToInt32(row[field].Value);
     static void Set(PARAM.Row row,string field,int value)=>row[field].Value=Convert.ChangeType(value,row[field].Value.GetType());
     public static void Patch(string input,string output) {
@@ -11,7 +59,7 @@ static class CustomSpiritAssets {
             var p=l.Split('|');return new Spec(int.Parse(p[0]),int.Parse(p[1]),int.Parse(p[2]),int.Parse(p[3]),int.Parse(p[4]),int.Parse(p[5]),int.Parse(p[6]),p[7],p[8]);
         }).ToArray();
         // 编号按行连续：第 n 行是 270000+n*1000（调试菜单与运行时按这个从 BuddyParam 反推骨灰）；第 10 列 dlc 表示 DLC 怪物的模型
-        if(specs.Length<12||specs.Select(s=>s.Id).Distinct().Count()!=specs.Length||specs.Any(s=>s.Tier is <2 or >3)||specs.Where((s,i)=>s.Id!=270000+i*1000).Any())throw new Exception("Invalid custom spirit definitions");
+        if(specs.Length<12||specs.Select(s=>s.Id).Distinct().Count()!=specs.Length||specs.Any(s=>s.Tier is <1 or >3)||specs.Where((s,i)=>s.Id!=270000+i*1000).Any())throw new Exception("Invalid custom spirit definitions");
         // 没有 Oodle（Linux）时读不了地图和 dcx 文本：只写参数与奖励表，地图模型检查和物品文本留给 Windows 上再跑一次（已有的行会跳过）
         bool oodle=Environment.GetEnvironmentVariable("TOWER_NO_OODLE")!="1";
         if(!oodle)Console.WriteLine("TOWER_NO_OODLE=1: skipping map model checks and item text; rerun on Windows to finish.");
@@ -93,22 +141,7 @@ static class CustomSpiritAssets {
             foreach(var row in p.Rows)foreach(var cell in row.Cells)
                 if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,rows[row.ID][cell.Def.InternalName].Value))throw new Exception("Custom spirit serialization mismatch");
         }
-        const string message="msg/zhocn/item_dlc02.msgbnd.dcx";
-        if(oodle) {
-        var text=BND4.Read(Path.Combine(input,message));
-        foreach(var table in new[]{"GoodsName","GoodsInfo","GoodsCaption"}) {
-            var file=text.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name).Split("_dlc")[0]==table&&FMG.Read(f.Bytes).Entries.Any(e=>e.ID==200000&&!string.IsNullOrWhiteSpace(e.Text)));
-            var fmg=FMG.Read(file.Bytes);
-            foreach(var s in specs)for(int level=0;level<=SpiritLevelAssets.Max;level++) {
-                if(fmg.Entries.Any(e=>e.ID==s.Id+level))continue;
-                var value=table=="GoodsName"?s.Name+(level==0?"":$"＋{level}"):s.Info+(table=="GoodsCaption"?"\n\n黄金树爬塔的召唤骨灰。可强化至 +39。\n每次召唤消耗一份骨灰；召唤师在胜利时按存活情况返还。":"");
-                fmg.Entries.Add(new FMG.Entry(s.Id+level,value));
-            }
-            file.Bytes=fmg.Write();
-        }
-        var msgOut=Path.Combine(output,message);Directory.CreateDirectory(Path.GetDirectoryName(msgOut)!);text.Write(msgOut);
-        foreach(var file in BND4.Read(msgOut).Files)if(!file.Bytes.SequenceEqual(text.Files.Single(f=>f.ID==file.ID).Bytes))throw new Exception("Custom spirit text roundtrip failed");
-        }
+        if(oodle)PatchText(input,output);
         var catalog=File.ReadAllLines(Path.Combine(input,"reward-catalog.txt")).ToList();
         var details=File.ReadAllLines(Path.Combine(input,"reward-details.tsv")).ToList();
         var rarities=File.ReadAllLines(Path.Combine(input,"reward-rarities.tsv")).ToList();
@@ -125,6 +158,11 @@ static class CustomSpiritAssets {
         File.WriteAllLines(Path.Combine(output,"reward-details.tsv"),details);
         File.WriteAllLines(Path.Combine(output,"reward-rarities.tsv"),rarities);
         File.WriteAllText(Path.Combine(output,"custom-spirit-build.json"),JsonSerializer.Serialize(audit,new JsonSerializerOptions{WriteIndented=true}));
+        if(oodle&&specs.Length==56) {
+            SpiritBalanceAssets.Patch(output,output,input);
+            SpiritVisualAssets.Patch(output,output);
+            SpiritModelAssets.Patch(input,output);
+        }
         Console.WriteLine($"Verified {specs.Length} custom spirits × 40 levels, friendly NPC/AI, no drops, summon references and texts; model sources found across {arenaModels.Count} maps, existing rows preserved. Live behavior not yet tested.");
     }
 }

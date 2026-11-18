@@ -45,8 +45,13 @@ fn redirect(data:&mut SpawnData,aim:Aim)->bool {
 unsafe extern "C" fn spawn(manager:*mut c_void,out:*mut i32,data:*const SpawnData,error:*mut i32) {
     let original:Spawn=unsafe {std::mem::transmute(ORIGINAL.load(Ordering::Acquire))};
     // 余烬「魔力辉剑」：记下本机玩家的每次施法（只读，不改这次生成）
-    if !data.is_null() {super::glintblade::observe(unsafe {&*data.cast::<super::glintblade::SpawnData>()});}
-    if !data.is_null() {super::starsurge::observe_spawn(unsafe {&(*data).0});}
+    if !data.is_null() {
+        let observed=unsafe {&*data.cast::<super::glintblade::SpawnData>()};
+        super::glintblade::observe(observed);
+        super::capture::observe_spawn(observed);
+        // 星辉术士「星涌」：识别施法与弹体归属（只读）
+        super::starsurge::observe_spawn(unsafe {&(*data).0});
+    }
     let aim=AIM.try_lock().ok().and_then(|s|*s).filter(|a|a.updated.elapsed()<Duration::from_millis(100));
     if let Some(aim)=aim.filter(|_|!data.is_null()&&!super::input::CAPTURE.load(Ordering::Relaxed)) {
         let mut local=unsafe {(*data).clone()};

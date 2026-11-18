@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import re
 
 from native_name_glow import verify_tags
 
@@ -31,12 +32,26 @@ MEMBERS = '''
 '''
 
 
-def patch_source(source):
+def patch_source(source, backgrounds=3, tips=12, rebase=False):
+    if backgrounds<2 or tips%backgrounds or tips*240>65535:
+        raise ValueError('Invalid loading rotation counts')
+    if rebase:
+        if source.count('private function towerChooseLoading(')!=1:
+            raise ValueError('Expected existing loading rotation')
+        changes=[(r'var background:int = int\(Math.random\(\) \* \d+\);',f'var background:int = int(Math.random() * {backgrounds});'),
+                 (r'background = \(towerLoadingPrevious \+ 1 \+ int\(Math.random\(\) \* \d+\)\) % \d+;',f'background = (towerLoadingPrevious + 1 + int(Math.random() * {backgrounds-1})) % {backgrounds};'),
+                 (r'var tip:int = background \+ int\(Math.random\(\) \* \d+\) \* \d+;',f'var tip:int = background + int(Math.random() * {tips//backgrounds}) * {backgrounds};'),
+                 (r'cycle.totalFrames != \d+',f'cycle.totalFrames != {tips*240}')]
+        for pattern,replacement in changes:
+            source,count=re.subn(pattern,replacement,source)
+            if count!=1:raise ValueError('Unexpected existing rotation formula: '+pattern)
+        return source
     anchor = '      public function MainTimeline()'
     frames = 'addFrameScript(88,this.frame89,119,this.frame120);'
     if source.count(anchor) != 1 or source.count(frames) != 1 or 'towerChooseLoading' in source:
         raise ValueError('Unexpected or already patched loading script')
-    source = source.replace(anchor, MEMBERS + '\n' + anchor, 1)
+    members=patch_source(MEMBERS,backgrounds,tips,True)
+    source = source.replace(anchor, members + '\n' + anchor, 1)
     return source.replace(frames, 'addFrameScript(1,this.towerBeginLoading,88,this.frame89,119,this.frame120);\n'
                           '         addEventListener(flash.events.Event.ENTER_FRAME,this.towerChooseLoading);', 1)
 
@@ -60,7 +75,7 @@ def build(args):
             relative = Path(package)/'MainTimeline.as'
             script = (folder/'before/scripts'/relative).read_text(encoding='utf-8-sig')
             changed = folder/'changed'/relative; changed.parent.mkdir(parents=True)
-            changed.write_text(patch_source(script), encoding='utf-8')
+            changed.write_text(patch_source(script,args.backgrounds,args.tips,args.rebase), encoding='utf-8')
             run('-importScript', source, target, folder/'changed')
             count = verify_tags(source.read_bytes(), target.read_bytes())
             run('-export', 'script', folder/'after', target)
@@ -70,7 +85,7 @@ def build(args):
                 if rel != relative and before.read_bytes() != after.read_bytes():
                     raise ValueError('Unrelated script changed: '+str(rel))
             actual = (folder/'after/scripts'/relative).read_text(encoding='utf-8-sig')
-            for marker in ['towerChooseLoading', 'towerBeginLoading', 'gotoAndPlay', '2880', '240']:
+            for marker in ['towerChooseLoading', 'towerBeginLoading', 'gotoAndPlay', str(args.tips*240), '240']:
                 if marker not in actual: raise ValueError('Missing compiled rotation: '+marker)
             (args.output/(stem+'.as')).write_text(actual, encoding='utf-8')
         records.append(dict(file='menu/'+source.name, before=hashlib.sha256(source.read_bytes()).hexdigest(),
@@ -85,4 +100,12 @@ if __name__ == '__main__':
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--ffdec',type=Path,required=True)
     parser.add_argument('--java',default='java')
-    build(parser.parse_args())
+    parser.add_argument('--backgrounds',type=int)
+    parser.add_argument('--tips',type=int)
+    parser.add_argument('--config',type=Path,default=Path(__file__).with_name('title_theme.json'))
+    parser.add_argument('--rebase',action='store_true')
+    args=parser.parse_args()
+    config=json.loads(args.config.read_text(encoding='utf-8'))
+    if args.backgrounds is None:args.backgrounds=len(config.get('loading_art',[1,2,3]))
+    if args.tips is None:args.tips=len(config['tips'])
+    build(args)

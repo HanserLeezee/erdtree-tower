@@ -108,6 +108,7 @@ static class EmberAssets {
             foreach(var cut in new[]{"slash","blow","thrust","neutral","magic","fire","thunder","dark"})Set(keeper,cut+"DamageCutRate",1f-KeeperCut);
             rows.Add(keeper);
         }
+        EmberSpellDamage.Apply(rows);
         return rows;
     }
     static void Verify(PARAM p) {

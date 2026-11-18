@@ -131,7 +131,7 @@ static class ArenaAssets {
             foreach(var source in template.Parts.Assets.Where(a=>Assets.Contains(a.EntityID))) {
                 var part=(MSBE.Part.Asset)source.DeepCopy();part.Name="tower_site_"+part.EntityID;
                 // 传送门放到场地正中（原版 Boss 的出生点）：战斗中关闭，胜利后从地面钻出来（PortalReveal）
-                part.Position=source.EntityID==First+1900?Place(new Vector3(0,source.Position.Y-center0.Y,0),center,yaw):ServiceAt(source.EntityID,source.Position-center0);
+                part.Position=source.EntityID==First+1900?PortalReveal.Position(site.Key,Place(new Vector3(0,source.Position.Y-center0.Y,0),center,yaw)):ServiceAt(source.EntityID,source.Position-center0);
                 part.Rotation=new(source.Rotation.X,source.Rotation.Y+yaw,source.Rotation.Z);
                 part.InstanceID=msb.Parts.Assets.Where(a=>a.ModelName==part.ModelName).Select(a=>a.InstanceID).DefaultIfEmpty(-1).Max()+1;
                 part.EntityGroupIDs=new uint[8];part.UnkPartNames=new string[6];part.UnkT54PartName=null;part.MapStudioLayer=uint.MaxValue;

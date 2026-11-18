@@ -79,6 +79,19 @@ pub fn built()->Vec<(&'static str,&'static str)> {BUILT.iter().map(|(k,a)|(*k,a.
 /// 由 arena-build 生成的场地：复用宁姆格福竞技场的编号与场边服务
 pub fn is_built(block:i32)->bool {BUILT.iter().any(|(_,a)|a.block==block)}
 const RESOURCES:&str=include_str!("../../scene-assets/arenas-resources.txt");
+#[test]
+fn embedded_arena_manifest_matches_packaged_source_assets() {
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scene-assets");
+    let mut count=0;
+    for row in RESOURCES.lines() {
+        let fields:Vec<_>=row.split('|').collect();if fields.len()!=3{continue;}
+        let bytes=std::fs::read(root.join(fields[0])).unwrap();
+        let hash=bytes.iter().fold(14695981039346656037u64,|h,b|(h^u64::from(*b)).wrapping_mul(1099511628211));
+        assert_eq!(bytes.len(),fields[1].parse::<usize>().unwrap(),"{} length",fields[0]);
+        assert_eq!(hash,u64::from_str_radix(fields[2],16).unwrap(),"{} hash",fields[0]);count+=1;
+    }
+    assert!(count>0);
+}
 /// 清单里的一行（路径|大小|FNV-1a 64）：文件缺失返回 Some(true)，与 DLL 不一致返回 Some(false)，一致返回 None
 fn resource_problem(row:&str)->Option<bool> {
     let p:Vec<_>=row.split('|').collect();

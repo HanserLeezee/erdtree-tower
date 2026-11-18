@@ -4,6 +4,20 @@ fn definitions()->Vec<Vec<&'static str>> {
     include_str!("../scene-assets/custom-spirit-definitions.tsv").lines().map(|l|l.split('|').collect()).collect()
 }
 #[test]
+fn added_spirits_have_bounded_groups_and_matching_descriptions() {
+    let defs=definitions();
+    for d in &defs[12..] {
+        let count:u8=d.get(10).expect("explicit summon count").parse().unwrap();
+        let tier:u8=d[4].parse().unwrap();
+        assert!((1..=3).contains(&count));
+        assert!((1..=3).contains(&tier));
+        if tier==3 {assert_eq!(count,1,"legendary elites stay single");}
+        if count>1 {assert!(d[8].contains(if count==2 {"两"}else{"三"}));}
+    }
+    assert_eq!(defs.iter().find(|d|d[0]=="308000").unwrap()[10],"3");
+    assert_eq!(defs.iter().find(|d|d[0]=="304000").unwrap()[10],"1");
+}
+#[test]
 fn all_custom_spirits_have_names_quality_and_forty_levels() {
     let defs=definitions();assert_eq!(defs.len(),56);
     let rarities:std::collections::HashMap<u32,u8>=include_str!("../scene-assets/reward-rarities.tsv").lines().map(|l|{

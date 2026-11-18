@@ -1,10 +1,10 @@
 //! 余烬「魔力辉剑」：魔法命中敌人时，从玩家头顶射出一把「魔法辉剑」的飞行辉剑追击那只敌人。
-//! 认施法：star_stream 挂着游戏的弹体生成函数，本机玩家发出、带魔法编号且是「魔法」（不是祷告）的弹体记为一次施法，
+//! 认施法：只认 Magic 参数直接引用且自身或后续弹体能造成伤害的起始弹体，排除辅助弹体和后续子弹。
 //! 同一次施法的多发弹体（150 ms 内）只算一次；每次施法最多换来一把辉剑（CAST_LIFETIME 内用掉，过期作废）。
 //! 生成：拿这次施法的生成数据当模板（其余字段保持游戏自己的值），只改成辉剑弹体、魔法编号、目标、朝向和位置，
 //! 直接调用原函数（不经过挂钩），所以辉剑自己不会再算成施法，不会连锁。
-use std::{ffi::c_void,sync::{Mutex,atomic::{AtomicU64,Ordering}},time::{Duration,Instant}};
-use eldenring::cs::{CSBulletManager,FieldInsHandle};
+use std::{collections::{BTreeMap,BTreeSet},ffi::c_void,sync::{Mutex,atomic::{AtomicU64,Ordering}},time::{Duration,Instant}};
+use eldenring::cs::{Bullet,Magic,SoloParamRepository,CSBulletManager,FieldInsHandle};
 use fromsoftware_shared::FromStatic;
 
 /// 原版「魔法辉剑」（MagicParam 4390）的飞行段：攻击 43900、初速 13、带追踪
@@ -21,6 +21,7 @@ pub struct SpawnData(pub [u8;0x110]);
 
 struct Casts {template:Option<SpawnData>,pending:Vec<Instant>,last:Option<Instant>}
 static CASTS:Mutex<Casts>=Mutex::new(Casts{template:None,pending:Vec::new(),last:None});
+static ROOTS:Mutex<BTreeMap<i32,BTreeSet<i32>>>=Mutex::new(BTreeMap::new());
 /// 本机玩家的 FieldInsHandle（持有余烬时每帧更新，0 为不记录）
 static OWNER:AtomicU64=AtomicU64::new(0);
 
@@ -32,16 +33,48 @@ fn write_i32(data:&mut SpawnData,at:usize,value:i32) {data.0[at..at+4].copy_from
 fn sorcery(magic:i32)->bool {
     magic>0&&erdtree_tower::rewards::lookup(0x40000000|magic as u32).is_some_and(|i|i.kind==erdtree_tower::rewards::ItemKind::Sorcery)
 }
+fn casting_bullets(roots:&[i32],lookup:impl Fn(i32)->Option<(i32,[i32;2])>)->BTreeSet<i32> {
+    roots.iter().copied().filter(|root| {
+        let mut pending=vec![*root];let mut seen=BTreeSet::new();
+        while let Some(id)=pending.pop() {
+            if id<0||!seen.insert(id){continue;}
+            let Some((attack,children))=lookup(id) else{continue};
+            // Native attacks 0 and 1 are non-damaging helpers.
+            if attack>1{return true;}
+            pending.extend(children);
+        }
+        false
+    }).collect()
+}
+fn casting_bullet(magic:i32,bullet:i32)->bool {
+    let Ok(mut cache)=ROOTS.lock() else{return false};
+    if let Some(roots)=cache.get(&magic){return roots.contains(&bullet);}
+    let Ok(params)=(unsafe {SoloParamRepository::instance()}) else{return false};
+    let Some(row)=params.get::<Magic>(magic as u32) else{return false};
+    let refs=[(row.ref_category1(),row.ref_id1()),(row.ref_category2(),row.ref_id2()),
+        (row.ref_category3(),row.ref_id3()),(row.ref_category4(),row.ref_id4()),
+        (row.ref_category5(),row.ref_id5()),(row.ref_category6(),row.ref_id6()),
+        (row.ref_category7(),row.ref_id7()),(row.ref_category8(),row.ref_id8()),
+        (row.ref_category9(),row.ref_id9()),(row.ref_category10(),row.ref_id10())];
+    let refs:Vec<_>=refs.into_iter().filter_map(|(category,id)|(category==1&&id>=0).then_some(id)).collect();
+    let roots=casting_bullets(&refs,|id|params.get::<Bullet>(id as u32).map(|row|(row.atk_id_bullet(),[row.hit_bullet_id(),row.interval_create_bullet_id()])));
+    let accepted=roots.contains(&bullet);cache.insert(magic,roots);accepted
+}
 
 /// 弹体生成挂钩里调用（游戏线程）：本机玩家放出的魔法记为一次施法
 pub fn observe(data:&SpawnData) {
     let owner=OWNER.load(Ordering::Relaxed);
     if owner==0||u64::from_le_bytes(data.0[0..8].try_into().unwrap())!=owner {return;}
     let magic=read_i32(data,0x0c);
-    if !sorcery(magic) {return;}
+    let bullet=read_i32(data,0x14);
+    if !sorcery(magic)||!casting_bullet(magic,bullet) {return;}
     let Ok(mut casts)=CASTS.try_lock() else{return};
     let now=Instant::now();
-    if casts.last.is_none_or(|at|now.duration_since(at)>SAME_CAST) {casts.pending.push(now);}
+    if casts.last.is_none_or(|at|now.duration_since(at)>SAME_CAST) {
+        casts.pending.retain(|at|now.duration_since(*at)<=CAST_LIFETIME);
+        casts.pending.push(now);
+        super::log(format!("TOWER_GLINTBLADE cast magic={magic} bullet={bullet}"));
+    }
     casts.last=Some(now);casts.template=Some(data.clone());
 }
 /// 用掉一次还没换过辉剑的施法
@@ -89,6 +122,25 @@ pub fn spawn(origin:[f32;3],target:&FieldInsHandle,target_pos:[f32;3])->Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pebble_auxiliary_emission_is_not_a_second_cast() {
+        let roots=casting_bullets(&[10400000,10400099],|id|match id {
+            10400000=>Some((40000,[-1,-1])),10400099=>Some((1,[-1,-1])),_=>None,
+        });
+        assert_eq!(roots.into_iter().collect::<Vec<_>>(),vec![10400000]);
+    }
+    #[test]
+    fn delayed_spell_counts_its_launcher_but_not_the_child_or_visual() {
+        let roots=casting_bullets(&[100,200],|id|match id {
+            100=>Some((0,[101,-1])),101=>Some((40000,[-1,-1])),
+            200=>Some((0,[201,-1])),201=>Some((1,[-1,-1])),_=>None,
+        });
+        assert!(roots.contains(&100));assert!(!roots.contains(&101));assert!(!roots.contains(&200));
+    }
+    #[test]
+    fn cycles_and_missing_bullets_cannot_create_casts() {
+        assert!(casting_bullets(&[100,999],|id|match id {100=>Some((0,[101,-1])),101=>Some((1,[100,-1])),_=>None}).is_empty());
+    }
     #[test]
     fn blade_keeps_the_template_and_only_rewrites_bullet_target_and_pose() {
         let template=SpawnData([0x3a;0x110]);

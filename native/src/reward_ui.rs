@@ -407,13 +407,13 @@ impl Panel {
         const LEVELS:[&str;4]=["","I","II","III"];
         let fresh=contract.rules==1;
         use erdtree_tower::contracts::Card;
-        // (贴图, 标题, 角标说明, 增益, 代价, 描边颜色)
+        // (贴图, 标题, 角标说明, 增益, 深化奖励, 描边颜色)
         let cards:Vec<(usize,String,Option<String>,String,String,Option<(u8,u8,u8)>)>=contract.cards().into_iter().map(|card|match card {
-            Card::Oath(kind) if fresh=>(kind.index(),format!("{} I",kind.name()),None,kind.boon_at(1),kind.bane_at().to_owned(),None),
-            Card::Oath(kind)=>(kind.index(),kind.name().to_owned(),None,kind.boon().to_owned(),kind.bane().to_owned(),None),
+            Card::Oath(kind) if fresh=>(kind.index(),format!("{} I",kind.name()),None,kind.boon_at(1),String::new(),None),
+            Card::Oath(kind)=>(kind.index(),kind.name().to_owned(),None,kind.boon().to_owned(),String::new(),None),
             Card::Deepen(kind)=>{
                 let level=(contract.level(kind).unwrap_or(1)+1).min(3);
-                (kind.index(),format!("{} {}",kind.name(),LEVELS[usize::from(level)]),Some(format!("深化 · {} 升至 {}",LEVELS[usize::from(level-1)],LEVELS[usize::from(level)])),kind.boon_at(level),"代价不变 · 获得圣杯滴露 ×1".to_owned(),Some((236,196,104)))
+                (kind.index(),format!("{} {}",kind.name(),LEVELS[usize::from(level)]),Some(format!("深化 · {} 升至 {}",LEVELS[usize::from(level-1)],LEVELS[usize::from(level)])),kind.boon_at(level),"获得圣杯滴露 ×1".to_owned(),Some((236,196,104)))
             },
         }).collect();
         let size=ui.io().display_size;let s=(size[0]/1600.0).min(size[1]/900.0);
@@ -449,7 +449,7 @@ impl Panel {
                 }
             }
             let width=366.0*s;let gap=72.0*s;let top=oy+187.0*s;let height=549.0*s;
-            for (i,(art,title,label,boon,bane,accent)) in cards.iter().enumerate() {
+            for (i,(art,title,label,boon,bonus,accent)) in cards.iter().enumerate() {
                 let x=mid-(width*count as f32+gap*(count as f32-1.0))*0.5+i as f32*(width+gap);
                 let selected=self.selection.selected==i;
                 let hovered=ready&&ui.is_mouse_hovering_rect([x,top-7.0*s],[x+width,top+height]);
@@ -500,8 +500,9 @@ impl Panel {
                 }
                 center_fitted(ui,x+width*0.5,y+333.0*s,title,gold,s*1.35,width-40.0*s);
                 ui.set_window_font_scale(s*0.95);
-                let bane_y=(401.0+boon.lines().count() as f32*24.0+14.0).max(462.0);
-                for (offset,text,color) in [(401.0,boon.as_str(),[0.64,0.83,0.58,1.0]),(bane_y,bane.as_str(),[0.91,0.49,0.40,1.0])] {
+                let bonus_y=(401.0+boon.lines().count() as f32*24.0+14.0).max(462.0);
+                for (offset,text,color) in [(401.0,boon.as_str(),[0.64,0.83,0.58,1.0]),(bonus_y,bonus.as_str(),gold)] {
+                    if text.is_empty(){continue;}
                     center_fitted(ui,x+width*0.5,y+offset*s,text,color,s*0.95,width-40.0*s);
                 }
                 if selected {ui.set_window_font_scale(s*0.9);center(ui,x+width*0.5,y+height-52.0*s,"已选",gold);}

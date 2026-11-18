@@ -1,6 +1,40 @@
 using SoulsFormats;
 using System.Numerics;
+if(args.Length==4&&args[3]=="adaptation-text-patch") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    AffixTextFix.PatchAdaptive(args[2],args[1]);return;
+}
+if(args.Length==4&&args[3] is "spirit-model-patch" or "spirit-model-verify") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    SpiritModelAssets.Patch(args[2],args[1],args[3]=="spirit-model-verify");return;
+}
+if(args.Length==4&&args[3] is "spirit-visual-patch" or "spirit-visual-verify") {SpiritVisualAssets.Patch(args[2],args[1],args[3]=="spirit-visual-verify");return;}
+if(args.Length==4&&args[3]=="spirit-visual-inspect") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    SpiritVisualAssets.Inspect(args[2]);return;
+}
+if(args.Length==4&&args[3]=="spirit-balance-patch") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    SpiritBalanceAssets.Patch(args[2],args[1]);return;
+}
+if(args.Length==1&&args[0]=="custom-spirit-text-test") {CustomSpiritAssets.TextTest();return;}
+if(args.Length==4&&args[3]=="custom-spirit-text-patch") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    CustomSpiritAssets.PatchText(args[2],args[1]);return;
+}
+if(args.Length==4&&args[3]=="hoarah-sfx-inspect") {HoarahSfxAssets.Inspect(args[0],args[1]);return;}
+if(args.Length==4&&args[3]=="hoarah-sfx-test") {HoarahSfxAssets.Test();return;}
+if(args.Length==5&&args[3]=="hoarah-sfx-patch") {HoarahSfxAssets.Patch(args[0],args[2],args[1],args[4]);return;}
+if(args.Length==4&&args[3] is "ember-spell-patch" or "ember-spell-verify") {EmberSpellDamage.Patch(args[2],args[1],args[3]=="ember-spell-verify");return;}
 if(args.Length==4&&args[3]=="golden-shield-patch") {BossAffixAssets.PatchGolden(args[2],args[1]);return;}
+if(args.Length==4&&args[3]=="portal-minimal-patch") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    PortalArchAssets.Patch(args[0],args[2],args[1],true);return;
+}
+if(args.Length==4&&args[3]=="radahn-visibility-patch") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    RadahnVisibility.Patch(args[2],args[1]);return;
+}
 if(args.Length==4&&args[3]=="frost-shackle-patch") {FrostShackleAssets.Patch(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="tent-patch") {TentAssets.Patch(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="capture-patch") {CaptureAssets.Patch(args[2],args[1],args[0]);return;}
@@ -72,9 +106,9 @@ if(args.Length==5&&args[3]=="english-theme") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     LocalizationAssets.BuildTheme(args[2],args[1],args[4]);return;
 }
-if(args.Length==5&&args[3]=="english-text") {
+if(args.Length==5&&args[3] is "english-text" or "traditional-text") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
-    LocalizationAssets.Build(args[0],args[2],args[1],args[4]);return;
+    LocalizationAssets.Build(args[0],args[2],args[1],args[4],args[3]=="traditional-text"?"zhotw":"engus");return;
 }
 if(args.Length==4&&args[3]=="localization-export") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));

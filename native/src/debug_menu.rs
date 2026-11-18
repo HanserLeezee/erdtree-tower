@@ -29,9 +29,11 @@ pub fn valid_spirit_test_item(id:u32)->bool {
     erdtree_tower::rewards::custom_spirit(id)&&erdtree_tower::rewards::lookup(id).is_some()
 }
 fn custom_buddy_item(param:i32)->Option<u32> {
+    static COUNTS:std::sync::LazyLock<Vec<i32>>=std::sync::LazyLock::new(||include_str!("../../scene-assets/custom-spirit-definitions.tsv").lines()
+        .map(|line|line.split('|').nth(10).map_or(1,|n|n.parse().expect("Invalid spirit count"))).collect());
     let offset=param.checked_sub(1600000000)?;
     let families=erdtree_tower::rewards::CUSTOM_SPIRITS.len() as i32;
-    if !(0..families*40000).contains(&offset)||offset%1000!=0{return None;}
+    if !(0..families*40000).contains(&offset)||offset%1000>=COUNTS[(offset/40000) as usize]{return None;}
     let id=0x40000000|(erdtree_tower::rewards::CUSTOM_SPIRIT_FIRST+(offset/40000) as u32*1000+(offset%40000/1000) as u32);
     valid_spirit_test_item(id).then_some(id)
 }
@@ -502,6 +504,9 @@ mod tests {
             for (index,(id,_)) in items.iter().enumerate() {
                 assert!(super::valid_spirit_test_item(*id));
                 assert_eq!(super::custom_buddy_item(1600000000+index as i32*40000+level as i32*1000),Some(*id));
+                let count=include_str!("../../scene-assets/custom-spirit-definitions.tsv").lines().nth(index).unwrap().split('|').nth(10).map_or(1,|n|n.parse::<i32>().unwrap());
+                for slot in 0..count {assert_eq!(super::custom_buddy_item(1600000000+index as i32*40000+level as i32*1000+slot),Some(*id));}
+                assert_eq!(super::custom_buddy_item(1600000000+index as i32*40000+level as i32*1000+count),None);
             }
         }
         assert!(super::new_spirits(40).is_empty());

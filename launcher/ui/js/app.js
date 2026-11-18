@@ -286,6 +286,8 @@
     'social-feedback': '<path d="M5 3h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H8l-5 3V5a2 2 0 0 1 2-2Z"/><path d="M12 7v5M12 15h.01"/>',
     'social-history': '<path d="M3 4v5h5M3 9a9 9 0 1 1 0 6"/><path d="M12 7v5l3 2"/>',
     'social-folder': '<path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Zm0 3h18"/>',
+    /* 爱发电：心形里一道闪电 */
+    'social-afdian': '<path d="M12 20.5s-8-4.6-8-10.6A4.4 4.4 0 0 1 12 7.3a4.4 4.4 0 0 1 8 2.6c0 6-8 10.6-8 10.6Z"/><path d="m12.8 9.2-2.3 3.6h3l-2.3 3.6"/>',
   };
 
   function renderSocial() {
@@ -302,7 +304,8 @@
           : SOCIAL_ICONS[item.icon]
           ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + SOCIAL_ICONS[item.icon] + '</svg>'
           : '<img src="assets/icons/' + esc(item.icon) + '.png" alt="">') +
-        (item.badge ? '<i class="badge"></i>' : '');
+        (item.badge ? '<i class="badge"></i>' : '') +
+        (item.short ? '<span class="social-cap">' + esc(item.short) + '</span>' : '');
       b.addEventListener('click', function () {
         if (item.popup === 'account') { openAccountPopup(b); return; }
         /* href 用浏览器打开网页；action 交给宿主（打开日志目录、安装教程等本地功能） */
@@ -1518,6 +1521,7 @@
     var box = el('div', 'repair-page');
     box.appendChild(el('p', 'repair-intro', '按遇到的现象查看解决办法。涉及替换文件时，先保存并退出游戏。'));
     var cases = [
+      ['提示“函数不正确” / MOD 位于 exFAT 磁盘', '本 MOD 请放在 NTFS 格式的分区中运行；放在 exFAT 格式的磁盘可能导致启动时提示“函数不正确”（Incorrect function）。在资源管理器中右键 MOD 所在磁盘，选择“属性”，查看“文件系统”。若为 exFAT，先退出游戏和启动器，再将整个 MOD 文件夹复制到 NTFS 分区，从新位置打开启动器，确认游戏目录后重新启动。若已位于 NTFS 分区仍报错，请保留启动日志反馈。', [['启动器日志', 'openLogs']]],
       ['提示 Existing dinput8.dll detected', '这表示游戏 Game 文件夹里已有 dinput8.dll，加载器为避免覆盖现有文件而停止。先退出游戏，备份该文件并暂时移到 Game 文件夹外，再从启动器重试。它可能来自其他模组加载器，移走后相关模组可能暂时失效；如需恢复，把备份放回原处。只处理所选游戏 Game 目录中的文件，不要删除 Windows 系统目录里的同名文件。', [['启动器日志', 'openLogs']]],
       ['启动失败 / 文件缺失', '先打开启动器日志，查看最近一次启动的错误。确认游戏目录指向包含 eldenring.exe 的 Game 文件夹。文件缺失或损坏可使用校验修复；此操作会按线上版本重新下载文件，本地测试补丁可能被覆盖。', [['启动器日志', 'openLogs'], ['校验并修复文件', 'verify']]],
       ['首次加载慢 / 启动后黑屏', '查看主页的实时加载进度。首次生成本地资源可能需要数分钟，不要连续点击启动。如果长时间停在同一阶段，保存启动器日志后反馈；进度显示的百分比属于当前阶段。', [['启动器日志', 'openLogs']]],

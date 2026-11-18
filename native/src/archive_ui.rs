@@ -343,8 +343,7 @@ fn codex(ui:&Ui,archive:&mut Archive,layout:&Layout,icon:&mut dyn FnMut(u32)->Op
             if !lit {hint(ui,300.0,"在幕间立下这条誓约后解锁");return;}
             text(p(1202.0,300.0),kind.name(),GOLD,1.2,0.0);
             text(p(1202.0,334.0),&format!("最高等级 {} · 立誓 {taken} 次",ROMAN[usize::from(best.min(3))]),MUTED,0.84,0.0);
-            let y=wrapped(ui,p(1130.0,380.0),right,&kind.boon_at(best.max(1)).replace('\n',"，"),BOON,0.92*s);
-            wrapped(ui,[ox+1130.0*s,y+6.0*s],right,&format!("代价：{}",kind.bane_at()),RED,0.92*s);
+            wrapped(ui,p(1130.0,380.0),right,&kind.boon_at(best.max(1)).replace('\n',"，"),BOON,0.92*s);
         },
         Item::Ember(i)=>{
             let (ember,taken)=c.embers[i];

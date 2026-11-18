@@ -48,7 +48,7 @@ fn expanded_oaths_keep_existing_ids_and_only_active_kinds_enter_the_pool() {
     for seed in 0..256 {for kind in State::new(seed,Class::Samurai,1,None,0).offers {seen.insert(kind.index());}}
     assert_eq!(seen.len(),9);
     assert!(!seen.contains(&Kind::Hunter.index()));
-    assert!(Kind::Ascetic.bane().contains("35%"));
+    assert!(Kind::Ascetic.bane().is_empty());
 }
 
 #[test]

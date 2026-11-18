@@ -80,7 +80,8 @@ pub enum Role {Weak,Strong,Boss}
 pub const SOLO_CAP:usize=2;
 /// 后续波次：前一波的条件满足后再等这么久才出场
 pub const WAVE_GAP:std::time::Duration=std::time::Duration::from_secs(3);
-/// 后续波次的敌人出场后这么久内不出招（防止贴脸突袭）；同批、第一波不受影响
+pub const FIRST_WAVE_GRACE:std::time::Duration=std::time::Duration::from_secs(1);
+/// 后续波次的敌人出场后这么久内不出招（防止贴脸突袭）。
 pub const WAVE_GRACE:std::time::Duration=std::time::Duration::from_secs(3);
 #[derive(Clone,Debug,Default)]
 pub struct SpawnGap {
@@ -98,7 +99,7 @@ impl SpawnGap {
     }
     /// 已经放行、而且是等过前批才出场的（后续波次）：出场后有 WAVE_GRACE 的出招保护期
     pub fn later_wave(&self)->bool {self.admitted&&self.blocked}
-    pub fn holds_attacks(&self,since_bound:std::time::Duration)->bool {self.later_wave()&&since_bound<WAVE_GRACE}
+    pub fn holds_attacks(&self,since_bound:std::time::Duration)->bool {self.admitted&&since_bound<if self.later_wave(){WAVE_GRACE}else{FIRST_WAVE_GRACE}}
 }
 /// 普通战单人和联机统一分波；其他战斗保留原有精英节奏、单人上限和 Boss 组规则。
 /// previous 为本组中排在 index 之前的敌人状态，未生成的敌人记为 Waiting。
@@ -139,7 +140,8 @@ mod tests {
     fn later_wave_attacks_wait_three_seconds_from_binding_not_wave_admission() {
         use std::time::Duration as D;
         let mut first=SpawnGap::default();assert!(first.allows(D::ZERO,true));
-        assert!(!first.holds_attacks(D::ZERO));
+        assert!(first.holds_attacks(D::ZERO));
+        assert!(!first.holds_attacks(D::from_secs(1)));
         let mut later=SpawnGap::default();assert!(!later.allows(D::ZERO,false));
         assert!(!later.allows(D::from_secs(10),true));
         assert!(later.allows(D::from_secs(13),true));
@@ -188,10 +190,16 @@ mod tests {
     #[test]
     fn first_wave_and_same_wave_members_have_no_extra_serial_delay() {
         use std::time::Duration as D;
-        let mut first=SpawnGap::default();assert!(first.allows(D::ZERO,true));assert!(!first.later_wave(),"the first wave has no grace");
+        let mut first=SpawnGap::default();assert!(first.allows(D::ZERO,true));assert!(!first.later_wave(),"the first wave spawns immediately");
+        assert!(first.holds_attacks(D::ZERO));assert!(first.holds_attacks(D::from_millis(999)));
+        assert!(!first.holds_attacks(D::from_secs(1)));
         let mut second=[SpawnGap::default(),SpawnGap::default()];
         for gap in &mut second {assert!(!gap.allows(D::ZERO,false));assert!(!gap.allows(D::from_secs(5),true));}
-        for gap in &mut second {assert!(gap.allows(D::from_secs(8),true));}
+        for gap in &mut second {
+            assert!(gap.allows(D::from_secs(8),true));
+            assert!(gap.holds_attacks(D::from_millis(2999)));
+            assert!(!gap.holds_attacks(D::from_secs(3)));
+        }
     }
     #[test]
     fn interrupted_spawn_eligibility_restarts_the_wave_gap() {

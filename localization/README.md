@@ -27,4 +27,8 @@ Select **繁體中文 / Traditional Chinese** in the launcher. All tower UI text
 
 In game the conversion happens in `localization::text()`, so save keys, item IDs, network messages and gameplay comparisons keep their Simplified values. Traditional glyphs are not in the shared UI font subset; `generate_zh_tw_fonts.py` cuts a supplement (`TowerSerif-TW-Regular.otf`, `TowerTitleSerif-TW-Bold.otf`, `ui-glyphs-tw.txt`) that is merged only when the language is Traditional, so other languages keep their package size and font atlas. Rerun it after the UI glyph list changes.
 
-Not covered: item names, descriptions and dialogue that the game itself reads from `msg/zhocn`. Those need a `msg/zhotw` copy built on Windows, and stay Simplified until then.
+Native item names, descriptions and dialogue are provided in `scene-assets/msg/zhotw`. Set the game itself to Traditional Chinese as well as selecting Traditional Chinese in the launcher. The launcher language controls the tower UI; native FMGs follow the game's language.
+
+After `localization-export`, run `python localization/assemble_traditional.py <staging>`, then `cargo run --release --example localize -- <staging>/traditional-input.json <staging>/traditional-translated.json zh-TW`, and finally rerun the Python command with `--assemble`. Use SceneBuilder mode `traditional-text <staging>/fmg-traditional.json` with a separate output directory. Copy only the verified `msg/zhotw` output; original game Traditional text is retained wherever the mod has not changed the Simplified entry. Do not distribute the extracted originals.
+
+The supplementary font generator includes phrase-produced glyphs as well as single-character conversions. It accepts Noto Serif CJK collections or a full Noto Serif SC variable font (400/700 weights). Its build fails if a required glyph is absent. The independent Wiki page is not converted by this pipeline.

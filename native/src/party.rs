@@ -94,6 +94,7 @@ mod scarab_reward_tests {
     }
 }
 pub struct Link {
+    reconnect:super::reconnect::Host,
     pub law_flasks:erdtree_tower::party_law::FlaskCounter,
     pub drawing:erdtree_tower::map_drawing::Sync,
     drawing_sent:Option<(erdtree_tower::map_drawing::Scope,u64,Instant)>,
@@ -188,7 +189,7 @@ impl Link {
             if let Err(e)=worker(c,commands,&events,flag){let _=events.try_send(Receive::Fault(e));}
         }).map_err(|_|"无法启动队伍同步线程")?;
         let ids=std::iter::once(config.player).chain(config.peers.iter().map(|p|p.player)).collect();
-        Ok(Some(Self{config,gate:Gate::new(ids),epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
+        Ok(Some(Self{reconnect:Default::default(),config,gate:Gate::new(ids),epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
             law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:None,queued:Default::default(),peer_faults:vec![],selected:None,ballots:vec![],tx,rx,running,last_report:Instant::now()-Duration::from_secs(1),last_seen:vec![],encounter:None,strikes:Default::default(),strike_epoch:0,strike_seq:0}))
     }
     pub fn from_steam(pending:super::steam_messages::Pending,session:u64,seed:u64)->Result<Self,String> {
@@ -198,7 +199,7 @@ impl Link {
         let peers=if roster.local==roster.host {roster.members.iter().filter(|&&id|id!=roster.local).map(|&player|erdtree_tower::party_game::Peer{player,token:String::new()}).collect()}else{vec![]};
         let config=Config{session,seed,player:roster.local,host:roster.host,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers};
         let (tx,_commands)=mpsc::sync_channel(1);let (_events,rx)=mpsc::sync_channel(1);
-        let mut link=Self{gate:Gate::new(roster.members.clone()),config,epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
+        let mut link=Self{reconnect:super::reconnect::Host{known:roster.members.clone(),..Default::default()},gate:Gate::new(roster.members.clone()),config,epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
             law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:Some(Steam{transport,handshake,roster,latency:Default::default()}),queued:Default::default(),peer_faults:vec![],selected:None,ballots:vec![],tx,rx,running:Arc::new(AtomicBool::new(false)),last_report:Instant::now()-Duration::from_secs(1),last_seen:vec![],encounter:None,strikes:Default::default(),strike_epoch:0,strike_seq:0};
         for (peer,packet) in packets {match steam_event(&link.config,peer,packet){Ok(Some(event))=>link.queued.push_back(event),Ok(None)=>{},Err(e)=>ignored(peer,&e)}}
         Ok(link)
@@ -214,6 +215,8 @@ impl Link {
         if next.host!=old.host||next.local!=old.local||next.members.len()>=old.members.len()
             ||!next.members.iter().all(|id|old.members.contains(id))||!next.members.contains(&next.host) {return None;}
         let gone:Vec<u64>=old.members.iter().copied().filter(|id|!next.members.contains(id)).collect();
+        for &id in &gone {if self.event.pause.departed.contains(&id)&&!self.reconnect.revoked.contains(&id){self.reconnect.revoked.push(id);}}
+        self.reconnect.requests.retain(|r|!gone.contains(&r.peer));
         for &id in &gone {self.gate.remove(id);}
         self.config.peers.retain(|p|!gone.contains(&p.player));
         self.last_seen.retain(|(id,_)|!gone.contains(id));
@@ -221,6 +224,89 @@ impl Link {
         self.ballots.retain(|b|!gone.contains(&b.player));
         steam.roster=next.clone();steam.transport.set_roster(next.clone());
         Some(gone)
+    }
+    pub fn restore_roster(&mut self,next:&erdtree_tower::party_roster::Roster)->bool {
+        let Some(steam)=&mut self.steam else{return false};
+        if !self.reconnect.permits(&steam.roster,next){return false;}
+        let gone:Vec<_>=steam.roster.members.iter().copied().filter(|id|!next.members.contains(id)).collect();
+        for id in &gone {self.gate.remove(*id);}
+        self.config.peers.retain(|p|!gone.contains(&p.player));self.last_seen.retain(|(id,_)|!gone.contains(id));
+        self.event.pause.departed.retain(|id|!gone.contains(id));self.ballots.retain(|b|!gone.contains(&b.player));
+        self.peer_faults.retain(|(id,_)|!gone.contains(id));
+        self.reconnect.requests.retain(|r|!gone.contains(&r.peer));
+        steam.roster=next.clone();steam.transport.set_roster(next.clone());true
+    }
+    pub fn restore_members(&mut self,members:Vec<u64>,generation:u64) {self.reconnect.known=members;self.reconnect.generation=generation;}
+    pub fn reconnect_generation(&self)->u64 {self.reconnect.generation}
+    fn reconnect_send(&self,peer:u64,message:erdtree_tower::party_reconnect::Message)->Result<(),String> {
+        let steam=self.steam.as_ref().ok_or("重连仅支持自动联机会话")?;
+        steam.transport.send(peer,&erdtree_tower::party_handshake::Payload::Reconnect{session:self.config.session,message}.encode()?)
+    }
+    fn reconnect_message(&mut self,peer:u64,session:u64,message:erdtree_tower::party_reconnect::Message)->Result<(),String> {
+        use erdtree_tower::party_reconnect::Message;
+        if !self.host(){return Ok(());}
+        match message {
+            Message::Request{nonce,seed,generation,profile,dlc}=>{
+                let valid=(||->Result<(),String>{
+                    if !self.reconnect.accepts(peer,nonce,session,seed,generation,&self.config)
+                        ||self.stopped.is_some()||self.defeated {return Err("原联机旅程已结束、身份不符或已主动离队，无法恢复此会话".into());}
+                    super::party_compat::profile().ok_or("等待本机兼容检查")?.as_ref().map_err(Clone::clone)?.check(&profile)?;
+                    if self.party_dlc()==Some(true)&&!dlc{return Err("原队伍启用了 DLC，当前客机配置无法恢复".into());}
+                    Ok(())
+                })();
+                if let Err(reason)=valid{return self.reconnect_send(peer,Message::Reject{nonce,reason});}
+                if self.reconnect.requests.iter().any(|r|r.peer==peer&&r.nonce!=nonce&&r.admitted) {
+                    self.reconnect.requests.retain(|r|r.peer!=peer);
+                }
+                if let Some(r)=self.reconnect.requests.iter().find(|r|r.peer==peer) {
+                    if r.nonce!=nonce {return self.reconnect_send(peer,Message::Reject{nonce,reason:"已有重连请求正在确认，请退出房间后重新加入".into()});}
+                    if let Some(checkpoint)=&r.offer {return self.reconnect_send(peer,Message::Offer{nonce,checkpoint:checkpoint.clone(),dlc:self.party_dlc().unwrap_or(true),members:self.reconnect.known.clone(),block:r.block});}
+                } else {
+                    self.gate.remove(peer);self.config.peers.retain(|p|p.player!=peer);
+                    self.last_seen.retain(|(id,_)|*id!=peer);self.peer_faults.retain(|(id,_)|*id!=peer);
+                    self.reconnect.requests.push(super::reconnect::Request{peer,nonce,offer:None,block:-1,admitted:false,touched:Instant::now()});
+                    super::log(format!("RECONNECT request player={peer} session={session}; waiting for safe map"));
+                }
+            },
+            Message::Ack{nonce,epoch} if session==self.config.session&&epoch==self.epoch&&!self.defeated&&self.stopped.is_none()=>{
+                if let Some(r)=self.reconnect.requests.iter_mut().find(|r|r.peer==peer&&r.nonce==nonce&&r.offer.as_ref().is_some_and(|o|o.epoch==epoch)) {
+                    if !r.admitted {
+                        r.admitted=true;r.touched=Instant::now();
+                        if !self.config.peers.iter().any(|p|p.player==peer){self.config.peers.push(erdtree_tower::party_game::Peer{player:peer,token:String::new()});}
+                        self.last_seen.retain(|(id,_)|*id!=peer);self.last_seen.push((peer,Instant::now()));
+                        super::log(format!("RECONNECT committed player={peer} epoch={epoch}"));
+                    }
+                    self.reconnect_send(peer,Message::Ready{nonce,epoch})?;
+                }
+            },_=>{},
+        }
+        Ok(())
+    }
+    fn reconnect_poll(&mut self,run:Option<&Run>) {
+        if !self.host(){return;}
+        let expired:Vec<_>=self.reconnect.requests.iter().filter(|r|r.touched.elapsed()>Duration::from_secs(180)).map(|r|r.peer).collect();
+        for peer in &expired {
+            if let Some(r)=self.reconnect.requests.iter().find(|r|r.peer==*peer) {
+                let _=self.reconnect_send(*peer,erdtree_tower::party_reconnect::Message::Reject{nonce:r.nonce,reason:"重连确认超时，请退出房间后重新加入".into()});
+            }
+            self.gate.remove(*peer);
+        }
+        self.config.peers.retain(|p|!expired.contains(&p.player));self.last_seen.retain(|(p,_)|!expired.contains(p));
+        self.reconnect.requests.retain(|r|!expired.contains(&r.peer));
+        if !self.reconnect.requests.iter().any(|r|r.offer.is_none()){return;}
+        if self.defeated||self.stopped.is_some()||self.event.pause.ticket.is_some()||self.event.pause.queued||!self.gate.pause_ready(){return;}
+        let Some(checkpoint)=run.and_then(|r|erdtree_tower::party_reconnect::Checkpoint::of(r,self.epoch).ok()) else{return;};
+        let Ok(player)=(unsafe {eldenring::cs::PlayerIns::local_player()}) else{return;};
+        let block=i32::from(player.current_block_id);
+        if block<0||!player.chr_ins.modules.physics.standing_on_solid_ground{return;}
+        let waiting:Vec<_>=self.reconnect.requests.iter().filter(|r|r.offer.is_none()).map(|r|(r.peer,r.nonce)).collect();
+        for (peer,nonce) in waiting {
+            if self.reconnect_send(peer,erdtree_tower::party_reconnect::Message::Offer{nonce,checkpoint:checkpoint.clone(),dlc:self.party_dlc().unwrap_or(true),members:self.reconnect.known.clone(),block}).is_ok() {
+                self.gate.rejoin(peer);
+                let r=self.reconnect.requests.iter_mut().find(|r|r.peer==peer).unwrap();r.offer=Some(checkpoint.clone());r.block=block;r.touched=Instant::now();
+                self.selected=None;self.ballots.clear();
+            }
+        }
     }
     /// 掉线排查：列出 Steam 到这些队员的连接状态（断开原因、延迟、质量）
     pub fn net_diagnosis(&self,peers:&[u64])->Vec<String> {
@@ -357,6 +443,7 @@ impl Link {
             Order::PauseCommit{epoch,ticket} if *epoch==self.epoch&&self.event.pause.ticket==Some(*ticket)&&self.event.pause.saved=>{self.event.pause.committed=true;return Ok(false);},
             Order::PauseAbort{epoch,ticket} if *epoch==self.epoch&&self.event.pause.ticket==Some(*ticket)&&!self.event.pause.committed=>{self.event.pause.ticket=None;self.event.pause.queued=false;self.event.pause.saved=false;return Ok(false);},
             Order::LeaveReady{epoch,player} if *epoch==self.epoch&&*player!=self.config.host=>{
+                if !self.reconnect.revoked.contains(player){self.reconnect.revoked.push(*player);}
                 if *player==self.config.player {if self.event.pause.leaving{self.event.pause.leave_ready=true;}}
                 else {self.gate.remove(*player);self.last_seen.retain(|(p,_)|p!=player);self.ballots.retain(|b|b.player!=*player);self.peer_faults.retain(|(p,_)|p!=player);if !self.event.pause.departed.contains(player){self.event.pause.departed.push(*player);}}
                 return Ok(false);
@@ -437,6 +524,9 @@ impl Link {
                 if *epoch==self.epoch&&*seed==self.config.seed{return Ok(false);}
                 if self.epoch.checked_add(1)!=Some(*epoch)||*seed==0||*seed==self.config.seed{return Err("新局同步序号或种子无效".into());}
                 self.config.seed=*seed;self.epoch=*epoch;
+                self.reconnect.generation=*epoch;
+                self.reconnect.requests.clear();
+                if let Some(steam)=&self.steam{self.reconnect.known=steam.roster.members.clone();self.reconnect.revoked.clear();}
                 self.event=Default::default();self.ballots.clear();self.selected=None;
                 self.arrived=false;self.bound=false;self.spawn=false;self.fighting=false;self.victory=false;self.rewards=false;self.portal=false;self.defeated=false;self.encounter=None;
                 super::log(format!("Party new run committed: epoch={epoch} seed={seed}"));
@@ -505,7 +595,10 @@ impl Link {
                 Ok(Receive::Report(id,report))=>{
                     if report.epoch==self.gate.epoch {
                         match self.gate.report(id,report) {
-                            Ok(())=>if let Some(p)=self.last_seen.iter_mut().find(|p|p.0==id){p.1=Instant::now();}else{self.last_seen.push((id,Instant::now()));},
+                            Ok(())=>{
+                                self.reconnect.requests.retain(|r|r.peer!=id||!r.admitted);
+                                if let Some(p)=self.last_seen.iter_mut().find(|p|p.0==id){p.1=Instant::now();}else{self.last_seen.push((id,Instant::now()));}
+                            },
                             Err(e)=>ignored(id,&e),
                         }
                     }
@@ -520,6 +613,7 @@ impl Link {
         self.finish_poll(run,alive,at_hub,rest_end,orders)
     }
     fn receive_steam(&mut self,lobby:bool)->Result<(),String> {
+        let mut reconnect=Vec::new();
         if let Some(steam)=&mut self.steam {
                 use erdtree_tower::party_handshake::Payload;
                 let host=self.config.host;let guest=self.config.player!=host;
@@ -527,9 +621,16 @@ impl Link {
                     if guest&&peer!=host {ignored(peer,"非房主队员向队友发送消息");continue;}
                     let packet=match Payload::decode(&bytes){Ok(packet)=>packet,Err(e)=>{ignored(peer,&e);continue;}};
                     match packet {
+                        Payload::Reconnect{session,message}=>reconnect.push((peer,session,message)),
                         Payload::Latency{session,snapshot}=>{steam.latency.accept(&steam.roster,peer,session,self.config.session,snapshot);},
-                        Payload::Handshake(message)=>for (target,response) in if lobby{steam.handshake.receive_lobby(peer,message)?}else{steam.handshake.receive(peer,message)?} {
-                            steam.transport.send(target,&Payload::Handshake(response).encode()?)?;
+                        Payload::Handshake(message)=>{
+                            let responses=if lobby{steam.handshake.receive_lobby(peer,message.clone())}else{steam.handshake.receive(peer,message.clone())};
+                            let responses=match responses {
+                                Ok(responses)=>responses,
+                                Err(e) if !guest=>{ignored(peer,&e);steam.handshake.rejections(peer,&message,&e)},
+                                Err(e)=>return Err(e),
+                            };
+                            for (target,response) in responses {steam.transport.send(target,&Payload::Handshake(response).encode()?)?;}
                         },
                         packet=>if let Some(event)=steam_event(&self.config,peer,packet).unwrap_or_else(|e|{ignored(peer,&e);None}) {
                             if matches!(event,Receive::Order(Order::ForceEnd)) {
@@ -543,6 +644,7 @@ impl Link {
                 }
                 steam.latency.poll(&steam.transport,&steam.roster,&self.last_seen,self.config.session);
         }
+        for (peer,session,message) in reconnect {if let Err(e)=self.reconnect_message(peer,session,message){ignored(peer,&e);}}
         Ok(())
     }
     /// 成员：记下本机算出的敌人侧余烬效果（换了一场就从头编号）
@@ -574,6 +676,7 @@ impl Link {
                 report.merchant_bound=self.event.merchant_bound;
                 report.drawing=self.drawing.request();
                 report.flask_uses=self.law_flasks.uses;
+                report.leech_hits=super::leech::report().filter(|h|h.key.0==run.seed&&h.key.1==run.act&&run.phase==erdtree_tower::Phase::Combat{id:h.key.2});
                 report.has_stonesword_key=unsafe {eldenring::cs::PlayerIns::local_player()}.is_ok_and(|p|super::loot::count(unsafe {p.player_game_data.as_ref()},0x40001f40)>0);
                 report.rest_end=rest_end;report.portal=self.portal&&self.victory;report.title=self.title;
                 report.event_request=self.event.request;report.event_bound=self.event.bound;report.event_applied=self.event.applied;
@@ -594,6 +697,7 @@ impl Link {
             }
         }
         if self.host()&&self.stopped.is_none() {
+            self.reconnect_poll(run);
             let leaving=self.gate.leaving();
             for player in leaving {if player==self.config.host{continue;}
                 let order=Order::LeaveReady{epoch:self.epoch,player};
@@ -634,7 +738,7 @@ impl Link {
             for &(id,seen) in &self.last_seen {
                 if seen.elapsed()>Duration::from_secs(2) {self.gate.disconnect(id);}
             }
-            let stale=self.last_seen.iter().any(|(_,t)|t.elapsed()>Duration::from_secs(120));
+            let stale=self.last_seen.iter().any(|(id,t)|t.elapsed()>Duration::from_secs(120)&&!self.reconnect.requests.iter().any(|r|r.peer==*id));
             if stale {self.stop("队员游戏状态超时，同步已暂停".into());}
             else {
                 if self.needs_new_run() {
@@ -712,6 +816,22 @@ pub fn random_entropy()->Result<u64,String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reconnect_ack_is_bound_to_peer_nonce_session_epoch_and_is_idempotent() {
+        use super::*;
+        use erdtree_tower::party_reconnect::{Message,Checkpoint};
+        let (mut host,_,_)=test_link(1);let run=Run::new(42,erdtree_tower::Class::Samurai);
+        host.reconnect.requests.push(super::super::reconnect::Request{peer:2,nonce:11,offer:Some(Checkpoint::of(&run,4).unwrap()),block:0,admitted:false,touched:Instant::now()});
+        for (peer,session,nonce,epoch) in [(3,17,11,4),(2,18,11,4),(2,17,12,4),(2,17,11,3)] {
+            host.reconnect_message(peer,session,Message::Ack{nonce,epoch}).unwrap();
+            assert!(!host.reconnect.requests[0].admitted);assert!(host.config.peers.is_empty());
+        }
+        // No Steam transport in this fixture; state must remain committed for a Ready retry.
+        assert!(host.reconnect_message(2,17,Message::Ack{nonce:11,epoch:4}).is_err());
+        assert!(host.reconnect.requests[0].admitted);assert_eq!(host.config.peers.len(),1);
+        assert!(host.reconnect_message(2,17,Message::Ack{nonce:11,epoch:4}).is_err());
+        assert_eq!(host.config.peers.len(),1);assert_eq!(host.last_seen.len(),1);
+    }
     #[test]
     fn pause_host_cannot_commit_until_every_saved_ack_matches() {
         use super::*;
@@ -957,7 +1077,7 @@ mod tests {
         use super::*;
         let config=Config{session:17,seed:42,player,host:1,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers:vec![]};
         let (tx,commands)=mpsc::sync_channel(64);let (events,rx)=mpsc::sync_channel(64);
-        (Link{config,gate:Gate::new(vec![1,2]),epoch:4,arrived:true,bound:true,spawn:true,fighting:true,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
+        (Link{reconnect:Default::default(),config,gate:Gate::new(vec![1,2]),epoch:4,arrived:true,bound:true,spawn:true,fighting:true,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
             law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:None,queued:Default::default(),peer_faults:vec![],selected:None,ballots:vec![],tx,rx,running:Arc::new(AtomicBool::new(true)),last_report:Instant::now(),last_seen:vec![],encounter:None,strikes:Default::default(),strike_epoch:0,strike_seq:0},events,commands)
     }
     #[test]
@@ -1063,7 +1183,7 @@ mod tests {
     fn defeat_clears_event_and_ignores_late_same_epoch_orders() {
         let config=Config{session:17,seed:42,player:2,host:1,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers:vec![]};
         let (tx,_commands)=mpsc::sync_channel(64);let (_events,rx)=mpsc::sync_channel(64);
-        let mut link=Link{config,gate:Gate::new(vec![1,2]),epoch:4,arrived:true,bound:true,spawn:true,fighting:true,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
+        let mut link=Link{reconnect:Default::default(),config,gate:Gate::new(vec![1,2]),epoch:4,arrived:true,bound:true,spawn:true,fighting:true,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
             law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:None,queued:Default::default(),peer_faults:vec![],selected:None,ballots:vec![],tx,rx,running:Arc::new(AtomicBool::new(false)),last_report:Instant::now(),last_seen:vec![],encounter:None,strikes:Default::default(),strike_epoch:0,strike_seq:0};
         let job=erdtree_tower::party_events::Job{epoch:4,wave:1,player:2,kind:erdtree_tower::party_events::Kind::Guards(0)};
         link.accept(&Order::EventStart(job)).unwrap();link.event.bound=Some(1);
@@ -1081,7 +1201,7 @@ mod tests {
     fn new_run_clears_previous_vote_combat_and_event_state_once() {
         let config=Config{session:17,seed:42,player:2,host:1,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers:vec![]};
         let (tx,_commands)=mpsc::sync_channel(64);let (_events,rx)=mpsc::sync_channel(64);
-        let mut link=Link{config,gate:Gate::new(vec![1,2]),epoch:4,arrived:true,bound:true,spawn:true,fighting:true,victory:true,rewards:true,defeated:true,stopped:None,portal:true,title:0,titles:vec![],
+        let mut link=Link{reconnect:Default::default(),config,gate:Gate::new(vec![1,2]),epoch:4,arrived:true,bound:true,spawn:true,fighting:true,victory:true,rewards:true,defeated:true,stopped:None,portal:true,title:0,titles:vec![],
             law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:None,queued:Default::default(),peer_faults:vec![],selected:Some(3),ballots:vec![erdtree_tower::party_vote::Ballot{player:2,node:Some(3)}],tx,rx,running:Arc::new(AtomicBool::new(false)),last_report:Instant::now(),last_seen:vec![],encounter:Some(Instant::now()),strikes:Default::default(),strike_epoch:0,strike_seq:0};
         link.event.job=Some(erdtree_tower::party_events::Job{epoch:4,wave:2,player:2,kind:erdtree_tower::party_events::Kind::Guards(1)});
         let next=Order::NewRun{epoch:5,seed:99};assert!(link.accept(&next).unwrap());
@@ -1119,7 +1239,7 @@ mod tests {
         for signal in 0..3 {
         let config=Config{session:17,seed:42,player:2,host:1,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers:vec![]};
         let (tx,_commands)=mpsc::sync_channel(64);let (events,rx)=mpsc::sync_channel(64);
-        let mut link=Link{config,gate:Gate::new(vec![1,2]),epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
+        let mut link=Link{reconnect:Default::default(),config,gate:Gate::new(vec![1,2]),epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
             law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:None,queued:Default::default(),peer_faults:vec![],selected:Some(0),ballots:vec![],tx,rx,running:Arc::new(AtomicBool::new(false)),last_report:Instant::now(),last_seen:vec![],encounter:None,strikes:Default::default(),strike_epoch:0,strike_seq:0};
         let job=erdtree_tower::party_events::Job{epoch:0,wave:1,player:2,kind:erdtree_tower::party_events::Kind::Scarabs(1)};
         use erdtree_tower::stormveil::Decision;

@@ -496,6 +496,7 @@ pub fn affix_style(affix:erdtree_tower::boss_affixes::Affix)->Style {
         Affix::Leeching=>([204,32,54],[255,96,116],Effect::Pulse,true),
         Affix::Thorned=>([172,42,42],[232,96,84],Effect::Jitter,false),
         Affix::Swift=>([92,222,204],[204,255,246],Effect::Afterimage,false),
+        Affix::Adaptive=>([108,188,216],[204,242,255],Effect::Shimmer,false),
     };
     Style{color,accent,effect,glow}
 }

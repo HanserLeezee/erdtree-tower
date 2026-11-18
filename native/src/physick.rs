@@ -1,6 +1,61 @@
 use eldenring::cs::{EquipDataItem,GaitemCategory,ItemCategory,ItemId,PlayerGameData};
 
 fn bottle(id:ItemId)->bool {id.category()==ItemCategory::Goods&&matches!(id.param_id(),250|251)}
+fn dedupe_slots(pouch:&mut [EquipDataItem],pouch_ids:&mut [eldenring::cs::OptionalItemId],quick:&mut [EquipDataItem],quick_ids:&mut [eldenring::cs::OptionalItemId])->usize {
+    let mut found=false;let mut removed=0;
+    for (slot,id) in pouch.iter_mut().zip(pouch_ids).chain(quick.iter_mut().zip(quick_ids)) {
+        let h=slot.gaitem_handle;
+        let physick=if h.is_indexed(){id.as_valid().is_some_and(bottle)}else{matches!(h.category(),Ok(GaitemCategory::Goods))&&matches!(h.selector(),250|251)};
+        if !physick {continue;}
+        if !found {found=true;continue;}
+        slot.index=-1;slot.gaitem_handle=unsafe {std::mem::transmute::<u32,_>(u32::MAX)};
+        *id=eldenring::cs::OptionalItemId::NONE;removed+=1;
+    }
+    removed
+}
+pub fn repair_duplicates(data:&mut PlayerGameData) {
+    let equipment=&mut data.equipment;
+    let removed=dedupe_slots(&mut equipment.equip_item_data.pouch_slots,&mut equipment.equipment_entries.pouch,
+        &mut equipment.equip_item_data.quick_slots,&mut equipment.equipment_entries.quick_tems);
+    if removed==0{return;}
+    let full=ItemId::new(ItemCategory::Goods,250).unwrap();
+    let items=&equipment.equip_inventory_data.items_data;
+    if let Some(entry)=items.get_entry(full).filter(|e|e.quantity>0) {
+        if let Some(index)=items.find_item_idx(full) {
+            let target=EquipDataItem{gaitem_handle:entry.gaitem_handle,index:index as i32};
+            replace_slots(&mut equipment.equip_item_data.quick_slots,&target);
+            replace_slots(&mut equipment.equip_item_data.pouch_slots,&target);
+            for id in equipment.equipment_entries.quick_tems.iter_mut().chain(equipment.equipment_entries.pouch.iter_mut()) {
+                if id.as_valid().is_some_and(bottle){*id=full.into();}
+            }
+        }
+    }
+    super::log(format!("PHYSICK removed duplicate equipment slots={removed}; inventory and reserve unchanged"));
+}
+
+#[test]
+fn duplicate_physick_slots_keep_pouch_and_preserve_other_items() {
+    use eldenring::cs::{GaitemHandle,OptionalItemId};
+    let slot=|id|EquipDataItem{gaitem_handle:GaitemHandle::from_parts(id,GaitemCategory::Goods),index:42};
+    let item=|id|ItemId::new(ItemCategory::Goods,id).unwrap().into();
+    let mut pouch=[slot(251),slot(900)];let mut pouch_ids=[item(251),item(900)];
+    let mut quick=[slot(250),slot(251),slot(1001)];let mut quick_ids=[item(250),item(251),item(1001)];
+    assert_eq!(dedupe_slots(&mut pouch,&mut pouch_ids,&mut quick,&mut quick_ids),2);
+    assert_eq!(pouch[0].gaitem_handle.selector(),251);
+    for i in 0..2 {assert_eq!(quick[i].index,-1);assert_eq!(quick_ids[i],OptionalItemId::NONE);}
+    assert_eq!(quick[2].gaitem_handle.selector(),1001);assert_eq!(pouch[1].gaitem_handle.selector(),900);
+    assert_eq!(dedupe_slots(&mut pouch,&mut pouch_ids,&mut quick,&mut quick_ids),0);
+}
+#[test]
+fn duplicate_physick_slots_keep_first_quick_when_pouch_has_none() {
+    use eldenring::cs::GaitemHandle;
+    let slot=|id|EquipDataItem{gaitem_handle:GaitemHandle::from_parts(id,GaitemCategory::Goods),index:42};
+    let item=|id|ItemId::new(ItemCategory::Goods,id).unwrap().into();
+    let mut quick=[slot(251),slot(250)];let mut ids=[item(251),item(250)];
+    assert_eq!(dedupe_slots(&mut [],&mut [],&mut quick,&mut ids),1);
+    assert_eq!(quick[0].gaitem_handle.selector(),251);assert_eq!(quick[1].index,-1);
+    assert_eq!(dedupe_slots(&mut [],&mut [],&mut [],&mut []),0);
+}
 pub fn held(data:&PlayerGameData)->u64 {
     data.equipment.equip_inventory_data.items_data.items()
         .filter(|entry|entry.item_id.category()==ItemCategory::Goods&&entry.item_id.param_id()==250)
@@ -57,6 +112,7 @@ fn repair_slots(data:&mut PlayerGameData)->Result<(),String> {
     for id in data.equipment.equipment_entries.quick_tems.iter_mut().chain(data.equipment.equipment_entries.pouch.iter_mut()) {
         if id.as_valid().is_some_and(bottle){*id=full.into();}
     }
+    repair_duplicates(data);
     if super::smith::remaining(data)!=stones_before {super::smith::trace(data,||format!("physick_inventory_changed before={stones_before}"),true);}
     Ok(())
 }

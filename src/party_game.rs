@@ -42,6 +42,7 @@ pub struct Report {
     #[serde(default)] pub scarab_claim:Option<ScarabClaim>,
     #[serde(default)] pub law:crate::law::Law,
     #[serde(default)] pub flask_uses:u64,
+    #[serde(default)] pub leech_hits:Option<crate::leech::Hits>,
     #[serde(default)] pub drawing:Option<crate::map_drawing::Request>,
     #[serde(default)] pub trial:bool,
     #[serde(default)] pub trial_choice:Option<crate::regional_events::Trial>,
@@ -77,10 +78,10 @@ impl ScarabClaim {
 }
 impl Report {
     pub fn new(run:&Run,epoch:u64,arrived:bool,bound:bool,alive:bool)->Self {
-        Self{pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,embers:run.embers.clone(),strikes:vec![],epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
+        Self{leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,embers:run.embers.clone(),strikes:vec![],epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
     }
     pub fn unavailable(epoch:u64)->Self {
-        Self{pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,embers:vec![],strikes:vec![],epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
+        Self{leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,embers:vec![],strikes:vec![],epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
     }
     pub fn at_hub(epoch:u64)->Self {Self{present:true,at_hub:true,alive:true,..Self::unavailable(epoch)}}
 }
@@ -159,6 +160,12 @@ impl Gate {
     }
     pub fn flask_uses(&self)->Vec<(u64,u64)> {
         self.peers.iter().filter_map(|(id,r)|r.as_ref().filter(|r|r.present&&r.epoch==self.epoch).map(|r|(*id,r.flask_uses))).collect()
+    }
+    pub fn leech_hits(&self,local:u64)->Vec<(u64,crate::leech::Hits)> {
+        self.peers.iter().filter(|(id,_)|*id!=local).filter_map(|(id,r)|r.as_ref()
+            .filter(|r|r.present&&r.epoch==self.epoch)
+            .and_then(|r|r.leech_hits.as_ref().filter(|h|h.key.0==r.seed&&h.key.1==r.act))
+            .map(|h|(*id,h.clone()))).collect()
     }
     pub fn drawing_requests(&self)->Vec<(u64,crate::map_drawing::Request)> {
         self.peers.iter().filter_map(|(id,r)|r.as_ref().filter(|r|r.present&&r.alive)
@@ -283,7 +290,12 @@ impl Gate {
     pub fn disconnect(&mut self,id:u64){if let Some(p)=self.peers.iter_mut().find(|p|p.0==id){p.1=None;}}
     /// 队员退出了无缝会话（不是房主）：从队伍里去掉，之后的“全员”判断（出发、开战、胜利、领奖、投票）不再等他
     pub fn remove(&mut self,id:u64)->bool {let before=self.peers.len();self.peers.retain(|p|p.0!=id);self.peers.len()<before}
+    pub fn rejoin(&mut self,id:u64)->bool {
+        if id==0||self.peers.len()>=crate::party_roster::MAX_PLAYERS||self.peers.iter().any(|p|p.0==id){return false;}
+        self.peers.push((id,None));true
+    }
     pub fn report(&mut self,id:u64,report:Report)->RuleResult<()> {
+        if report.leech_hits.as_ref().is_some_and(|h|h.counts.len()>32||h.key.0!=report.seed||h.key.1!=report.act){return Err("队员吸血命中汇报无效".into());}
         if report.resume.as_ref().is_some_and(|p|p.visited.len()>64||!(1..=3).contains(&p.act)||p.law.len()>16){return Err("暂存旅程信息无效".into());}
         if report.visited.len()>64||report.act==0||report.act>3||report.epoch!=self.epoch||!report.law.valid(){return Err("队员旅程进度或律法不匹配".into());}
         if report.event_request.is_some_and(|k|!k.valid()){return Err("队员事件请求无效".into());}
@@ -327,6 +339,8 @@ impl Gate {
     }
     pub fn members(&self)->Vec<u64> {self.peers.iter().map(|p|p.0).collect()}
     pub fn pause_ready(&self)->bool {
+        // The saved run remains Map while the native encounter waits for entry.
+        if !matches!(self.stage,Stage::Map|Stage::Reward|Stage::Service){return false;}
         let Some(first)=self.peers.first().and_then(|p|p.1.as_ref()) else{return false};
         self.all(|r|r.alive&&r.map_ready&&r.seed==first.seed&&r.act==first.act&&r.visited==first.visited&&r.law==first.law)
     }
@@ -473,6 +487,31 @@ mod tests {
         assert!(matches!(gate.boss_test(&run,test).unwrap(),Order::BossTest{epoch:1,seed:42,test:t} if t==test));
         assert_eq!(gate.stage,Stage::Travel);
         assert!(gate.boss_test(&run,test).is_err());assert_eq!(gate.epoch,1);
+    }
+    #[test]
+    fn reconnect_cannot_treat_precombat_map_reports_as_a_safe_checkpoint() {
+        let run=Run::new(42,crate::Class::Samurai);
+        let node=run.available().into_iter().find(|&id|run.nodes[id].kind.combat()).unwrap();
+        let mut gate=Gate::new(vec![1,2]);
+        for peer in [1,2] {gate.report(peer,Report::new(&run,0,false,false,true)).unwrap();}
+        gate.enter(&run,node).unwrap();
+        assert_eq!(run.phase,Phase::Map);
+        assert!(crate::party_reconnect::Checkpoint::of(&run,gate.epoch).is_ok());
+        gate.remove(2);
+        let report=Report::new(&run,gate.epoch,false,false,true);
+        gate.report(1,report.clone()).unwrap();
+        for stage in [Stage::Travel,Stage::Combat,Stage::Fighting,Stage::Stopped] {
+            gate.stage=stage;
+            assert!(!gate.pause_ready(),"unsafe checkpoint at {stage:?}");
+        }
+        for stage in [Stage::Map,Stage::Reward,Stage::Service] {
+            gate.stage=stage;assert!(gate.pause_ready(),"safe map at {stage:?}");
+        }
+        gate.stage=Stage::Travel;
+        let mut arrived=report;arrived.arrived=true;gate.report(1,arrived.clone()).unwrap();
+        assert!(matches!(gate.spawn(),Some(Order::Spawn{..})),"remaining host can finish the room while reconnect waits");
+        arrived.bound=true;gate.report(1,arrived).unwrap();
+        assert!(matches!(gate.engage(),Some(Order::Engage{..})));
     }
     #[test]
     fn suspension_barriers_require_every_member_and_matching_progress() {

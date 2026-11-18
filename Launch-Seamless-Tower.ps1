@@ -7,6 +7,20 @@ $networkSupport = Join-Path (Split-Path $loaderSupport) 'Tower-Network.ps1'
 . $networkSupport
 if ($Network -eq 'Auto') { $Network = Get-TowerNetwork $GameDir }
 Assert-TowerLaunchNetwork $GameDir $Network
+function Get-TowerJunctionPath([string]$Path) {
+    do {
+        $stripped = $false
+        foreach ($prefix in @('\\?\', '\??\', 'Global\', '\Global\')) {
+            if ($Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+                $Path = $Path.Substring($prefix.Length)
+                $stripped = $true
+                break
+            }
+        }
+    } while ($stripped)
+    if ($Path.StartsWith('UNC\', [StringComparison]::OrdinalIgnoreCase)) { $Path = '\\' + $Path.Substring(4) }
+    [IO.Path]::GetFullPath($Path).TrimEnd('\')
+}
 function Assert-TowerLobbyPassword([string]$RoomText, [string]$Settings) {
     $room = $RoomText | ConvertFrom-Json
     $entries = [regex]::Matches($Settings, '(?mi)^[ \t]*cooppassword[ \t]*=[ \t]*([^\r\n;#]*)')
@@ -199,7 +213,7 @@ $assetLink = Join-Path $runtime 'scene-assets'
 if (Test-Path -LiteralPath $assetLink) {
     $linkItem = Get-Item -LiteralPath $assetLink -Force
     $linkTarget = @($linkItem.Target | Where-Object { $_ }) | Select-Object -First 1
-    $current = $linkItem.LinkType -eq 'Junction' -and $linkTarget -and ([IO.Path]::GetFullPath($linkTarget).TrimEnd('\') -ieq [IO.Path]::GetFullPath($assets).TrimEnd('\'))
+    $current = $linkItem.LinkType -eq 'Junction' -and $linkTarget -and ((Get-TowerJunctionPath $linkTarget) -ieq (Get-TowerJunctionPath $assets))
     if (-not $current) {
         if ($linkItem.LinkType) { [IO.Directory]::Delete($assetLink) }
         else { Move-Item -LiteralPath $assetLink -Destination ($assetLink + '.stale-' + (Get-Date -Format 'yyyyMMddHHmmss')) }

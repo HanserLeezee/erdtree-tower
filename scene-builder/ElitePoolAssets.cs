@@ -89,6 +89,7 @@ static class ElitePoolAssets {
                         part.Position=anchor.Position;part.Rotation=anchor.Rotation;part.CollisionPartName=anchor.CollisionPartName;
                         part.TalkID=-1;part.PlatoonID=-1;part.ChrActivateCondParamID=0;part.BackupEventAnimID=-1;part.WalkRouteName=null;
                         part.SpEffectSetParamID=new int[part.SpEffectSetParamID.Length];PartyPlacement.Prepare(part);
+                        RadahnVisibility.Prepare(part);
                         map.Parts.Enemies.Add(part);additions.Add(entity);actors++;
                         init.Instructions.Insert(prefix++,new(2004,5,new object[]{entity,(byte)0}));
                         uint request=guard?45003300+Slots[i]%10000:PartyEnemyEvents.Request(entity);

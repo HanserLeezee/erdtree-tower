@@ -11,7 +11,7 @@
     <RootNamespace>Tower.Launcher</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>tower.ico</ApplicationIcon>
-    <Version>1.7.1</Version>
+    <Version>1.7.2</Version>
     <Product>黄金树爬塔启动器</Product>
     <Description>黄金树爬塔启动器：安装更新、联机大厅与游戏启动。</Description>
     <AssemblyTitle>黄金树爬塔启动器</AssemblyTitle>
