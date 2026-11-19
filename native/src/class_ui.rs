@@ -184,6 +184,20 @@ pub fn draw(ui:&Ui,screen:&mut ClassScreen)->Option<ClassAction> {
                 draw.add_rect_filled_multicolor(p(800.0,y0-8.0),p(x0+total+160.0,y0+54.0),band(0.75),band(0.0),band(0.0),band(0.75));
                 drop(draw);
                 text(x0,y0+8.0,&question,fade(gold,k),24.0,0.0);
+                // 联机选召唤师：确认前在确认栏上方给出醒目警告（召唤物在联机里容易引发同步问题、闪退）
+                if ROLES[index].name=="召唤师"&&crate::runtime::in_party() {
+                    let warning="联机警告：召唤师在联机中容易触发 bug 导致闪退，请慎重选择，并提前告诉队友。";
+                    let ww=measure(warning,19.0);let wy=y0-50.0;
+                    let draw=ui.get_window_draw_list();
+                    let red=|a:f32|ImColor32::from_rgba(120,22,18,(a*k*255.0) as u8);
+                    draw.add_rect_filled_multicolor(p(800.0-ww*0.5-120.0,wy),p(800.0,wy+36.0),red(0.0),red(0.92),red(0.92),red(0.0));
+                    draw.add_rect_filled_multicolor(p(800.0,wy),p(800.0+ww*0.5+120.0,wy+36.0),red(0.92),red(0.0),red(0.0),red(0.92));
+                    let pulse=0.75+0.25*((now*4.0).sin() as f32);
+                    draw.add_rect(p(800.0-ww*0.5-28.0,wy+7.0),p(800.0-ww*0.5-6.0,wy+29.0),ImColor32::from_rgba(255,214,120,(pulse*k*255.0) as u8)).filled(true).rounding(3.0*s).build();
+                    drop(draw);
+                    text(800.0-ww*0.5-17.0,wy+6.0,"!",fade([0.25,0.06,0.04,1.0],k),20.0,0.5);
+                    text(800.0-ww*0.5,wy+7.0,warning,fade([1.0,0.88,0.82,1.0],k),19.0,0.0);
+                }
                 let bx=x0+qw+28.0;
                 if crate::archive_style::button_pad(ui,"class-confirm","确认",Some(crate::pad::CONFIRM),p(bx,y0),p(bx+bw,y0+46.0),crate::archive_style::Tone::Primary,s)&&ready {choose(screen,index);}
                 if crate::archive_style::button_pad(ui,"class-cancel","重新选择",Some(crate::pad::BACK),p(bx+bw+gap,y0),p(bx+bw*2.0+gap,y0+46.0),crate::archive_style::Tone::Normal,s)&&ready {screen.chosen=None;crate::sfx::play("close");}

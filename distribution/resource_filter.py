@@ -20,4 +20,8 @@ EXCLUSIONS = {**dict.fromkeys(EMBEDDED, 'embedded in the DLL via include_str!'),
 
 
 def include_scene_asset(relative):
-    return str(relative).replace('\\', '/') not in EXCLUSIONS
+    path = str(relative).replace('\\', '/')
+    # 舞会的舞曲是用户自备的商业歌曲：只在本机测试，绝不进发布包
+    if path.startswith('dance/') and path.lower().endswith('.wav'):
+        return False
+    return path not in EXCLUSIONS

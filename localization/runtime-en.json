@@ -297,5 +297,7 @@
   "战斗胜利，选择一项奖励后继续。": "Victory! Choose a reward to continue.",
   "调试失败：{error}": "Debug action failed: {error}",
   "旅程未加载": "Run not loaded",
-  "奖励执行中断，已停止重发：{error}": "Reward processing interrupted; retries stopped: {error}"
+  "奖励执行中断，已停止重发：{error}": "Reward processing interrupted; retries stopped: {error}",
+  "已用掉营地送的强化石，这个营地不能再补瓶。升级、换战灰、记忆法术等其他服务照常可用，准备好后从传送门离开。": "The camp's free smithing stone is used, so you can't refill flasks here. Leveling, Ashes of War, memorizing spells and other services remain available. Leave through the portal when ready.",
+  "补瓶完成，营地送的强化石已收回。其他服务照常可用，准备好后从传送门离开。": "Flasks refilled; the camp's free smithing stone was taken back. Other services remain available. Leave through the portal when ready."
 }

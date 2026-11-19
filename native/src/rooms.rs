@@ -483,7 +483,7 @@ impl Room {
             match self.allowance.poll(self.started.elapsed(),held) {
                 super::smith::GrantStep::Request=>{
                     self.view.loading=true;
-                    self.view.message="正在发放本次营地的强化石……".into();
+                    self.view.message="正在发放营地送的强化石……".into();
                     super::smith::prepare(data)?;
                     return Ok(());
                 },
@@ -493,7 +493,7 @@ impl Room {
                     super::log("Camp allowance confirmed; automatic issuance disabled for this room");
                 },
                 super::smith::GrantStep::Failed=>{
-                    self.view.message="强化石尚未确认到账，已停止自动发放；补瓶、加点和免费菜单仍可使用。".into();
+                    self.view.message="营地送的强化石没能确认到账，这次不再自动发放；补瓶、升级和其他服务照常可用。".into();
                 },
             }
         }

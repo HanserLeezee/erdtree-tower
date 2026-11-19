@@ -119,5 +119,12 @@
   "已挂载倍率效果数：{}   限定致命一击：{}": "Applied Multiplier Effects: {0}   Critical Hits Only: {1}",
   "进入战斗后背刺或处决一次，再打开此页：真实触发次数应 +1，层数应 +1，倍率应增加 0.05。普通攻击不应加层。营地假人不走战斗叠层检测，请使用战斗或 Boss 测试入口。": "Perform a backstab or critical in battle, then reopen this page. Trigger count and stacks should each increase by 1, and the multiplier by 0.05. Normal attacks should not add stacks. Camp dummies do not use battle stack detection; use a battle or boss test.",
   "10 层按钮仅用于手动对照参数，不计入真实触发次数。比较伤害请保持同一把武器、同一敌人及其他增益不变，并关闭秒杀。": "The 10-stack button is for manual parameter comparison and does not count as an actual trigger. Compare damage using the same weapon, enemy, and buffs, with instant kill disabled.",
-  "全部自制骨灰（含按怪池补齐的），每次领取 1 份，可重复补充。装备到快捷栏后，在战斗场地手动召唤；检验胜利返还请使用召唤师。": "All custom Spirit Ashes (including those added from the enemy pools). Receive one copy per click; repeat to restock. Equip in a quick slot and summon manually in a battle arena. Use Summoner to test victory refunds."
+  "全部自制骨灰（含按怪池补齐的），每次领取 1 份，可重复补充。装备到快捷栏后，在战斗场地手动召唤；检验胜利返还请使用召唤师。": "All custom Spirit Ashes (including those added from the enemy pools). Receive one copy per click; repeat to restock. Equip in a quick slot and summon manually in a battle arena. Use Summoner to test victory refunds.",
+  "只打开界面看效果，不改变旅程进度。": "Opens the screen for preview only; run progress is unchanged.",
+  "联机无法开始的提示": "Co-op start failure notice",
+  "试炼完成：两项护符赐福": "Trial complete: two talisman blessings",
+  "试炼完成：没有新增赐福": "Trial complete: no new blessings",
+  "癫火舞会试跳：方向键按箭头，判定点按空格；不发奖励。先关掉调试菜单再跳。": "Madfire Ball test dance: press arrows with the arrow keys and Space on the beat mark. No rewards. Close the debug menu first.",
+  "普通": "Normal",
+  "困难": "Hard"
 }

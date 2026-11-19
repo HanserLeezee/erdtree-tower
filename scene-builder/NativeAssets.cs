@@ -43,7 +43,7 @@ static class NativeAssets {
         }
         if(service==1) {
             states[2].EntryCommands.Clear();states[2].EntryCommands.AddRange(new[]{Cmd(110),Cmd(20)});
-            foreach(var (choice,text) in new[]{(1,9500001),(2,9500041),(3,9500042),(99,9500003)})states[2].EntryCommands.Add(Cmd(19,choice,text,-1));
+            foreach(var (choice,text) in new[]{(1,9500001),(2,9500041),(99,9500003)})states[2].EntryCommands.Add(Cmd(19,choice,text,-1));
             states[4].Conditions.Clear();
             foreach(int choice in new[]{1,2})states[4].Conditions.Add(Go(8,And(Eq(Fn(23),choice),Flag(basis+995))));
             foreach(var (choice,state,command,menu) in new[]{(1,5,Cmd(24,0),9),(2,10,Cmd(22,SmithAssets.ShopFirst,SmithAssets.ShopFirst+99),5),(3,11,Cmd(48),7)}) {

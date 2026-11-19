@@ -10,6 +10,12 @@ pub enum Payload {
     Fault{session:u64},
     Latency{session:u64,snapshot:crate::party_latency::Snapshot},
 }
+/// 队友的爬塔版本不同或太旧（协议版本、缺少兼容信息）
+pub const OUTDATED:&str="队友的爬塔版本和你不同，无法一起开始。请所有人在启动器里更新到同一个最新版本，再重新进房。";
+/// 已经开局后有队友断线重连：运行时据此在大赐福重新组队（lobby_reconnect_error 用它判断）
+pub const RECONNECTED:&str="有队友断线后又重新连上了，需要重新组队。请所有人回到大赐福，稍等几秒会自动重新确认。";
+/// 双方看到的成员名单不同（有人刚进出房间）
+pub const ROSTER_CHANGED:&str="队伍成员刚发生变化，正在重新确认，请稍等几秒。";
 #[derive(Serialize,Deserialize)]
 struct Envelope {magic:String,version:u32,payload:Payload}
 impl Payload {
@@ -21,10 +27,10 @@ impl Payload {
         if bytes.len()>256*1024{return Err("队伍消息过大".into());}
         let header:serde_json::Value=serde_json::from_slice(bytes).map_err(|_|"队伍消息格式无效")?;
         if let Some(version)=header.get("version").and_then(|v|v.as_u64()) {
-            if version!=u64::from(VERSION){return Err(format!("爬塔协议版本不匹配：本机 {VERSION}，对方 {version}。请所有玩家更新同一版爬塔补丁。"));}
+            if version!=u64::from(VERSION){return Err(format!("你和队友的爬塔版本不同，无法一起开始。请所有人在启动器里更新到同一个最新版本，再重新进房。（通信版本：你 {VERSION}，对方 {version}）"));}
         }
         let envelope:Envelope=serde_json::from_value(header).map_err(|_|"队伍消息格式无效")?;
-        if envelope.magic!="ERDTREE-PARTY"||envelope.version!=VERSION{return Err("队伍协议不匹配".into());}
+        if envelope.magic!="ERDTREE-PARTY"||envelope.version!=VERSION{return Err(OUTDATED.into());}
         Ok(envelope.payload)
     }
 }
@@ -55,7 +61,7 @@ impl Handshake {
     pub fn new(roster:Roster,nonce:u64,seed:u64)->RuleResult<Self> {
         if nonce==0||roster.members.len()<2||roster.members.len()>crate::party_roster::MAX_PLAYERS
             ||!roster.members.contains(&roster.local)||!roster.members.contains(&roster.host)
-            ||roster.members.contains(&0)||roster.members.windows(2).any(|p|p[0]>=p[1]) {return Err("队伍握手身份无效".into());}
+            ||roster.members.contains(&0)||roster.members.windows(2).any(|p|p[0]>=p[1]) {return Err("没能确认队伍里有哪些玩家。请所有人退出房间，由房主重新开房后再加入。".into());}
         let peers=roster.members.iter().filter(|&&id|id!=roster.local).map(|&id|(id,None,false)).collect();
         let session=(roster.local==roster.host).then_some((nonce,seed));
         Ok(Self{roster,nonce,session,peers,committed:false,dlc:true,peer_dlc:vec![],party_dlc:None,compatibility:None})
@@ -71,22 +77,31 @@ impl Handshake {
     pub fn ready(&self)->Option<(u64,u64)> {self.committed.then_some(self.session).flatten()}
     /// 提交后整队是否按「有 DLC」运行
     pub fn party_dlc(&self)->Option<bool> {self.committed.then_some(self.party_dlc).flatten()}
+    /// 握手还没完成时给玩家看的说明。玩家用 Steam ID 表示，原生层显示前会换成角色名
     pub fn waiting_reason(&self)->String {
         if self.roster.local!=self.roster.host {
-            return format!("等待房主 {} 的{}。尚不能确定是网络延迟还是对方未加载爬塔模块。",self.roster.host,if self.session.is_some(){"握手提交"}else{"握手回应"});
+            return format!("正在等待房主 {} 确认队伍，通常几秒内就会完成。\n\n超过半分钟还没开始的话：\n· 确认房主也是用爬塔启动器进的游戏；\n· 确认大家的爬塔版本一样（启动器里能看到）；\n· 仍然不行，就退出房间重新加入。",self.roster.host);
         }
-        let pending:Vec<_>=self.peers.iter().filter(|p|!p.2).map(|p|format!("队员 {}：{}",p.0,if p.1.is_none(){"尚未收到握手消息"}else{"尚未确认房主握手"})).collect();
-        format!("爬塔握手未完成（队伍 {} 人）：\n{}\n尚未收到响应不等于版本不匹配；请检查对应队员是否从爬塔入口启动。",self.roster.members.len(),pending.join("\n"))
+        let names=|ids:Vec<u64>|ids.iter().map(u64::to_string).collect::<Vec<_>>().join("、");
+        let silent=names(self.peers.iter().filter(|p|p.1.is_none()).map(|p|p.0).collect());
+        let syncing=names(self.peers.iter().filter(|p|p.1.is_some()&&!p.2).map(|p|p.0).collect());
+        let mut text=format!("还有队友没准备好（队伍 {} 人），暂时不能开始。",self.roster.members.len());
+        if !silent.is_empty() {text+=&format!("\n还没有回应：{silent}");}
+        if !syncing.is_empty() {text+=&format!("\n正在确认，请稍等几秒：{syncing}");}
+        if !silent.is_empty() {
+            text+="\n\n请没有回应的队友检查：\n· 是用爬塔启动器进的游戏，不是直接开法环或无缝联机；\n· 爬塔版本和房主一样（启动器里能看到）；\n· 已经回到大赐福，没有卡在加载。\n检查后重新加入房间即可。";
+        }
+        text
     }
     pub fn receive_lobby(&mut self,sender:u64,message:Message)->RuleResult<Vec<(u64,Message)>> {
-        if matches!(&message,Message::Hello{version,..} if *version!=VERSION){return Err("队伍协议不匹配".into());}
+        if matches!(&message,Message::Hello{version,..} if *version!=VERSION){return Err(OUTDATED.into());}
         self.preflight(sender,&message)?;
         if matches!(&message,Message::Reject{nonce,..} if self.reject_matches(sender,*nonce)){return self.receive(sender,message);}
         if let Message::Hello{version,nonce,members,..}=&message {
             if self.roster.local==self.roster.host&&*version==VERSION&&*nonce!=0&&members==&self.roster.members {
                 if let Some(peer)=self.peers.iter_mut().find(|p|p.0==sender) {
                     if peer.1.is_some_and(|old|old!=*nonce) {
-                        if self.committed {return Err("队员已重新连接，需要重新建立会话".into());}
+                        if self.committed {return Err(RECONNECTED.into());}
                         peer.1=Some(*nonce);peer.2=false;
                     }
                 }
@@ -96,14 +111,14 @@ impl Handshake {
         Ok(self.receive(sender,message).unwrap_or_default())
     }
     pub fn receive(&mut self,sender:u64,message:Message)->RuleResult<Vec<(u64,Message)>> {
-        if sender==self.roster.local||!self.roster.members.contains(&sender){return Err("消息不属于当前队伍".into());}
+        if sender==self.roster.local||!self.roster.members.contains(&sender){return Err("收到了不在这支队伍里的玩家发来的消息，已忽略。".into());}
         self.preflight(sender,&message)?;
         let host=self.roster.local==self.roster.host;
         match message {
             Message::Hello{version,nonce,members,dlc,..} if host=>{
-                if version!=VERSION||nonce==0||members!=self.roster.members{return Err("队伍版本或成员不一致".into());}
+                if version!=VERSION||nonce==0||members!=self.roster.members{return Err(ROSTER_CHANGED.into());}
                 let peer=self.peers.iter_mut().find(|p|p.0==sender).unwrap();
-                if peer.1.is_some_and(|old|old!=nonce){return Err("队员已重新连接，需要重新建立会话".into());}
+                if peer.1.is_some_and(|old|old!=nonce){return Err(RECONNECTED.into());}
                 peer.1=Some(nonce);
                 self.peer_dlc.retain(|p|p.0!=sender);self.peer_dlc.push((sender,dlc));
                 let (session,seed)=self.session.unwrap();
@@ -111,13 +126,13 @@ impl Handshake {
             },
             Message::Offer{nonce,session,seed,members,..} if !host&&sender==self.roster.host=>{
                 if nonce!=self.nonce||session==0||members!=self.roster.members
-                    ||self.session.is_some_and(|s|s!=(session,seed)){return Err("收到过期或冲突的队伍邀请".into());}
+                    ||self.session.is_some_and(|s|s!=(session,seed)){return Err("收到了上一次组队留下的旧消息，已忽略，稍后会自动重试。".into());}
                 self.session=Some((session,seed));
                 Ok(vec![(sender,Message::Ack{nonce:self.nonce,session})])
             },
             Message::Ack{nonce,session} if host=>{
                 let peer=self.peers.iter_mut().find(|p|p.0==sender).unwrap();
-                if peer.1!=Some(nonce)||self.session.unwrap().0!=session{return Err("队伍确认不属于当前会话".into());}
+                if peer.1!=Some(nonce)||self.session.unwrap().0!=session{return Err("收到了上一次组队留下的旧确认，已忽略，稍后会自动重试。".into());}
                 peer.2=true;
                 if !self.peers.iter().all(|p|p.2){return Ok(vec![]);}
                 self.committed=true;
@@ -126,14 +141,14 @@ impl Handshake {
                 Ok(self.peers.iter().map(|p|(p.0,Message::Commit{nonce:p.1.unwrap(),session,dlc})).collect())
             },
             Message::Commit{nonce,session,dlc} if !host&&sender==self.roster.host=>{
-                if nonce!=self.nonce||self.session.is_none_or(|s|s.0!=session){return Err("会话提交不匹配".into());}
+                if nonce!=self.nonce||self.session.is_none_or(|s|s.0!=session){return Err("收到了上一次组队留下的旧确认，已忽略，稍后会自动重试。".into());}
                 self.committed=true;self.party_dlc=Some(dlc);Ok(vec![])
             },
             Message::Reject{nonce,reason} if self.reject_matches(sender,nonce)=>{
-                if reason.len()>512||reason.is_empty(){return Err("对端兼容检查拒绝信息无效".into());}
-                Err(format!("队员 {sender} 拒绝开局：{reason}"))
+                if reason.len()>512||reason.is_empty(){return Err("队友那边无法开始，但没有说明原因。请队友查看自己游戏里的提示。".into());}
+                Err(format!("队友 {sender} 那边无法开始：{reason}"))
             },
-            _=>Err("消息发送者没有对应会话权限".into()),
+            _=>Err("收到了不该由这位玩家发出的组队消息，已忽略。".into()),
         }
     }
     fn reject_matches(&self,sender:u64,nonce:u64)->bool {
@@ -163,7 +178,7 @@ impl Handshake {
         match (&self.compatibility,remote) {
             (Some(local),Some(remote))=>local.check(remote),
             (None,None)=>Ok(()),
-            _=>Err("缺少开局兼容信息，请全队更新同一构建后重启游戏".into()),
+            _=>Err(OUTDATED.into()),
         }
     }
 }
@@ -200,18 +215,18 @@ mod tests {
         let ack=guest.receive_lobby(1,offer).unwrap().remove(0).1;
         host.receive_lobby(2,ack).unwrap();
         let error=host.receive_lobby(2,Message::Hello{version:VERSION,nonce:202,members:vec![1,2],dlc:true,compatibility:None}).unwrap_err();
-        assert!(error.contains("重新连接"));assert_eq!(host.ready(),Some((101,42)));
+        assert!(error.contains("重新连上"));assert_eq!(host.ready(),Some((101,42)));
     }
     #[test]
     fn diagnostics_separate_missing_response_from_version_conflict() {
         let mut host=state(1);
-        assert!(host.waiting_reason().contains("队员 2：尚未收到握手消息"));
+        assert!(host.waiting_reason().contains("还没有回应：2"));
         host.receive(2,super::Message::Hello{version:super::VERSION,nonce:102,members:vec![1,2,3],dlc:true,compatibility:None}).unwrap();
-        assert!(host.waiting_reason().contains("队员 2：尚未确认房主握手"));
-        assert!(host.waiting_reason().contains("队员 3：尚未收到握手消息"));
+        assert!(host.waiting_reason().contains("请稍等几秒：2"));
+        assert!(host.waiting_reason().contains("还没有回应：3"));
         let bytes=br#"{"magic":"ERDTREE-PARTY","version":1,"payload":{"UnknownFutureMessage":{}}}"#;
         let error=super::Payload::decode(bytes).unwrap_err();
-        assert!(error.contains(&format!("本机 {}，对方 1",super::VERSION)));
+        assert!(error.contains(&format!("你 {}，对方 1",super::VERSION)));
         assert!(state(2).waiting_reason().contains("等待房主 1"));
     }
     use super::*;

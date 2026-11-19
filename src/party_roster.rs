@@ -12,12 +12,12 @@ impl Roster {
         let mut local=None;let mut members=Vec::with_capacity(entries.len());
         for entry in entries {
             if entry.id==0||entry.joining||members.contains(&entry.id) {return Err("会话成员不完整或重复".into());}
-            if entry.host!=(entry.id==host) {return Err("会话房主标记不一致".into());}
+            if entry.host!=(entry.id==host) {return Err("没能确认谁是房主。请所有人退出房间，由房主重新开房后再加入。".into());}
             if entry.local&&local.replace(entry.id).is_some() {return Err("会话存在多个本机成员".into());}
             members.push(entry.id);
         }
         let local=local.ok_or("会话缺少本机成员")?;
-        if !members.contains(&host)||(local==host)!=local_is_host {return Err("会话房主身份不一致".into());}
+        if !members.contains(&host)||(local==host)!=local_is_host {return Err("没能确认谁是房主。请所有人退出房间，由房主重新开房后再加入。".into());}
         members.sort_unstable();
         Ok(Self{local,host,members})
     }

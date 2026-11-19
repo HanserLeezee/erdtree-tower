@@ -1,5 +1,7 @@
 use std::{sync::{Arc,atomic::{AtomicBool,Ordering},mpsc::{self,SyncSender,Receiver}},thread,time::{Duration,Instant}};
 use erdtree_tower::{Run,party_game::{Config,Gate,Order,Report},party_link::*};
+/// 队友的游戏出错、本局停止（runtime::lobby_reconnect_error 按开头判断后在大赐福重新组队）
+pub const TEAMMATE_FAULT:&str="队友的游戏出了错误，这一局已停止。请大家回到大赐福重新组队；如果反复出现，请把队友的 tower-preview.log 发给作者。";
 fn config_path(value:Option<std::ffi::OsString>)->Option<std::ffi::OsString> {value.filter(|path|!path.is_empty())}
 pub fn manual_config()->Option<std::ffi::OsString> {config_path(std::env::var_os("ERDTREE_TOWER_PARTY"))}
 const QUEUE:usize=1024;
@@ -381,7 +383,7 @@ impl Link {
             present
         });
         if self.peer_faults.iter().any(|(_,at)|now.saturating_duration_since(*at)>=Duration::from_secs(3)) {
-            self.stop("队友报告游戏执行失败，请查看队友日志".into());
+            self.stop(TEAMMATE_FAULT.into());
         }
     }
     pub fn enter(&mut self,run:&Run,node:usize)->Result<(),String> {
@@ -1411,7 +1413,7 @@ fn worker(config:Config,commands:Receiver<Send>,events:&SyncSender<Receive>,runn
         while running.load(Ordering::Acquire) {
             for event in host.poll(){match event{
                 HostEvent::Message{player,message:ClientMessage::Game(report)}=>backlog.latest(player,Receive::Report(player,report)),
-                HostEvent::Message{message:ClientMessage::Fault(_),..}=>emit(&mut backlog,Receive::Fault("队友报告游戏执行失败，请查看队友日志".into()))?,
+                HostEvent::Message{message:ClientMessage::Fault(_),..}=>emit(&mut backlog,Receive::Fault(TEAMMATE_FAULT.into()))?,
                 HostEvent::Message{player,..}=>ignored(player,"队伍协议不匹配"),
                 HostEvent::Disconnected(id)=>{connected.remove(&id);emit(&mut backlog,Receive::Disconnected(id))?;},
                 HostEvent::Connected(id)=>{

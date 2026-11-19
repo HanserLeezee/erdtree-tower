@@ -1,0 +1,24 @@
+# 癫火舞会的舞步：档位|动画编号|手势名（动画编号 = GestureParam.msgAnimId = 80000 + 手势编号×10）
+# 档位：flashy 完美/很好（连击高时优先挑前面几个）、light 不错、miss 勉强/失误、finale_s/finale_a/finale_b/finale_c 曲终收尾
+flashy|80720|华丽旋转
+flashy|80700|欢喜跳跃
+flashy|80710|得意洋洋
+flashy|80730|打响指
+flashy|80600|拍手叫好
+flashy|80500|鼓舞
+flashy|80510|振奋
+flashy|80090|力量！
+flashy|80540|火焰，助我一臂之力
+flashy|80520|以剑为誓
+light|80010|有礼的行礼
+light|80080|随意问候
+light|80070|挥手
+light|80060|热烈欢迎
+light|80210|指上方
+light|80230|招手
+miss|80800|失望
+miss|80240|等等！
+finale_s|81060|黄金律法全身祷告
+finale_a|80710|得意洋洋
+finale_b|80000|行礼
+finale_c|80800|失望

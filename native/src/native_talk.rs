@@ -58,6 +58,10 @@ static BATTLEMAGE_REQUEST:std::sync::Mutex<Option<u8>>=std::sync::Mutex::new(Non
 pub fn take_battlemage()->Option<u8> {BATTLEMAGE_REQUEST.lock().ok()?.take()}
 /// 营地调灵（小红帽）：菜单项与无可用骨灰提示（文字在 scene-builder/RecoveryText.cs）。
 pub const TUNE_OPTION:i32=9500155;
+/// 营地：身上没有强化石（铁匠强化、护符升阶、调灵、商店强化共用）
+pub const NO_STONE:i32=9500185;
+/// 营地：余烬「帐篷」免费补瓶，营地送的强化石保留
+pub const TENT_REFILL:i32=9500186;
 pub const TUNE_NONE:i32=9500156;
 impl EventMenu {
     fn confirmation(self,choice:i32)->Option<i32> {
@@ -244,8 +248,9 @@ impl NativeTalk {
                         self.event(19,&[choice,message,-1])?;
                     }
                 } else if self.service==1 {
-                    for (i,message) in [9500001,9500041,9500042].into_iter().enumerate() {
-                        self.event(19,&[i as i32+1,message,-1])?;
+                    // 换战灰／质变只在梅琳娜（综合服务）那里提供，铁匠只管强化：选项编号保持 1、2（战斗法师仍是 4）
+                    for (choice,message) in [(1,9500001),(2,9500041)] {
+                        self.event(19,&[choice,message,-1])?;
                     }
                     if super::embers::BATTLEMAGE_HELD.load(Ordering::Relaxed) {self.event(19,&[4,BATTLEMAGE_OPTION,-1])?;}
                     self.event(19,&[99,9500003,-1])?;
@@ -298,7 +303,7 @@ impl NativeTalk {
                         let data=unsafe {player.player_game_data.as_ref()};
                         let quantity=super::smith::remaining(data);
                         super::log(format!("Smith menu: choice={choice}, voucher={quantity}, equipped={:?}",data.equipment.chr_asm.equipment_param_ids));
-                        if quantity==0 {return self.dialog(9500012);}
+                        if quantity==0 {return self.dialog(NO_STONE);}
                     }
                     if choice==2 {
                         let player=unsafe {eldenring::cs::PlayerIns::local_player()}.map_err(|_|"角色未加载")?;
@@ -345,7 +350,7 @@ impl NativeTalk {
                 }
                 if self.service==2&&choice==3 {
                     let player=unsafe {eldenring::cs::PlayerIns::local_player()}.map_err(|_|"角色未加载")?;
-                    if super::smith::remaining(unsafe {player.player_game_data.as_ref()})==0 {return self.dialog(9500012);}
+                    if super::smith::remaining(unsafe {player.player_game_data.as_ref()})==0 {return self.dialog(NO_STONE);}
                     super::smith::configure_menu()?;
                     let (event,args,menu)=smith_menu(1).unwrap();
                     self.event(event,&args)?;self.menu_kind=menu;self.state=7;return Ok(());
@@ -354,7 +359,7 @@ impl NativeTalk {
                 if self.service==0&&choice==5 {
                     let player=unsafe {eldenring::cs::PlayerIns::local_player()}.map_err(|_|"角色未加载")?;
                     let data=unsafe {player.player_game_data.as_ref()};
-                    if super::smith::remaining(data)==0 {return self.dialog(9500012);}
+                    if super::smith::remaining(data)==0 {return self.dialog(NO_STONE);}
                     let offers=super::spirit_tune::offers(data);
                     if offers.is_empty() {return self.dialog(TUNE_NONE);}
                     let session=super::spirit_tune::prepare(data)?;
@@ -462,7 +467,6 @@ fn confirmation_dialog(text:i32)->[i32;5] {[8,text,1,2,2]}
 fn smith_menu(choice:i32)->Option<(i32,Vec<i32>,i32)> {
     match choice {
         1=>Some((24,vec![0],9)),
-        3=>Some((48,vec![],7)),
         _=>None,
     }
 }
@@ -588,7 +592,7 @@ mod tests {
     fn smith_services_remain_free_after_upgrade_and_use_verified_native_menus() {
         assert_eq!(super::smith_menu(1),Some((24,vec![0],9)));
         assert_eq!(super::smith_menu(2),None);
-        assert_eq!(super::smith_menu(3),Some((48,vec![],7)));
+        assert_eq!(super::smith_menu(3),None,"Ashes of War are only offered by the attendant");
         assert_eq!(super::smith_menu(4),None);
         assert_eq!(super::attendant_menu(2),Some((48,vec![],7)));
         assert_eq!(super::attendant_menu(3),Some((28,vec![-1,-1],11)));

@@ -4,7 +4,7 @@ static class RecoveryText {
     static readonly (int,string)[] MausoleumEntries=[(9500160,"复制当前右手武器（免费）"),(9500161,"复制当前右手武器，保留强化、质变、战灰和词条。\n原武器不会消耗，每人每次事件限一次。\n确定复制？"),(9500162,"离开灵庙，继续旅程"),(9500163,"武器复制完成，副本已放入背包。"),(9500164,"前往灵庙"),(9500165,"前往龙王平台上的灵庙，免费复制一把武器。\n强化、质变、战灰和词条保留。\n联机确认后提交全队投票。确定前往？"),(9500166,"放弃前往，领取 800 卢恩"),(9500167,"放弃本次灵庙复制，领取 800 卢恩并继续旅程。\n联机确认后提交全队投票。确定领取？")];
     static readonly (int,string)[] PriceEntries=[(9500080,"捕捉粪金龟 · 500 卢恩"),(9500084,"需要 500 卢恩。"),(9500158,"领取 800 卢恩（放弃恢复）")];
     static readonly (int,string)[] StormEntries=[(9500115,"男生女生向前冲"),(9500116,"领取 800 卢恩，跳过挑战"),(9500117,"泥头车跑酷")];
-    static readonly (int,string)[] Entries=[(9500000,"补给：2 红 1 蓝"),(9500044,"补给：1 红 2 蓝"),(9500106,"补给：3 红"),(9500107,"补给：3 蓝"),(9500091,"回满生命"),(9500092,"回满专注"),(9500093,"泉水已使用。"),(9500094,"是男人就下一百层"),(9500085,"付费后等待三秒，三只粪金龟会现身。你有六秒时间，每击败一只可得一件宝物。每人最多玩三次。")];
+    static readonly (int,string)[] Entries=[(9500000,"补瓶：红瓶 +2、蓝瓶 +1"),(9500044,"补瓶：红瓶 +1、蓝瓶 +2"),(9500106,"补瓶：红瓶 +3"),(9500107,"补瓶：蓝瓶 +3"),(9500091,"回满生命"),(9500092,"回满专注"),(9500093,"泉水已使用。"),(9500094,"是男人就下一百层"),(9500085,"付费后等待三秒，三只粪金龟会现身。你有六秒时间，每击败一只可得一件宝物。每人最多玩三次。")];
     static readonly (int,string)[] TrialEntries=[
         (9500118,"癫火封印上方的深坑跳跳乐，抵达底部领取传说武器宝箱。\n单人死亡直接结算本局。联机确认后提交全队投票。\n确定参加？"),
         (9500119,"从史东薇尔城正面跑到葛瑞克雾门前，获得两个随机护符增益。\n单人死亡直接结算本局。联机确认后提交全队投票。\n确定参加？"),
@@ -42,14 +42,24 @@ static class RecoveryText {
         (9500183,"完成。右手武器获得了新的 S 补正，这项能力值也计入物理伤害。"),
         (9500184,"无法附加：需要右手装备近战武器，且这把武器还没有 S 补正（一局最多 8 把）。")];
     // 营地调灵（小红帽）：菜单项与提示；编号与 native/src/native_talk.rs 的 TUNE_* 对应
-    static readonly (int,string)[] TuneEntries=[(9500155,"调灵（强化骨灰）"),
-(9500156,"没有可以调灵的骨灰，或身上没有强化石。需要背包里有尚未到 +39 的骨灰，且没有持有它的目标等级。"),
-        (9500157,"调灵完成。之后刷出的骨灰最高可到这个等级。")];
+    static readonly (int,string)[] TuneEntries=[(9500155,"调灵：用强化石提升骨灰等级"),
+(9500156,"现在无法调灵。需要身上有强化石，并且背包里有一种还没到 +39 的骨灰（如果已经有它调灵后的那个等级，就不能再调）。"),
+        (9500157,"调灵完成。之后奖励里出现的骨灰，等级上限也会提高到这个等级。")];
     static readonly (int,string)[] ChestEntries=[(9500053,"三个宝箱，三份命运。每箱两成火药、两成守卫、六成宝物。")];
-    static readonly (int,string)[] EndEntries=[(9500108,"结束本局"),(9500109,"结束本局并返回大赐福？联机时，全队将结束本局。"),(9500110,"当前无法结束本局。联机时请由房主操作。"),(9500111,"出售武器")];
+    // 篝火营地：营地送一块强化石，「用它强化一次」和「补一次瓶」二选一（补瓶会收回这块石头）；升级、换战灰、记忆法术等不限次数。
+    // 编号与 NativeAssets / native_talk.rs 一致；9500185、9500186 是新增的提示
+    static readonly (int,string)[] CampEntries=[
+        (9500001,"强化武器（消耗 1 块强化石）"),(9500041,"升阶护符（消耗 1 块强化石）"),
+        (9500040,"提升等级（消耗卢恩）"),(9500100,"查看圣杯瓶"),(9500101,"查看即将挑战的敌人"),(9500102,"现在没有即将挑战的敌人。"),
+        (9500010,"补瓶完成。营地送的强化石已经收回，这个营地不能再补瓶；升级、换战灰等其他服务照常可用。"),
+        (9500011,"这个营地已经补过瓶，或者已经用营地送的强化石强化过，不能再补瓶了。\n升级、换战灰、记忆法术等其他服务照常可用。"),
+        (9500012,"没能补瓶：圣杯瓶可能已经是满的。这次没有消耗任何东西。"),
+        (9500185,"身上没有强化石。每个营地会送一块；用完后可以在商店购买，或从战斗奖励里获得。"),
+        (9500186,"补瓶完成（余烬「帐篷」免费）。营地送的强化石还在，仍可以用它强化，或再补一次瓶。")];
+    static readonly (int,string)[] EndEntries=[(9500108,"放弃本局（结算并返回大赐福）"),(9500109,"放弃这一局并返回大赐福？\n本局会立即结算，之后无法继续。联机时全队都会结束这一局。"),(9500110,"现在无法放弃本局。联机时只有房主可以操作。"),(9500111,"出售武器")];
     public static void Add(BND4 menu,bool chestOnly=false) {
         var file=menu.Files.Single(f=>f.ID==33);var fmg=FMG.Read(file.Bytes);
-        foreach(var (id,text) in chestOnly?ChestEntries:Entries.Concat(EndEntries).Concat(StormEntries).Concat(TrialEntries).Concat(GambleEntries).Concat(TuneEntries).Concat(PriceEntries).Concat(MausoleumEntries)){fmg.Entries.RemoveAll(e=>e.ID==id);fmg.Entries.Add(new FMG.Entry(id,text));}
+        foreach(var (id,text) in chestOnly?ChestEntries:Entries.Concat(CampEntries).Concat(EndEntries).Concat(StormEntries).Concat(TrialEntries).Concat(GambleEntries).Concat(TuneEntries).Concat(PriceEntries).Concat(MausoleumEntries)){fmg.Entries.RemoveAll(e=>e.ID==id);fmg.Entries.Add(new FMG.Entry(id,text));}
         file.Bytes=fmg.Write();
     }
     public static void AddTalismans(BND4 menu,BND4 regulation,BND4 item) {
@@ -78,7 +88,7 @@ static class RecoveryText {
         Console.WriteLine("Verified talisman choice and confirmation text roundtrip");
     }
     public static void Patch(string input,string output,bool chestOnly=false) {
-        var entries=chestOnly?ChestEntries:Entries.Concat(EndEntries).Concat(StormEntries).Concat(TrialEntries).Concat(GambleEntries).Concat(TuneEntries).Concat(PriceEntries).Concat(MausoleumEntries).ToArray();
+        var entries=chestOnly?ChestEntries:Entries.Concat(CampEntries).Concat(EndEntries).Concat(StormEntries).Concat(TrialEntries).Concat(GambleEntries).Concat(TuneEntries).Concat(PriceEntries).Concat(MausoleumEntries).ToArray();
         const string name="msg/zhocn/menu_dlc02.msgbnd.dcx";
         var original=BND4.Read(Path.Combine(input,name));
         var menu=BND4.Read(Path.Combine(input,name));Add(menu,chestOnly);

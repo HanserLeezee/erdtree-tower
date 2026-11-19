@@ -55,7 +55,7 @@ fn restarted_guest_completes_wire_handshake_and_rejects_stale_ack() {
     send(&mut stream,host.receive_lobby(2,new_ack).unwrap().remove(0).1);
     assert_eq!(host.ready(),Some((101,42)));
     let reconnect=receive(&mut stream);
-    assert!(host.receive_lobby(2,reconnect).unwrap_err().contains("重新连接"));
+    assert!(host.receive_lobby(2,reconnect).unwrap_err().contains("重新连上"));
     while child.0.try_wait().unwrap().is_none() {
         assert!(start.elapsed()<Duration::from_secs(15),"guest exit timed out");
         std::thread::sleep(Duration::from_millis(10));

@@ -38,3 +38,6 @@ preview.launch.me3
 *.p12
 /seamless-entry/
 /network-patches/
+
+# 癫火舞会的舞曲音频：版权属于原作者，不进仓库、不随公开版本发布
+scene-assets/dance/*.wav

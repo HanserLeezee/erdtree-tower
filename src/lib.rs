@@ -51,6 +51,7 @@ pub mod localization;
 pub mod lobby;
 pub mod dlc;
 pub mod stat_summary;
+pub mod dance;
 
 pub type RuleResult<T> = Result<T, String>;
 

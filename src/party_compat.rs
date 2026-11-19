@@ -14,17 +14,30 @@ impl Compatibility {
     pub fn validate(&self)->RuleResult<()> {
         if [&self.tower_build,&self.seamless_hash,&self.assets].iter().any(|s|s.len()!=16||!s.bytes().all(|b|b.is_ascii_hexdigit()))
             ||self.seamless_version.is_empty()||self.seamless_version.len()>24||!self.seamless_version.bytes().all(|b|b.is_ascii_digit()||b==b'.')
-            ||self.rules.iter().zip(RULES).any(|(&v,(_,_,max))|v<0||v>max){return Err("开局兼容信息无效，请更新同一测试构建后重启游戏".into());}
+            ||self.rules.iter().zip(RULES).any(|(&v,(_,_,max))|v<0||v>max){return Err("本机的爬塔联机信息异常。请在启动器里点「校验并修复文件」，然后重启游戏。".into());}
         Ok(())
     }
     pub fn check(&self,other:&Self)->RuleResult<()> {
         self.validate()?;other.validate()?;
-        for (label,left,right) in [("爬塔构建",&self.tower_build,&other.tower_build),("无缝版本",&self.seamless_version,&other.seamless_version),
-            ("无缝文件",&self.seamless_hash,&other.seamless_hash),("关键资源",&self.assets,&other.assets)] {
-            if left!=right{return Err(format!("{label}不一致：本机 {left}，对端 {right}。请全队更新同一整合包后重启游戏。"));}
+        // 识别码只留前 4 位，方便玩家互相核对、也方便排查，不把整串哈希丢给玩家
+        let short=|code:&str|code.chars().take(4).collect::<String>();
+        if self.tower_build!=other.tower_build {
+            return Err(format!("你和队友的爬塔版本不同。请所有人在启动器里更新到同一个最新版本，然后重启游戏。（版本码：你 {}，对方 {}）",short(&self.tower_build),short(&other.tower_build)));
         }
-        for (index,(_,label,_)) in RULES.iter().enumerate() {
-            if self.rules[index]!=other.rules[index]{return Err(format!("{label}不一致：本机 {}，对端 {}。请统一联机设置后重启游戏。",self.rules[index],other.rules[index]));}
+        if self.seamless_version!=other.seamless_version {
+            return Err(format!("你和队友的无缝联机版本不同（你 {}，对方 {}）。请大家都使用爬塔自带的无缝联机：在启动器里点「校验并修复文件」，然后重启游戏。",self.seamless_version,other.seamless_version));
+        }
+        if self.seamless_hash!=other.seamless_hash {
+            return Err(format!("你和队友的无缝联机文件不一样，可能有人替换过 ersc.dll。请所有人在启动器里点「校验并修复文件」，然后重启游戏。（文件码：你 {}，对方 {}）",short(&self.seamless_hash),short(&other.seamless_hash)));
+        }
+        if self.assets!=other.assets {
+            return Err(format!("你和队友的爬塔场景资源不一致，可能有人的文件缺失或被改动过。请所有人在启动器里点「校验并修复文件」，然后重启游戏。（资源码：你 {}，对方 {}）",short(&self.assets),short(&other.assets)));
+        }
+        for (index,(_,label,max)) in RULES.iter().enumerate() {
+            let (mine,theirs)=(self.rules[index],other.rules[index]);
+            if mine==theirs {continue;}
+            let shown=|v:i32|if *max==1 {if v==1{"开".to_string()}else{"关".to_string()}}else{v.to_string()};
+            return Err(format!("你和队友的联机设置「{label}」不同（你：{}，对方：{}）。这项需要全队一致：请在启动器的联机设置里改成一样，然后重启游戏。",shown(mine),shown(theirs)));
         }
         Ok(())
     }
@@ -36,11 +49,11 @@ pub fn parse_rules(text:&str)->RuleResult<[i32;10]> {
         let Some((key,value))=line.split_once('=') else{continue;};
         let Some(index)=RULES.iter().position(|(name,_,_)|*name==key.trim()) else{continue;};
         let (_,label,max)=RULES[index];
-        if found[index].is_some(){return Err(format!("联机设置重复：{label}，请修复配置后重启游戏"));}
-        let value=value.trim().parse::<i32>().ok().filter(|v|(0..=max).contains(v)).ok_or_else(||format!("联机设置无效：{label}"))?;
+        if found[index].is_some(){return Err(format!("联机设置文件里「{label}」写了两次。请在启动器里重新保存一次联机设置，然后重启游戏。"));}
+        let value=value.trim().parse::<i32>().ok().filter(|v|(0..=max).contains(v)).ok_or_else(||format!("联机设置「{label}」的数值无效。请在启动器里重新保存一次联机设置，然后重启游戏。"))?;
         found[index]=Some(value);
     }
     let mut values=[0;10];
-    for (i,entry) in found.into_iter().enumerate(){values[i]=entry.ok_or_else(||format!("联机设置缺少：{}，请更新配置后重启游戏",RULES[i].1))?;}
+    for (i,entry) in found.into_iter().enumerate(){values[i]=entry.ok_or_else(||format!("联机设置里缺少「{}」。请在启动器里重新保存一次联机设置，然后重启游戏。",RULES[i].1))?;}
     Ok(values)
 }

@@ -83,6 +83,9 @@ mod weapon_ui;
 mod class_ui;
 mod legacy;
 mod law_ui;
+mod dance_ui;
+mod dance_art;
+mod notice_ui;
 mod reward_ui;
 mod random_ashes;
 mod contracts;
@@ -322,6 +325,7 @@ impl ImguiRenderLoop for TowerPreview {
         log("UI_INIT stage=oath_art");
         oath_art::initialize(renderer);
         law_art::initialize(renderer);
+        dance_art::initialize(renderer);
         log("DX12 renderer initialized");
         // 正文与标题字体都只加载界面字表里的字（缺字表时退回原来的范围），字体贴图不会因为多一套字体而翻倍
         let ranges=|fallback:FontGlyphRanges|fancy_text::ui_glyph_ranges().map_or(fallback,FontGlyphRanges::from_slice);
@@ -428,7 +432,8 @@ impl ImguiRenderLoop for TowerPreview {
         let fighting=view.as_ref().and_then(|v|v.run.as_ref()).is_some_and(|r|matches!(r.phase,Phase::Combat{..}));
         if !run_screen::active()&&options::pressed(ui,Hotkey::Archive)&&!fighting&&!ui.io().want_text_input&&runtime::PLAYER_READY.load(Ordering::Relaxed) {run_screen::archive_entry();}
         let rewards=&mut self.rewards;
-        let run_screen=run_screen::draw(ui,&mut |icon|rewards.icon(icon));
+        // 癫火舞会：跳舞时只画舞会画面（它自己接管输入）
+        let run_screen=dance_ui::draw(ui)||run_screen::draw(ui,&mut |icon|rewards.icon(icon));
         if options::pressed(ui,Hotkey::Debug) {debug_menu::toggle();}
         self.debug.draw(ui,view.as_ref());
         if self.visible&&!run_screen&&let Some(combat)=view.as_ref().filter(|v|v.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}))) {

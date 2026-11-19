@@ -782,7 +782,7 @@ fn rebuild_lobby(changed:bool,at_hub:bool,hub_active:bool,phase:Option<&Phase>)-
 fn lobby_reconnect_error(error:Option<&str>)->bool {
     // [fix] A teammate fault also only blocks until everyone is back at an idle hub with no run:
     // rebuild_lobby() still requires that, so the host is no longer locked out until a restart.
-    error.is_some_and(|error|error=="队员已重新连接，需要重新建立会话"||error.starts_with("队友报告游戏执行失败"))
+    error.is_some_and(|error|error.contains(erdtree_tower::party_handshake::RECONNECTED)||error.starts_with(super::party::TEAMMATE_FAULT))
 }
 fn lobby_roster_changed(link:Option<&erdtree_tower::party_roster::Roster>,pending:Option<&erdtree_tower::party_roster::Roster>,current:Option<&erdtree_tower::party_roster::Roster>)->bool {
     link.or(pending).zip(current).is_some_and(|(old,current)|old!=current)
@@ -841,19 +841,37 @@ fn poll_blocked_hub(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)
     if game.warp_requested||!world.main_player.as_ref().is_some_and(|p|i32::from(p.current_block_id)==super::hub::BLOCK){return;}
     if let Some(mut hub)=state.hub.take() {
         if hub.active {
-            let reason=party_block_reason(state);
+            let reason=party_block_reason(state,world);
             if let Err(error)=hub.poll(world,game,Some(&reason)){super::log_repeating(format!("Blocked hub service: {error}"));}
             state.view.room=Some(hub.view());
         }
         state.hub=Some(hub);
     }
 }
-fn party_block_reason(state:&Runtime)->String {
-    if let Some(error)=state.party_error.as_ref().or_else(||state.party.as_ref().and_then(|p|p.stopped.as_ref())){return error.clone();}
-    if let Some(pending)=&state.party_pending{return pending.waiting_reason();}
-    if state.hub.as_ref().is_some_and(|h|h.paused){return "本机保留了暂停进度，但仍在无缝房间中。请先退出旧房间，再继续旅程。".into();}
-    if state.party.as_ref().is_some_and(|p|p.needs_new_run()){return "上一局已经结束，尚未收到全员存活并返回大赐福的确认。请所有玩家完成结算并回到大赐福。".into();}
-    "正在核对本机关键资源与联机配置，完成后等待队伍兼容确认。".into()
+fn party_block_reason(state:&Runtime,world:&WorldChrMan)->String {
+    let reason=if let Some(error)=state.party_error.as_ref().or_else(||state.party.as_ref().and_then(|p|p.stopped.as_ref())){error.clone()}
+    else if let Some(pending)=&state.party_pending{pending.waiting_reason()}
+    else if state.hub.as_ref().is_some_and(|h|h.paused){"你保存了一局暂停中的旅程，但现在还在别人的联机房间里。请先退出这个房间，再继续你自己的旅程。".into()}
+    else if state.party.as_ref().is_some_and(|p|p.needs_new_run()){"上一局已经结束，还在等所有人完成结算、回到大赐福。请大家都回到大赐福后再开始。".into()}
+    else {"正在检查你的游戏文件和联机设置，稍等几秒；检查通过后会和队友确认。".into()};
+    player_names(reason,world)
+}
+/// 提示里的 Steam ID 换成角色名（「名字」）；不在附近、读不到名字的显示为「玩家（尾号 1234）」
+fn player_names(text:String,world:&WorldChrMan)->String {
+    let mut text=text;
+    for player in world.player_chr_set.characters() {
+        let id=player.player_session_holder.player_network_session.remote_identity;
+        let name=unsafe {player.player_game_data.as_ref()}.character_name();
+        if id!=0&&!name.trim().is_empty() {text=text.replace(&id.to_string(),&format!("「{}」",name.trim()));}
+    }
+    // 剩下的 17 位 Steam ID（7656 开头）
+    let mut out=String::new();let mut digits=String::new();
+    let flush=|digits:&mut String,out:&mut String| {
+        if digits.len()==17&&digits.starts_with("7656") {out.push_str(&format!("玩家（尾号 {}）",&digits[13..]));}else{out.push_str(digits);}
+        digits.clear();
+    };
+    for c in text.chars() {if c.is_ascii_digit(){digits.push(c);}else{flush(&mut digits,&mut out);out.push(c);}}
+    flush(&mut digits,&mut out);out
 }
 fn tick_auto_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Result<bool,String> {
     if state.suspension.returning&&state.suspension.committed.is_some(){return Ok(false);}
@@ -948,11 +966,11 @@ fn tick_auto_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)-
     if state.party_pending.as_ref().is_some_and(|p|p.roster!=roster){state.party_pending=None;}
     if state.party_pending.is_none() {
         let Some(resources)=resource_check() else{return Ok(true);};
-        if let Some(file)=resources.first(){return Err(format!("本机场地资源缺失或不匹配：{file}。请校验整合包后重启游戏。"));}
+        if let Some(file)=resources.first(){return Err(format!("你的爬塔场景文件有缺失或损坏（{file}），和队友对不上。请在启动器里点「校验并修复文件」，然后重启游戏。"));}
         let Some(profile)=super::party_compat::profile() else{return Ok(true);};
         let profile=profile.clone()?;
         if state.view.run.as_ref().is_some_and(|r|r.act!=1||!r.visited.is_empty()||r.phase!=Phase::Map) {
-            return Err("请在大赐福组队后开始共同旅程；中途加入尚未完成进度衔接".into());
+            return Err("你身上还有一局没打完的旅程，不能直接加入别人的队伍。请先在大赐福结束或放弃这一局，再重新加入房间。".into());
         }
         let nonce=super::party::random_entropy()?.max(1);
         let seed=state.view.run.as_ref().or_else(||state.hub.as_ref().and_then(|h|h.suspended_run())).map(|r|r.initial_seed.unwrap_or(r.seed)).unwrap_or(super::party::random_entropy()?);
@@ -1371,6 +1389,9 @@ fn write_award_journal(path:&std::path::Path,run:&Run)->Result<(),String>{
 }
 fn finish_party_award()->Result<(),String>{std::fs::remove_file(award_path()?).map_err(|_|"奖励已执行，但领取记录未能提交；已停止重发".into())}
 
+/// 本机是否在多人联机房间里（或已组队），每帧由 tick 更新，给界面线程读
+pub static IN_PARTY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+pub fn in_party()->bool {IN_PARTY.load(std::sync::atomic::Ordering::Relaxed)}
 // All engine references stay within the ChrIns_PostPhysics callback.
 fn solo_session()->bool {
     use eldenring::cs::{CSSessionManager,LobbyState};
@@ -1589,6 +1610,10 @@ fn emergency_end(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->R
 }
 pub fn tick() {
     if let Ok(world)=unsafe {WorldChrMan::instance_mut()}{super::frost_shackle::begin_frame(world);}
+    // 癫火舞会：界面判定完一句后交来的舞步，写进本机角色「下一帧强制播放的动画」
+    if let Some(anim)=super::dance_ui::take_move()&&let Ok(world)=unsafe {WorldChrMan::instance_mut()}&&let Some(player)=world.main_player.as_mut() {
+        player.chr_ins.modules.event.request_animation_id=anim;super::log(format!("DANCE move anim={anim}"));
+    }
     if let Ok(mut state)=STATE.try_lock(){sync_map(&mut state);}
     tick_locked();
     if let Ok(mut state)=STATE.try_lock() {
@@ -1615,7 +1640,10 @@ fn tick_locked() {
     };
     if state.departure.as_mut().is_some_and(|departure|departure.tick()){state.departure=None;}
     // 无缝入口独自游玩仍可调试；实际组队时关闭。
-    super::debug_menu::apply_cheats(state.party.is_some()||!solo_session());
+    let in_party=state.party.is_some()||!solo_session();
+    // 界面线程读：选职业时联机提示召唤师的风险
+    IN_PARTY.store(in_party,std::sync::atomic::Ordering::Relaxed);
+    super::debug_menu::apply_cheats(in_party);
     let lobby=state.view.run.is_none();
     if state.party.as_mut().is_some_and(|link|link.poll_force_end(lobby)) {
         super::log("HOME_SYNC received host force end before room processing");
@@ -1881,6 +1909,8 @@ fn tick_locked() {
     let music_wave=state.party.as_ref().and_then(|p|p.event.job.filter(|_|p.event.combat_active())).map_or_else(||music_run.and_then(|r|r.regional_event.guard_slot).unwrap_or(0),|j|j.wave);
     if let Some(player)=world.main_player.as_ref() {
         music.track=super::bgm::selection(music_run,i32::from(player.current_block_id),player.chr_ins.modules.data.hp>0&&!player.chr_ins.chr_flags1c5.death_flag(),game.warp_requested,state.view.travelling,music.active,music_wave);
+        // 癫火舞会放舞曲时暂停背景音乐
+        if super::dance_ui::dancing() {music.track=None;}
     }
     super::spirits::set_active(local_combat&&!super::law::lone_wolf(state.view.run.as_ref()));
     // 召唤师「群灵」：召唤物全部阵亡后可以再召唤
@@ -2194,7 +2224,7 @@ fn tick_locked() {
         state.pad_capture.update(super::input::active());
         let mut hub=state.hub.take().unwrap();
         let paused_party=hub.paused&&!solo_session()&&!state.party.as_ref().is_some_and(|p|p.event.pause.resume_ready);
-        let blocked=(paused_party||party_waiting||state.party.as_ref().is_some_and(|p|p.needs_new_run())).then(||if paused_party {"等待全员在大赐福载入同一暂存旅程（种子、幕数、路线和律法需一致）。".into()}else{party_block_reason(&state)});
+        let blocked=(paused_party||party_waiting||state.party.as_ref().is_some_and(|p|p.needs_new_run())).then(||if paused_party {"正在等待所有人在大赐福读取同一局暂停的旅程。请大家都选择「继续旅程」，并确认读取的是同一局（种子、幕数、路线和律法相同）。".into()}else{party_block_reason(&state,world)});
         let result=hub.poll(world,game,blocked.as_deref());
         state.view.room=Some(hub.view());state.hub=Some(hub);
         match result {
@@ -3726,7 +3756,7 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
                 run.spirit_peak=Some(spirit_peak(run,super::spirit_tune::inventory_peak(data)));
                 run.leave_camp()?;
                 record(run);
-                room.complete("强化完成。换战灰、记忆魔法和升级仍可免费使用服务；加点消耗卢恩。".into());
+                room.complete("已用掉营地送的强化石，这个营地不能再补瓶。升级、换战灰、记忆法术等其他服务照常可用，准备好后从传送门离开。".into());
                 super::log("Native camp reinforcement consumed its single allowance");
             }
             let request = room.take_refill().and_then(|choice|match choice {1=>Some(CampChoice::Refill),2=>Some(CampChoice::RefillBlue),3=>Some(CampChoice::RefillRedOnly),4=>Some(CampChoice::RefillBlueOnly),_=>None});
@@ -3743,14 +3773,14 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
                 }
                 if result.is_ok()&&tent {
                     super::log(format!("Camp refill done: {choice:?} free=tent party={}",state.party.is_some()));
-                    if !room.view.completed {room.view.message="余烬「帐篷」：这次补给免费，篝火服务仍可使用".into();}
+                    if !room.view.completed {room.view.message="余烬「帐篷」：这次补瓶免费，营地送的强化石还在，仍可强化或再补一次瓶。".into();}
                 } else if result.is_ok() {
                     super::log(format!("Camp refill done: {choice:?} party={}",state.party.is_some()));
                     // 补瓶代替强化：用掉营地发的那块强化石，身上其他强化石保留
                     if let Err(error)=super::smith::consume_one(unsafe {world.main_player.as_mut().unwrap().player_game_data.as_mut()}) {super::log(format!("Camp refill stone: {error}"));}
-                    room.complete("服务已完成，使用传送门继续".into());
+                    room.complete("补瓶完成，营地送的强化石已收回。其他服务照常可用，准备好后从传送门离开。".into());
                 }
-                room.notice(if result.is_err(){9500012}else{9500010})?;
+                room.notice(if result.is_err(){9500012}else if tent{super::native_talk::TENT_REFILL}else{9500010})?;
             }
         }
         if room.kind == erdtree_tower::NodeKind::Chest {tick_chest_award(state,world,&mut room)?;}
@@ -4737,7 +4767,7 @@ fn tick_stormveil(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Resu
     record_checked(&next)?;
     // 召唤师「群灵」：抵达葛瑞克门前时召唤物还活着，补回这次用掉的骨灰
     if let Some(plan)=keep_summoned_ash(world,&next) {state.ash_refunds=plan;state.ash_guard=Some(Instant::now());}
-    super::run_screen::trial_rewards(state.view.run.as_ref().unwrap(),&next);
+    super::run_screen::trial_rewards(route.name,state.view.run.as_ref().unwrap(),&next);
     state.view.run=Some(next);
     super::native_talk::set_flag(route.flag,false)?;
     state.stormveil=None;state.view.room=None;state.view.busy=false;
@@ -5311,14 +5341,14 @@ mod tests {
     }
     #[test]
     fn same_roster_reconnect_recovers_only_at_idle_hub() {
-        let retry=super::lobby_reconnect_error(Some("队员已重新连接，需要重新建立会话"));
+        let retry=super::lobby_reconnect_error(Some(erdtree_tower::party_handshake::RECONNECTED));
         assert!(retry);assert!(super::rebuild_lobby(retry,true,true,None));
         assert!(!super::rebuild_lobby(retry,false,true,None));
         assert!(!super::rebuild_lobby(retry,true,false,None));
         for phase in [Phase::Map,Phase::Combat{id:0},Phase::Node{id:0},Phase::Dead] {
             assert!(!super::rebuild_lobby(retry,true,true,Some(&phase)));
         }
-        assert!(super::lobby_reconnect_error(Some("队友报告游戏执行失败，请查看队友日志")));
+        assert!(super::lobby_reconnect_error(Some(super::super::party::TEAMMATE_FAULT)));
         for error in [None,Some("队伍协议不匹配"),Some("上次联机领奖中断")] {
             assert!(!super::lobby_reconnect_error(error));
         }

@@ -167,5 +167,10 @@
   "升级后即可启用偏好": "Upgrade to enable this preference",
   "● 已启用偏好 · 关闭": "Preference Enabled · Disable",
   "启用此类偏好": "Enable This Preference",
-  "完成旅程获得传承点，花费不扣职业经验。": "Earn Legacy Points by completing runs. Spending them does not reduce class experience."
+  "完成旅程获得传承点，花费不扣职业经验。": "Earn Legacy Points by completing runs. Spending them does not reduce class experience.",
+  "挑战完成": "Challenge Complete",
+  "继续选路": "Continue",
+  "详细原因已记录到 tower-preview.log": "Details have been recorded in tower-preview.log",
+  "获得护符赐福 · 本局持续生效，不占护符栏位": "Talisman blessings gained · Active for this run, no slot needed",
+  "联机警告：召唤师在联机中容易触发 bug 导致闪退，请慎重选择，并提前告诉队友。": "Co-op warning: the Summoner often triggers bugs that crash the game in co-op. Choose carefully and let your party know first."
 }

@@ -276,6 +276,14 @@ pub struct FaceDataBuffer {
     pub buffer: [u8; 276],
 }
 
+impl PlayerGameData {
+    /// The character's in-game name (UTF-16, NUL-terminated within 16 characters).
+    pub fn character_name(&self) -> String {
+        let end = self.character_name.iter().position(|&c| c == 0).unwrap_or(self.character_name.len());
+        String::from_utf16_lossy(&self.character_name[..end])
+    }
+}
+
 #[repr(C)]
 pub struct PlayerGameDataSpEffect {
     pub sp_effect_id: u32,

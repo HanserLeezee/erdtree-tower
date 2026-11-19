@@ -3,6 +3,7 @@
 use std::{collections::HashMap,sync::{LazyLock,atomic::{AtomicUsize,Ordering}},time::{Duration,Instant}};
 
 #[repr(C)] struct WaveFormat {tag:u16,channels:u16,rate:u32,bytes_per_second:u32,block_align:u16,bits:u16,extra:u16}
+#[repr(C)] struct MmTime {kind:u32,value:u32,pad:u32}
 #[repr(C)] struct WaveHeader {data:*mut u8,length:u32,recorded:u32,user:usize,flags:u32,loops:u32,next:*mut WaveHeader,reserved:usize}
 #[link(name="winmm",kind="raw-dylib")]
 unsafe extern "system" {
@@ -12,6 +13,7 @@ unsafe extern "system" {
     fn waveOutUnprepareHeader(handle:isize,header:*mut WaveHeader,size:u32)->u32;
     fn waveOutReset(handle:isize)->u32;
     fn waveOutClose(handle:isize)->u32;
+    fn waveOutGetPosition(handle:isize,time:*mut MmTime,size:u32)->u32;
 }
 const WAVE_MAPPER:u32=u32::MAX;const WHDR_DONE:u32=1;
 /// 同时播放的上限（超过的直接丢掉，免得连点时开太多句柄）
@@ -69,6 +71,49 @@ pub fn play(name:&'static str) {
         }
         VOICES.fetch_sub(1,Ordering::AcqRel);
     });
+}
+
+/// 一整首舞曲（癫火舞会）：一次写进声卡，播放位置用 waveOutGetPosition 读，判定以它为准（比墙钟更贴近实际听到的声音）。
+/// 只在界面线程里持有；drop 时停止并释放。音量沿用 tower-options.ini 的 sfx。
+pub struct Music {handle:isize,header:Box<WaveHeader>,_bytes:Vec<u8>,bytes_per_second:u32,block_align:u16,started:Instant,length:f64}
+impl Music {
+    /// 播放 scene-assets 下的 16 位 PCM 文件；打不开声卡时返回 None（调用方改用墙钟计时、静音跳舞）
+    pub fn start(relative:&str)->Option<Music> {
+        let path=crate::LOG_PATH.with_file_name("scene-assets").join(relative);
+        let mut sound=std::fs::read(&path).ok().and_then(|b|parse(&b));
+        if sound.is_none() {crate::log(format!("Dance music missing or unsupported: {}",path.display()));return None;}
+        let sound=sound.as_mut().unwrap();
+        let volume=f32::from(crate::options::get().sfx)/100.0;
+        for s in &mut sound.samples {*s=(f32::from(*s)*volume) as i16;}
+        let mut bytes:Vec<u8>=sound.samples.iter().flat_map(|s|s.to_le_bytes()).collect();
+        let format=WaveFormat{tag:1,channels:sound.channels,rate:sound.rate,bytes_per_second:sound.rate*u32::from(sound.channels)*2,block_align:sound.channels*2,bits:16,extra:0};
+        let mut handle:isize=0;
+        if unsafe {waveOutOpen(&mut handle,WAVE_MAPPER,&format,0,0,0)}!=0 {crate::log("Dance music: waveOutOpen failed");return None;}
+        let mut header=Box::new(WaveHeader{data:bytes.as_mut_ptr(),length:bytes.len() as u32,recorded:0,user:0,flags:0,loops:0,next:std::ptr::null_mut(),reserved:0});
+        let size=std::mem::size_of::<WaveHeader>() as u32;
+        if unsafe {waveOutPrepareHeader(handle,&mut *header,size)}!=0 {unsafe {waveOutClose(handle);}return None;}
+        let started=Instant::now();
+        if unsafe {waveOutWrite(handle,&mut *header,size)}!=0 {unsafe {waveOutUnprepareHeader(handle,&mut *header,size);waveOutClose(handle);}return None;}
+        let length=bytes.len() as f64/f64::from(format.bytes_per_second);
+        Some(Music{handle,header,_bytes:bytes,bytes_per_second:format.bytes_per_second,block_align:format.block_align,started,length})
+    }
+    /// 已经播出的秒数；声卡不报告位置时退回墙钟
+    pub fn position(&self)->f64 {
+        let mut time=MmTime{kind:4,value:0,pad:0};
+        let ok=unsafe {waveOutGetPosition(self.handle,&mut time,std::mem::size_of::<MmTime>() as u32)}==0;
+        match (ok,time.kind) {
+            (true,4)=>f64::from(time.value)/f64::from(self.bytes_per_second),
+            (true,2)=>f64::from(time.value)*f64::from(self.block_align)/f64::from(self.bytes_per_second),
+            _=>self.started.elapsed().as_secs_f64(),
+        }.min(self.length)
+    }
+    pub fn length(&self)->f64 {self.length}
+}
+impl Drop for Music {
+    fn drop(&mut self) {
+        let size=std::mem::size_of::<WaveHeader>() as u32;
+        unsafe {waveOutReset(self.handle);waveOutUnprepareHeader(self.handle,&mut *self.header,size);waveOutClose(self.handle);}
+    }
 }
 
 #[cfg(test)]

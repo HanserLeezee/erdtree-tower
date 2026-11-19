@@ -247,6 +247,8 @@ impl Hub {
             let player=world.main_player.as_mut().unwrap();
             super::blessings::Blessings::clear_run(&mut player.chr_ins);
             super::loadout::reset(unsafe {player.player_game_data.as_mut()},self.chosen)?;
+            // 背包（含砥石刀）已清空：上一局留下的质变解锁一起关掉，不能不拿砥石刀就质变
+            if let Err(error)=super::whetblades::sync_owned(){super::log(format!("Whetblade sync after reset: {error}"));}
             super::native_talk::set_flag(45000880,false)?;
             std::fs::write(path(self.owner,"class"),self.chosen.to_string()).map_err(|e|e.to_string())?;
             let save=path(self.owner,"json");if save.exists(){std::fs::remove_file(save).map_err(|e|e.to_string())?;}

@@ -200,6 +200,24 @@ impl Menu {
                 if let Some(_tab)=ui.tab_item("构筑") {self.build(ui,run);}
                 if let Some(_tab)=ui.tab_item("物品") {self.items(ui);}
                 if let Some(_tab)=ui.tab_item("状态") {self.state(ui,run);}
+                if let Some(_tab)=ui.tab_item("界面预览") {
+                    ui.text_wrapped(crate::i18n::t("只打开界面看效果，不改变旅程进度。"));
+                    if ui.button(crate::i18n::t("联机无法开始的提示")) {crate::run_screen::party_notice("爬塔握手未完成（队伍 3 人）：\n队员 76561199000000000：尚未收到握手消息\n尚未收到响应不等于版本不匹配；请检查对应队员是否从爬塔入口启动。".into());}
+                    if ui.button(crate::i18n::t("试炼完成：两项护符赐福")) {crate::run_screen::preview_trial("史东薇尔突围",vec![1000,1150]);}
+                    if ui.button(crate::i18n::t("试炼完成：没有新增赐福")) {crate::run_screen::preview_trial("异端魔法师塔·隐形桥",vec![]);}
+                    ui.separator();
+                    ui.text_wrapped(crate::i18n::t("癫火舞会试跳：方向键按箭头，判定点按空格；不发奖励。先关掉调试菜单再跳。"));
+                    for (index,song) in erdtree_tower::dance::songs().iter().enumerate() {
+                        for (label,difficulty) in [("普通",erdtree_tower::dance::Difficulty::Normal),("困难",erdtree_tower::dance::Difficulty::Hard)] {
+                            if ui.button(format!("{}（{} BPM）· {}##dance-{index}-{label}",song.name,song.bpm,crate::i18n::t(label))) {
+                                let seed=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(7,|d|d.as_secs());
+                                crate::dance_ui::start(index,difficulty,seed);
+                            }
+                            ui.same_line();
+                        }
+                        ui.new_line();
+                    }
+                }
                 if let Some(_tab)=ui.tab_item("灵庙测试") {
                     ui.text_wrapped(crate::i18n::t("进入引路人问号房，再选择前往龙王平台灵庙或领取 800 卢恩。联机由房主发起，全员需开启调试并回到路线图，不计正式解锁。"));
                     ui.text_wrapped(crate::i18n::t("复制前在右手装备目标武器；可先在物品页用拼音搜索领取测试武器。"));

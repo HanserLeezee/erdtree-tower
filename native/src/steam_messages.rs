@@ -66,7 +66,7 @@ fn handshake_responses(handshake:&mut erdtree_tower::party_handshake::Handshake,
     match handshake.receive_lobby(peer,message.clone()) {
         Ok(responses)=>responses,
         Err(error)=>{
-            let reason=format!("队员 {peer}：{error}");let responses=handshake.rejections(peer,&message,&reason);
+            let reason=format!("队友 {peer}：{error}");let responses=handshake.rejections(peer,&message,&reason);
             *failure=Some(reason);responses
         }
     }
@@ -89,7 +89,7 @@ impl Pending {
         for (peer,bytes) in self.transport.receive()? {
             let packet=match Payload::decode(&bytes) {
                 Ok(packet)=>packet,
-                Err(error)=>{self.failure.get_or_insert_with(||format!("队员 {peer}：{error}"));continue;}
+                Err(error)=>{self.failure.get_or_insert_with(||format!("队友 {peer}：{error}"));continue;}
             };
             match packet {
                 Payload::Handshake(message)=>{

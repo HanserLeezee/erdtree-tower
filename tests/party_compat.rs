@@ -24,7 +24,7 @@ fn compatible_party_still_waits_for_ack_before_committing() {
 }
 #[test]
 fn each_incompatibility_is_reported_before_any_offer_or_commit() {
-    for (field,label) in [("tower_build","爬塔构建"),("seamless_version","无缝版本"),("seamless_hash","无缝文件"),("assets","关键资源"),("rules","敌人生命缩放")] {
+    for (field,label) in [("tower_build","爬塔版本不同"),("seamless_version","无缝联机版本不同"),("seamless_hash","无缝联机文件不一样"),("assets","场景资源不一致"),("rules","敌人生命缩放")] {
         let mut other=profile();
         match field {"tower_build"=>other.tower_build="ffffffffffffffff".into(),"seamless_version"=>other.seamless_version="2.0.2".into(),
             "seamless_hash"=>other.seamless_hash="ffffffffffffffff".into(),"assets"=>other.assets="ffffffffffffffff".into(),_=>other.rules[4]+=1}
@@ -38,9 +38,9 @@ fn guest_checks_host_profile_and_missing_profile_does_not_pass() {
     let mut host=state(1,profile());let mut guest=state(2,profile());
     let mut offer=host.receive_lobby(2,guest.hello().unwrap().1).unwrap().remove(0).1;
     if let Message::Offer{compatibility:Some(p),..}=&mut offer {p.assets="ffffffffffffffff".into();}
-    assert!(guest.receive_lobby(1,offer).unwrap_err().contains("关键资源"));assert!(guest.ready().is_none());
+    assert!(guest.receive_lobby(1,offer).unwrap_err().contains("场景资源"));assert!(guest.ready().is_none());
     let legacy=Handshake::new(Roster{local:2,host:1,members:vec![1,2]},102,42).unwrap();
-    assert!(state(1,profile()).receive_lobby(2,legacy.hello().unwrap().1).unwrap_err().contains("兼容信息"));
+    assert!(state(1,profile()).receive_lobby(2,legacy.hello().unwrap().1).unwrap_err().contains("版本和你不同"));
 }
 #[test]
 fn rules_ignore_secrets_and_presentation_but_reject_missing_or_ambiguous_values() {

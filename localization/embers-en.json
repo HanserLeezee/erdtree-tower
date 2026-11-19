@@ -96,5 +96,6 @@
   "魔力辉剑": "Glintblade",
   "魔法命中敌人时\n召唤一把魔力辉剑追击它\n每次施法最多一把": "When a sorcery hits an enemy,\nsummon a glintblade that chases it.\nAt most one per cast.",
   "由心及物": "Mind over Matter",
-  "最大生命增加\n相当于最大专注的 {MIND_HP_TIMES} 倍": "Max HP increased by\n{MIND_HP_TIMES}× your max FP"
+  "最大生命增加\n相当于最大专注的 {MIND_HP_TIMES} 倍": "Max HP increased by\n{MIND_HP_TIMES}× your max FP",
+  "余烬「帐篷」：这次补瓶免费，营地送的强化石还在，仍可强化或再补一次瓶。": "Tent ember: this refill was free. The camp's smithing stone is still yours: upgrade with it, or refill once more."
 }

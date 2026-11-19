@@ -1,0 +1,4 @@
+# 癫火舞会的舞曲：编号|文件（scene-assets 下）|显示名|BPM|每句拍数|计分句数|开头预备拍数
+# 文件是从原曲截取的一段（从重拍开始，开头 2 小节预备），节拍由 scene-builder/dance_beats/ 分析
+song1|dance/song1.wav|舞曲一|122.00|4|32|8
+song2|dance/song2.wav|舞曲二|87.26|4|20|4

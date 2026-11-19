@@ -416,5 +416,7 @@
   "战斗激活请求写入失败：{entity}": "Failed to write battle activation request: {entity}",
   "Boss 测试编号不存在": "Boss test ID does not exist",
   "Boss 组合为空": "Boss group is empty",
-  "该双 Boss 组合仅限联机": "This dual-boss encounter is co-op only"
+  "该双 Boss 组合仅限联机": "This dual-boss encounter is co-op only",
+  "正在发放营地送的强化石……": "Granting the camp's free smithing stone...",
+  "营地送的强化石没能确认到账，这次不再自动发放；补瓶、升级和其他服务照常可用。": "The camp's smithing stone couldn't be confirmed, so it won't be granted automatically this time. Refills, leveling and other services remain available."
 }
