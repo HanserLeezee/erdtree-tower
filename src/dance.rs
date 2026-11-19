@@ -1,7 +1,7 @@
 //! 癫火舞会：节奏小游戏的谱面、判定与计分。与画面、音频无关，时间都以「舞曲开始播放后的秒数」计。
 //!
 //! 每一句（phrase）给出一串方向键：在这一句里按对整串，再在这一句最后一拍（判定点）按下确认键。
-//! 按的时机决定评价：完美 / 很好 / 不错 / 勉强 / 失误。方向键按错会清空这一句已经按对的部分，可以重来。
+//! 按的时机决定评价：完美 / 很好 / 不错 / 勉强 / 失误。方向键按错只是这一下不算，已经按对的保留。
 //! 舞曲截取段从重拍开始，开头留 intro_beats 拍做预备，之后才是计分的句子。
 
 /// 一首舞曲：速度、每句几拍、计分的句数、开头预备拍数（scene-assets/dance-songs.tsv）
@@ -15,6 +15,15 @@ impl Song {
     pub fn target(&self,k:u32)->f64 {self.phrase_start(k)+f64::from(self.phrase_beats-1)*self.beat()}
     /// 计分结束、可以结算的时间（最后一句之后再留一小节）
     pub fn end(&self)->f64 {self.phrase_start(self.phrases)+4.0*self.beat()}
+    /// 按难度调整句长：普通难度每句拉长到至少 8 拍（句数相应减半），新手有足够时间看清、按完箭头
+    pub fn for_difficulty(&self,difficulty:Difficulty)->Song {
+        let mut song=self.clone();
+        if difficulty==Difficulty::Normal&&song.phrase_beats<8 {
+            let factor=8_u32.div_ceil(song.phrase_beats);
+            song.phrase_beats*=factor;song.phrases=(song.phrases/factor).max(1);
+        }
+        song
+    }
 }
 pub fn songs()->Vec<Song> {
     include_str!("../scene-assets/dance-songs.tsv").lines().filter(|l|!l.trim().is_empty()&&!l.starts_with('#')).map(|line|{
@@ -37,15 +46,15 @@ impl Judge {
     pub fn keeps_combo(self)->bool {self>=Judge::Cool}
 }
 /// 判定窗口（秒，按下时间与判定点之差的绝对值）
-pub const WINDOWS:[(Judge,f64);4]=[(Judge::Perfect,0.060),(Judge::Great,0.110),(Judge::Cool,0.170),(Judge::Bad,0.240)];
+pub const WINDOWS:[(Judge,f64);4]=[(Judge::Perfect,0.080),(Judge::Great,0.150),(Judge::Cool,0.220),(Judge::Bad,0.300)];
 pub fn judge(delta:f64)->Judge {WINDOWS.iter().find(|(_,w)|delta.abs()<=*w).map_or(Judge::Miss,|(j,_)|*j)}
-const LATE:f64=0.240;
+const LATE:f64=0.300;
 
 fn next(state:&mut u64)->u64 {*state^=*state<<13;*state^=*state>>7;*state^=*state<<17;*state}
-/// 第 k 句的箭头数：随进度变长，困难更长；每句 8 拍的快歌多给一个
+/// 第 k 句的箭头数：随进度变长，困难更长；困难下每句 8 拍的歌多给一个
 pub fn arrows_in(song:&Song,difficulty:Difficulty,k:u32)->usize {
-    let (low,high)=match difficulty {Difficulty::Normal=>(3,6),Difficulty::Hard=>(5,9)};
-    let extra=usize::from(song.phrase_beats>=8);
+    let (low,high)=match difficulty {Difficulty::Normal=>(2,4),Difficulty::Hard=>(4,7)};
+    let extra=usize::from(difficulty==Difficulty::Hard&&song.phrase_beats>=8);
     low+extra+((high-low) as u32*k/song.phrases.max(1)) as usize
 }
 /// 谱面：每句的箭头，由种子决定（同一种子、同一首歌、同一难度永远一样）；不会连续三个相同
@@ -80,17 +89,21 @@ pub struct Play {
 }
 impl Play {
     pub fn new(song:Song,difficulty:Difficulty,seed:u64)->Self {
+        let song=song.for_difficulty(difficulty);
         let chart=chart(&song,difficulty,seed);
         Self{song,chart,phrase:0,entered:0,combo:0,max_combo:0,score:0.0,counts:[0;5],last:None,wrong:None}
     }
     pub fn current(&self)->Option<&[Arrow]> {self.chart.get(self.phrase as usize).map(|v|v.as_slice())}
-    /// 这一句是否已经可以输入（这一句开始之后）
-    pub fn open(&self,t:f64)->bool {self.phrase<self.song.phrases&&t>=self.song.phrase_start(self.phrase)}
+    /// 这一句是否已经可以输入：上一句判定完、这一句的箭头一出现就能按（不用等这一句的第一拍）
+    pub fn open(&self,_t:f64)->bool {self.phrase<self.song.phrases}
+    /// 这一句的箭头是否已经按完（该等判定点按确认键了）
+    pub fn ready(&self)->bool {self.current().is_some_and(|l|self.entered>=l.len())}
     pub fn arrow(&mut self,t:f64,arrow:Arrow) {
         if !self.open(t) {return;}
         let Some(line)=self.current() else {return};
         if self.entered>=line.len() {return;}
-        if line[self.entered]==arrow {self.entered+=1;} else {self.entered=0;self.wrong=Some(t);}
+        // 按错只闪一下红、这一个不算，已经按对的保留（不用从头再来）
+        if line[self.entered]==arrow {self.entered+=1;} else {self.wrong=Some(t);}
     }
     /// 按下确认键：离判定点太远（早于勉强窗口）不算；在窗口内按，箭头没按完算失误
     pub fn hit(&mut self,t:f64) {
@@ -116,7 +129,7 @@ impl Play {
     pub fn max_score(&self)->f64 {self.chart.iter().enumerate().map(|(k,l)|Judge::Perfect.points()*l.len() as f64/4.0*multiplier(k as u32+1)).sum()}
     pub fn grade(&self)->Grade {
         let ratio=self.score/self.max_score().max(1.0);
-        if ratio>=0.9 {Grade::S} else if ratio>=0.75 {Grade::A} else if ratio>=0.5 {Grade::B} else {Grade::C}
+        if ratio>=0.85 {Grade::S} else if ratio>=0.7 {Grade::A} else if ratio>=0.45 {Grade::B} else {Grade::C}
     }
 }
 /// 连击加成：每连一句 +2%，最多 +50%
@@ -168,6 +181,18 @@ mod tests {
         for s in &songs {assert!(f64::from(s.phrase_beats-1)*s.beat()>=1.0,"{} phrase too short",s.id);}
     }
     #[test]
+    fn normal_difficulty_gives_longer_phrases_and_arrows_can_be_entered_early() {
+        let s=song(4);
+        let normal=Play::new(s.clone(),Difficulty::Normal,1);let hard=Play::new(s.clone(),Difficulty::Hard,1);
+        assert_eq!((normal.song.phrase_beats,normal.song.phrases),(8,8));
+        assert_eq!((hard.song.phrase_beats,hard.song.phrases),(4,16));
+        // 预备段里就按箭头：算数
+        let mut play=Play::new(s,Difficulty::Hard,3);
+        for a in play.chart[0].clone() {play.arrow(0.5,a);}
+        assert!(play.ready());
+        play.hit(play.song.target(0));assert_eq!(play.last.map(|l|l.0),Some(Judge::Perfect));
+    }
+    #[test]
     fn chart_is_deterministic_grows_and_never_triples() {
         let s=song(4);
         assert_eq!(chart(&s,Difficulty::Normal,7),chart(&s,Difficulty::Normal,7));
@@ -177,12 +202,12 @@ mod tests {
             assert!(c.windows(2).all(|w|w[0].len()<=w[1].len()));
             assert!(c.iter().all(|l|l.windows(3).all(|w|!(w[0]==w[1]&&w[1]==w[2]))));
         }
-        assert_eq!((arrows_in(&s,Difficulty::Normal,0),arrows_in(&s,Difficulty::Hard,15)),(3,8));
-        assert_eq!(arrows_in(&song(8),Difficulty::Normal,0),4);
+        assert_eq!((arrows_in(&s,Difficulty::Normal,0),arrows_in(&s,Difficulty::Hard,15)),(2,6));
+        assert_eq!((arrows_in(&song(8),Difficulty::Normal,0),arrows_in(&song(8),Difficulty::Hard,0)),(2,5));
     }
     #[test]
     fn judge_windows_have_exact_boundaries() {
-        assert_eq!([judge(0.0),judge(-0.06),judge(0.061),judge(0.11),judge(-0.17),judge(0.24),judge(0.241)],
+        assert_eq!([judge(0.0),judge(-0.08),judge(0.081),judge(0.15),judge(-0.22),judge(0.30),judge(0.301)],
             [Judge::Perfect,Judge::Perfect,Judge::Great,Judge::Great,Judge::Cool,Judge::Bad,Judge::Miss]);
     }
     #[test]
@@ -199,13 +224,12 @@ mod tests {
         assert_eq!((play.counts[Judge::Miss as usize],play.score,play.grade()),(16,0.0,Grade::C));
     }
     #[test]
-    fn wrong_arrow_resets_the_phrase_and_incomplete_hit_misses() {
-        let mut play=Play::new(song(4),Difficulty::Normal,5);
+    fn wrong_arrow_keeps_progress_and_incomplete_hit_misses() {
+        let mut play=Play::new(song(4),Difficulty::Hard,5);
         let start=play.song.phrase_start(0);let line=play.chart[0].clone();
-        play.arrow(start-0.1,line[0]);assert_eq!(play.entered,0,"input before the phrase opens is ignored");
         play.arrow(start,line[0]);play.arrow(start,line[1]);assert_eq!(play.entered,2);
         let wrong=[Arrow::Up,Arrow::Down,Arrow::Left,Arrow::Right].into_iter().find(|a|*a!=line[2]).unwrap();
-        play.arrow(start+0.1,wrong);assert_eq!((play.entered,play.wrong),(0,Some(start+0.1)));
+        play.arrow(start+0.1,wrong);assert_eq!((play.entered,play.wrong),(2,Some(start+0.1)));
         play.hit(play.song.target(0));
         assert_eq!((play.last.map(|l|l.0),play.combo,play.phrase),(Some(Judge::Miss),0,1));
     }
@@ -215,7 +239,7 @@ mod tests {
         let line=play.chart[0].clone();let start=play.song.phrase_start(0);
         for a in line {play.arrow(start,a);}
         play.hit(play.song.target(0)-0.5);assert_eq!(play.phrase,0,"too early: ignored");
-        play.tick(play.song.target(0)+0.2);play.hit(play.song.target(0)+0.2);
+        play.tick(play.song.target(0)+0.26);play.hit(play.song.target(0)+0.26);
         assert_eq!(play.last.map(|l|l.0),Some(Judge::Bad));
         assert_eq!(play.combo,0,"bad breaks the combo");
     }
