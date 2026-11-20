@@ -8,6 +8,8 @@ use std::{
 
 pub static CAPTURE: AtomicBool = AtomicBool::new(false);
 pub fn controls_unlocked()->bool {true}
+fn dance_capture(dancing:bool,focused:bool)->bool {dancing&&focused}
+pub fn dance_input_active()->bool {dance_capture(crate::dance_ui::dancing(),foreground())}
 fn restore_lock(previous:bool,at_hub:bool)->bool {previous&&!at_hub}
 fn background_capture(capture:bool,at_hub:bool)->bool {capture&&!at_hub}
 pub fn capture_actions(shared_event:bool,overlay:bool,dialog:bool)->bool {!shared_event&&(overlay||dialog)}
@@ -103,6 +105,13 @@ pub fn capture_route(visible: bool, player_present: bool, view: &crate::runtime:
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dance_input_returns_to_game_at_end_cancel_or_focus_loss() {
+        assert!(dance_capture(true,true));
+        assert!(!dance_capture(false,true));
+        assert!(!dance_capture(true,false));
+        assert!(!dance_capture(false,false));
+    }
     #[test]
     fn unrestricted_controls_discard_stale_flags_and_closing_delay() {
         assert!(controls_unlocked());
@@ -317,7 +326,7 @@ pub struct PadCapture {
 
 impl PadCapture {
     pub fn update(&mut self, capture: bool) {
-        let capture=background_capture(capture,controls_unlocked());
+        let capture=background_capture(capture,controls_unlocked())||dance_input_active();
         let Ok(manager) = (unsafe { FD4PadManager::instance_mut() }) else {
             return;
         };

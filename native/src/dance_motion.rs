@@ -25,9 +25,9 @@ fn restore(active:bool,elapsed:f32,actual:i32,requested:i32)->bool {
 fn restore_ready(active:bool,elapsed:f32,locked:bool,actual:i32,requested:i32)->bool {
     !locked&&(restore(active,elapsed,actual,requested)||(!active&&actual>=0&&family(actual)==family(HIP_HOP)))
 }
-fn exit_target(previous:i32,idle:i32,requested:i32,retries:u8)->Option<i32>{
-    let candidates=if retries%2==0{[previous,idle]}else{[idle,previous]};
-    candidates.into_iter().find(|&id|id>=0&&family(id)!=family(requested)&&family(id)!=family(HIP_HOP))
+fn exit_target(_previous:i32,_idle:i32,requested:i32,_retries:u8)->Option<i32>{
+    // The event idle field is overwritten by requests; replaying a prior action can loop forever.
+    (family(requested)!=0).then_some(0)
 }
 fn retry_delay(retries:u8)->u128 {if retries<8{250}else{1000}}
 pub fn tick(){
@@ -52,7 +52,7 @@ pub fn tick(){
             return;
         }
         let elapsed=p.started.elapsed().as_secs_f32();
-        let active=crate::dance_ui::active();
+        let active=crate::dance_ui::dancing();
         if !active||elapsed>=10.0 {
             chr.modules.behavior.animation_speed=p.speed;
             if actual>=0&&family(actual)!=family(p.requested)&&family(actual)!=family(HIP_HOP){
@@ -71,12 +71,19 @@ pub fn tick(){
     }
 }
 #[cfg(test)]mod tests {
-    #[test]fn exit_prefers_observed_animation_and_keeps_retrying(){
-        assert_eq!(super::exit_target(3000,2000000,80720,0),Some(3000));
-        assert_eq!(super::exit_target(3000,2000000,80720,1),Some(2000000));
+    #[test]fn polluted_idle_never_repeats_the_failed_pre_dance_action(){
+        for attempt in 0..=255 {
+            assert_eq!(super::exit_target(23030010,23030010,80720,attempt),Some(0));
+            assert_eq!(super::exit_target(80720,80720,80720,attempt),Some(0));
+        }
+    }
+    #[test]fn exit_uses_neutral_animation_and_keeps_retrying(){
+        assert_eq!(super::exit_target(3000,2000000,80720,0),Some(0));
+        assert_eq!(super::exit_target(3000,2000000,80720,1),Some(0));
         assert_eq!(super::exit_target(80720,0,80720,0),Some(0));
-        assert_eq!(super::exit_target(-1,80720,80720,8),None);
-        assert_eq!(super::exit_target(3000,2000000,80720,8),Some(3000));
+        assert_eq!(super::exit_target(-1,80720,80720,8),Some(0));
+        assert_eq!(super::exit_target(3000,2000000,80720,8),Some(0));
+        assert_eq!(super::exit_target(3000,2000000,0,8),None);
         assert_eq!(super::retry_delay(7),250);
         assert_eq!(super::retry_delay(8),1000);
     }
