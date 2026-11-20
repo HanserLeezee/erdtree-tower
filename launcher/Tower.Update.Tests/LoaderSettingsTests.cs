@@ -5,6 +5,18 @@ namespace Tower.Launcher {
 }
 namespace Tower.Update.Tests {
     public sealed class LoaderSettingsTests {
+        [Fact]
+        public void AliyunFallbackDefaultsOffAndPersistsExplicitChoice() {
+            var path=Path.GetTempFileName();
+            try {
+                File.WriteAllText(path,"{}");
+                Assert.False(Tower.Launcher.HostSettings.Load(path).AliyunFallback);
+                new Tower.Launcher.HostSettings {AliyunFallback=true}.Save(path);
+                Assert.True(Tower.Launcher.HostSettings.Load(path).AliyunFallback);
+                new Tower.Launcher.HostSettings {AliyunFallback=false}.Save(path);
+                Assert.False(Tower.Launcher.HostSettings.Load(path).AliyunFallback);
+            } finally {File.Delete(path);}
+        }
         [Theory]
         [InlineData("auto", "auto")]
         [InlineData("mirror", "mirror")]

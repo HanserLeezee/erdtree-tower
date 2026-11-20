@@ -17,6 +17,7 @@ namespace Tower.Launcher
         public string Loader { get; set; } = Me3;
         /// <summary>优先走哪条下载线路（另一条兜底）</summary>
         public string Route { get; set; } = Auto;
+        public bool AliyunFallback { get; set; }
         public bool AutoCheck { get; set; } = true;
         public bool CloseExit { get; set; }
         public string WindowSize { get; set; } = LauncherWindowSize.Default;

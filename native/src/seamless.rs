@@ -9,6 +9,18 @@ pub fn active()->bool {
     !unsafe {GetModuleHandleW(name.as_ptr())}.is_null()
 }
 pub fn blocked(online:bool,seamless:bool)->bool {online&&!seamless}
+pub fn trace_session() {
+    use eldenring::cs::{CSSessionManager,LobbyState,ProtocolState};
+    use fromsoftware_shared::FromStatic;
+    static LAST:std::sync::Mutex<Option<(LobbyState,ProtocolState,usize,u64)>>=std::sync::Mutex::new(None);
+    if !active(){return;}
+    let Ok(session)=(unsafe {CSSessionManager::instance()}) else{return;};
+    let snapshot=(session.lobby_state,session.protocol_state,session.players.len(),session.host_player.as_option().map_or(0,|p|p.steam_id));
+    let Ok(mut last)=LAST.try_lock() else{return;};
+    if last.as_ref()==Some(&snapshot){return;}
+    *last=Some(snapshot);
+    super::log(format!("SEAMLESS_SESSION lobby={:?} protocol={:?} players={} host={}",snapshot.0,snapshot.1,snapshot.2,snapshot.3));
+}
 /// 会话里每个队员的 Steam 名字与本机的 Steam ID（读名单时刷新），路线图的队员图例用来把投票序号对上人
 static NAMES:std::sync::Mutex<Vec<(u64,String)>>=std::sync::Mutex::new(Vec::new());
 static LOCAL:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);

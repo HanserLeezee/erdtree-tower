@@ -30,8 +30,9 @@ namespace Tower.Launcher
         readonly HostSettings settings;
         readonly HttpClient http;
         readonly string? mirror;
+        readonly string? aliyun;
         readonly Plugins plugins;
-        MultiSource source;
+        FallbackSource source;
 
         ReleaseManifest? latest;
         string updateStatus = "尚未检查";
@@ -60,6 +61,7 @@ namespace Tower.Launcher
             http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(5) };
             http.DefaultRequestHeaders.UserAgent.ParseAdd($"ErdtreeTowerLauncher/{typeof(TowerHost).Assembly.GetName().Version}");
             mirror = ReadMirror(paths.SourcesFile);
+            aliyun = ReadMirror(paths.SourcesFile, "aliyunFallback");
             plugins = new Plugins(paths.InstallDir);
             source = CreateSource();
         }
@@ -70,29 +72,30 @@ namespace Tower.Launcher
         /// </summary>
         public void RestoreWindowSize() => form.SetLauncherSize(settings.WindowSize);
 
-        MultiSource CreateSource()
+        FallbackSource CreateSource()
         {
             var custom = Environment.GetEnvironmentVariable("ERDTREE_TOWER_UPDATE_SOURCE");
             if (!string.IsNullOrWhiteSpace(custom))
             {
                 Log.Write("更新源：" + custom);
                 IReleaseSource only = Directory.Exists(custom) ? new DirectoryReleaseSource(custom!) : new HttpReleaseSource(http, custom!);
-                return new MultiSource(new[] { new KeyValuePair<string, IReleaseSource>("自定义", only) });
+                return new FallbackSource(new MultiSource(new[] { new KeyValuePair<string, IReleaseSource>("自定义", only) }));
             }
             var lines = new List<KeyValuePair<string, IReleaseSource>> { new KeyValuePair<string, IReleaseSource>("GitHub", HttpReleaseSource.GitHub(http, "tamikip", "erdtree-tower")) };
             if (mirror != null)
                 lines.Insert(settings.Route == HostSettings.GitHubFirst ? 1 : 0, new KeyValuePair<string, IReleaseSource>("Cloudflare", new HttpReleaseSource(http, mirror)));
-            return new MultiSource(lines) { PreferFastest = settings.Route == HostSettings.Auto };
+            return new FallbackSource(new MultiSource(lines) { PreferFastest = settings.Route == HostSettings.Auto },
+                "阿里云（备用）", settings.AliyunFallback && aliyun != null ? new HttpReleaseSource(http, aliyun) : null);
         }
 
         /// <summary>sources.json 里的国内镜像地址，只接受 https；没配或写错返回 null（只用 GitHub）</summary>
-        static string? ReadMirror(string file)
+        static string? ReadMirror(string file, string key = "mirror")
         {
             try
             {
                 if (!File.Exists(file)) return null;
                 using var document = JsonDocument.Parse(File.ReadAllText(file));
-                var url = Text(document.RootElement, "mirror").Trim();
+                var url = Text(document.RootElement, key).Trim();
                 if (url.Length == 0) return null;
                 if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps) return url;
                 Log.Write("sources.json 的镜像地址不是 https 网址，已忽略：" + url);
@@ -200,6 +203,15 @@ namespace Tower.Launcher
                     break;
                 case "autoCheck": settings.AutoCheck = value.ValueKind == JsonValueKind.True; break;
                 case "closeExit": settings.CloseExit = value.ValueKind == JsonValueKind.True; break;
+                case "aliyunFallback":
+                    var enableAliyun = value.ValueKind == JsonValueKind.True;
+                    if (enableAliyun && !settings.AliyunFallback && MessageBox.Show(form,
+                        "请尽量不要开启阿里云备用节点，除非 Cloudflare 和 GitHub 下载均失败。\n\n开启后，仅在主线路失败时尝试阿里云，不参与自动测速。仍要开启吗？",
+                        "开启阿里云备用节点", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                    { PushValues(InstallState.Load(paths.InstallDir)); return; }
+                    settings.AliyunFallback = enableAliyun;
+                    source = CreateSource();
+                    break;
                 case "route":
                     var route = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
                     settings.Route = route == "GitHub" ? HostSettings.GitHubFirst : route == "Cloudflare" || route == "国内镜像" ? HostSettings.MirrorFirst : HostSettings.Auto;
@@ -438,6 +450,7 @@ namespace Tower.Launcher
                 ["network"] = NetworkProfile.Label(settings.Network),
                 ["loader"] = settings.Loader,
                 ["route"] = settings.Route == HostSettings.GitHubFirst ? "GitHub" : settings.Route == HostSettings.MirrorFirst ? "Cloudflare" : "自动",
+                ["aliyunFallback"] = settings.AliyunFallback,
                 ["mirrorInfo"] = mirror == null ? "未配置（只从 GitHub 更新）" : new Uri(mirror).Host,
                 ["autoCheck"] = settings.AutoCheck,
                 ["closeExit"] = settings.CloseExit,

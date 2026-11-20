@@ -462,6 +462,24 @@ fn migrate_shop_spells(run:&Run,stock:&mut [Stock]) {
         if affix_spell(run,visit,slot,item){item.price=final_price(run,weapon_price(super::reward_ui::item_quality(0x40000000|item.id as u32)));}
     }
 }
+fn withdraw_owned_ruby(stock:&mut [Stock],run:&Run) {
+    for item in stock.iter_mut().filter(|item|item.kind==2) {
+        if erdtree_tower::talismans::owned_family(run,0x20000000|item.id as u32){item.quantity=0;}
+    }
+}
+#[test]
+fn owned_ruby_stock_is_withdrawn_without_rerolling_or_refilling() {
+    let mut run=Run::new(42,erdtree_tower::Class::Samurai);
+    let ids:Vec<u32>=include_str!("../../scene-assets/talisman-definitions.tsv").lines().filter_map(|line|{
+        let parts:Vec<_>=line.split('\t').collect();(parts[4]=="thorns").then(||parts[0].parse().unwrap())
+    }).collect();
+    assert!(ids.len()>1);run.claimed_items.push(0x20000000|ids[0]);
+    let mut rows=vec![Stock{kind:2,id:ids[1] as i32,price:1000,quantity:1},Stock{kind:2,id:1000,price:500,quantity:0}];
+    withdraw_owned_ruby(&mut rows,&run);
+    assert_eq!(rows[0],Stock{kind:2,id:ids[1] as i32,price:1000,quantity:0});
+    assert_eq!(rows[1],Stock{kind:2,id:1000,price:500,quantity:0});
+    let once=rows.clone();withdraw_owned_ruby(&mut rows,&run);assert_eq!(rows,once);
+}
 fn affix_stock(run:&Run,visit:usize,result:&mut [Stock]) {
     let mut talismans=std::collections::HashSet::new();
     for (slot,item) in result.iter_mut().enumerate() {
@@ -546,6 +564,7 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
     migrate_shop_spells(run,&mut stock);
     withdraw_goods(&mut stock);
     withdraw_owned_whetblades(&mut stock,run);
+    withdraw_owned_ruby(&mut stock,run);
     refresh_special_prices(&mut stock,run);
     if stock.len()>MAX_STOCK as usize {return Err("商店货单数量与原生商品槽位不符".into());}
     for i in 0..MAX_STOCK {

@@ -318,6 +318,7 @@ impl ImguiRenderLoop for TowerPreview {
     }
 
     fn message_filter(&self, _: &Io) -> MessageFilter {
+        if input::controls_unlocked(){return MessageFilter::empty();}
         let player_present = SNAPSHOT.lock().is_ok_and(|snapshot| snapshot.is_some());
         if runtime::with_view(|view| input::capture_route(self.visible, player_present, view)).unwrap_or(false)
         {

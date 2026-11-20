@@ -2271,6 +2271,7 @@
       /* 宿主推送设置页的值（启动模式、游戏目录、当前版本、更新状态等），宿主是这些值的来源 */
       if (msg.type === 'settings' && msg.action === 'values') {
         Object.keys(p).forEach(function (k) { setState[k] = p[k]; });
+        if (typeof p.aliyunFallback === 'boolean') saveStore({ aliyunFallback: p.aliyunFallback });
         /* 语言设为繁体：把页面文字转成繁体（简繁表见 zh-tw.js）；改回别的语言需要重新载入页面才能还原 */
         if (typeof p.language === 'string') {
           var traditional = p.language.indexOf('繁體') !== -1;

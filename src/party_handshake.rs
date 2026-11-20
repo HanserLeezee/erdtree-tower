@@ -77,10 +77,15 @@ impl Handshake {
     pub fn ready(&self)->Option<(u64,u64)> {self.committed.then_some(self.session).flatten()}
     /// 提交后整队是否按「有 DLC」运行
     pub fn party_dlc(&self)->Option<bool> {self.committed.then_some(self.party_dlc).flatten()}
+    pub fn waiting_peers(&self)->Vec<u64> {
+        if self.committed {return vec![];}
+        if self.roster.local!=self.roster.host {return vec![self.roster.host];}
+        self.peers.iter().filter(|p|!p.2).map(|p|p.0).collect()
+    }
     /// 握手还没完成时给玩家看的说明。玩家用 Steam ID 表示，原生层显示前会换成角色名
     pub fn waiting_reason(&self)->String {
         if self.roster.local!=self.roster.host {
-            return format!("正在等待房主 {} 确认队伍，通常几秒内就会完成。\n\n超过半分钟还没开始的话：\n· 确认房主也是用爬塔启动器进的游戏；\n· 确认大家的爬塔版本一样（启动器里能看到）；\n· 仍然不行，就退出房间重新加入。",self.roster.host);
+            return format!("无缝已识别队伍，正在等待房主 {} 的爬塔握手回应。\n系统会自动重试，无需反复点击。等待较久时会重新连接未回应的爬塔消息通道；若仍无回应，请保留双方日志。",self.roster.host);
         }
         let names=|ids:Vec<u64>|ids.iter().map(u64::to_string).collect::<Vec<_>>().join("、");
         let silent=names(self.peers.iter().filter(|p|p.1.is_none()).map(|p|p.0).collect());
@@ -89,7 +94,7 @@ impl Handshake {
         if !silent.is_empty() {text+=&format!("\n还没有回应：{silent}");}
         if !syncing.is_empty() {text+=&format!("\n正在确认，请稍等几秒：{syncing}");}
         if !silent.is_empty() {
-            text+="\n\n请没有回应的队友检查：\n· 是用爬塔启动器进的游戏，不是直接开法环或无缝联机；\n· 爬塔版本和房主一样（启动器里能看到）；\n· 已经回到大赐福，没有卡在加载。\n检查后重新加入房间即可。";
+            text+="\n\n无缝已识别队友，但尚未收到这些队友的爬塔握手回应。\n系统正在自动重试；等待较久时会重新连接未回应的爬塔消息通道。\n请等待队友加载完成；若持续无回应，请保留双方日志。";
         }
         text
     }
@@ -228,6 +233,19 @@ mod tests {
         let error=super::Payload::decode(bytes).unwrap_err();
         assert!(error.contains(&format!("你 {}，对方 1",super::VERSION)));
         assert!(state(2).waiting_reason().contains("等待房主 1"));
+    }
+    #[test]
+    fn retry_targets_only_unconfirmed_peers_and_preserves_nonce() {
+        let mut host=state(1);let mut guest=state(2);
+        assert_eq!(host.waiting_peers(),vec![2,3]);
+        assert_eq!(guest.waiting_peers(),vec![1]);
+        let hello=guest.hello().unwrap().1;
+        let offer=host.receive_lobby(2,hello.clone()).unwrap().remove(0).1;
+        let ack=guest.receive_lobby(1,offer).unwrap().remove(0).1;
+        host.receive_lobby(2,ack).unwrap();
+        assert_eq!(host.waiting_peers(),vec![3]);
+        assert!(matches!(guest.hello().unwrap().1,Message::Hello{nonce:102,..}));
+        assert!(!host.waiting_reason().contains("不是直接开"));
     }
     use super::*;
     fn state(local:u64)->Handshake {Handshake::new(Roster{local,host:1,members:vec![1,2,3]},100+local,42).unwrap()}

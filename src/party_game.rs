@@ -358,6 +358,19 @@ impl Gate {
     }
     pub fn leaving(&self)->Vec<u64> {self.peers.iter().filter_map(|(id,r)|r.as_ref().filter(|r|r.epoch==self.epoch&&r.present&&r.alive&&r.leaving).map(|_|*id)).collect()}
     pub fn resume_ready(&self,point:&crate::suspension::Point)->bool {self.all(|r|r.epoch==self.epoch&&r.at_hub&&r.alive&&r.resume.as_ref()==Some(point))}
+    pub fn restart_paused_ready(&self)->bool {self.peers.len()>1&&self.all(|r|r.epoch==self.epoch&&r.at_hub&&r.alive)}
+    pub fn resume_waiting(&self,point:&crate::suspension::Point)->Vec<(u64,&'static str)> {
+        self.peers.iter().filter_map(|(id,report)|{
+            let reason=match report.as_ref() {
+                None=>"尚未收到游戏状态",
+                Some(r) if r.epoch!=self.epoch||!r.present=>"等待游戏状态同步",
+                Some(r) if !r.at_hub||!r.alive=>"等待返回大赐福并完成加载",
+                Some(r) if r.resume.is_none()=>"没有可恢复的暂停旅程",
+                Some(r) if r.resume.as_ref()!=Some(point)=>"暂停旅程进度不同，未覆盖存档",
+                _=>return None,
+            };Some((*id,reason))
+        }).collect()
+    }
     /// 成员的敌人侧余烬效果（只取本场战斗、在场的成员），以及核对用的余烬
     /// 本场在场队员持有的余烬（房主据此代为执行只作用在敌人身上、又不走汇报的余烬，如鲜血骑士的破势）
     pub fn held_embers(&self)->Vec<crate::embers::Ember> {
@@ -553,6 +566,28 @@ mod tests {
         let mut hub=Report::at_hub(0);hub.resume=Some(point.clone());gate.report(1,hub.clone()).unwrap();assert!(!gate.resume_ready(&point));
         gate.report(2,hub.clone()).unwrap();assert!(gate.resume_ready(&point));
         hub.alive=false;gate.report(2,hub).unwrap();assert!(!gate.resume_ready(&point));
+    }
+    #[test]
+    fn resume_diagnostics_distinguish_missing_save_from_different_progress() {
+        let run=Run::new(42,crate::Class::Samurai);let point=crate::suspension::Point::of(&run).unwrap();
+        let mut gate=Gate::new(vec![1,2]);let mut report=Report::at_hub(0);
+        report.resume=Some(point.clone());gate.report(1,report.clone()).unwrap();
+        assert_eq!(gate.resume_waiting(&point),vec![(2,"尚未收到游戏状态")]);
+        gate.report(2,Report::at_hub(0)).unwrap();
+        assert_eq!(gate.resume_waiting(&point),vec![(2,"没有可恢复的暂停旅程")]);
+        let mut other=report.clone();other.resume.as_mut().unwrap().seed+=1;gate.report(2,other).unwrap();
+        assert_eq!(gate.resume_waiting(&point),vec![(2,"暂停旅程进度不同，未覆盖存档")]);
+        assert!(!gate.resume_ready(&point));
+        gate.report(2,report).unwrap();assert!(gate.resume_waiting(&point).is_empty());assert!(gate.resume_ready(&point));
+    }
+    #[test]
+    fn restarting_paused_party_requires_everyone_at_hub_not_matching_saves() {
+        let mut gate=Gate::new(vec![1,2]);
+        gate.report(1,Report::at_hub(0)).unwrap();assert!(!gate.restart_paused_ready());
+        gate.report(2,Report::at_hub(0)).unwrap();assert!(gate.restart_paused_ready());
+        gate.report(2,Report::unavailable(0)).unwrap();assert!(!gate.restart_paused_ready());
+        assert!(gate.report(2,Report::at_hub(1)).is_err());assert!(!gate.restart_paused_ready());
+        let mut dead=Report::at_hub(0);dead.alive=false;gate.report(2,dead).unwrap();assert!(!gate.restart_paused_ready());
     }
     #[test]
     fn titles_are_collected_from_every_present_member() {

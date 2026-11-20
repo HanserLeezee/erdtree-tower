@@ -1,4 +1,5 @@
 {
-  "_说明": "Cloudflare R2 更新镜像（只接受 https）。留空则只从 GitHub 更新。旧启动器需安装换源补丁或更新此文件。发布步骤见 distribution/R2-MIRROR.md，上传使用 distribution/upload_r2.py。",
-  "mirror": "https://erdtree.paper2gal.com/releases"
+  "_说明": "Cloudflare 为主镜像，阿里云为默认关闭的备用节点，需用户确认开启且主线路失败后才访问。地址只接受 https。发布时维护两处镜像，详见 distribution/R2-MIRROR.md。",
+  "mirror": "https://erdtree.paper2gal.com/releases",
+  "aliyunFallback": "https://eldenring-mods-hz.oss-cn-hangzhou.aliyuncs.com/releases"
 }

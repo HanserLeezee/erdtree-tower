@@ -7,6 +7,9 @@ use std::{
 };
 
 pub static CAPTURE: AtomicBool = AtomicBool::new(false);
+pub fn controls_unlocked()->bool {true}
+fn restore_lock(previous:bool,at_hub:bool)->bool {previous&&!at_hub}
+fn background_capture(capture:bool,at_hub:bool)->bool {capture&&!at_hub}
 pub fn capture_actions(shared_event:bool,overlay:bool,dialog:bool)->bool {!shared_event&&(overlay||dialog)}
 pub static WINDOW: AtomicIsize = AtomicIsize::new(0);
 static ORIGINAL: AtomicUsize = AtomicUsize::new(0);
@@ -36,6 +39,7 @@ unsafe extern "system" fn clip_cursor(rect:*const windows::Win32::Foundation::RE
 #[derive(Default)]
 struct ActionWindow {last_active:Option<std::time::Duration>}
 impl ActionWindow {
+    fn clear(&mut self) {self.last_active=None;}
     fn blocked(&mut self,now:std::time::Duration,active:bool)->bool {
         if active {self.last_active=Some(now);}
         active || self.last_active.is_some_and(|at|now.saturating_sub(at)<std::time::Duration::from_millis(350))
@@ -54,12 +58,23 @@ impl Default for ActionGuard {
 }
 impl ActionGuard {
     pub fn update(&mut self,chr:&mut eldenring::cs::ChrIns,active:bool,dancing:bool) {
+        let at_hub=controls_unlocked();
+        if at_hub {
+            self.window.clear();self.saved=None;
+            chr.debug_flags.set_disabled_secondary_actions(false);
+            chr.debug_flags.set_disabled_movement(false);
+            return;
+        }
         let owner=std::ptr::from_ref(chr) as usize;
         if self.saved.is_some_and(|(address,handle,_,_)|address!=owner||handle!=chr.field_ins_handle) {self.saved=None;}
         if self.window.blocked(self.clock.elapsed(),active) {
-            self.saved.get_or_insert((owner,chr.field_ins_handle,chr.debug_flags.disabled_secondary_actions(),chr.debug_flags.disabled_movement()));
+            self.saved.get_or_insert((owner,chr.field_ins_handle,restore_lock(chr.debug_flags.disabled_secondary_actions(),at_hub),restore_lock(chr.debug_flags.disabled_movement(),at_hub)));
             chr.debug_flags.set_disabled_secondary_actions(block_secondary_actions(dancing,self.saved.as_ref().is_some_and(|s|s.2)));
             chr.debug_flags.set_disabled_movement(true);
+        } else if at_hub {
+            self.saved=None;
+            chr.debug_flags.set_disabled_secondary_actions(false);
+            chr.debug_flags.set_disabled_movement(false);
         } else if let Some((_,_,actions,movement))=self.saved.take() {
             chr.debug_flags.set_disabled_secondary_actions(actions);
             chr.debug_flags.set_disabled_movement(movement);
@@ -88,6 +103,22 @@ pub fn capture_route(visible: bool, player_present: bool, view: &crate::runtime:
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unrestricted_controls_discard_stale_flags_and_closing_delay() {
+        assert!(controls_unlocked());
+        for requested in [false,true] {assert!(!background_capture(requested,controls_unlocked()));}
+        for old in [false,true] {
+            assert!(!restore_lock(old,true));
+            assert_eq!(restore_lock(old,false),old);
+        }
+        assert!(!background_capture(true,true));
+        assert!(background_capture(true,false));
+        assert!(!background_capture(false,false));
+        let mut window=ActionWindow::default();
+        assert!(window.blocked(std::time::Duration::ZERO,true));
+        window.clear();
+        assert!(!window.blocked(std::time::Duration::ZERO,false));
+    }
     #[test]
     fn dance_releases_only_the_menu_action_lock() {
         assert!(!block_secondary_actions(true,false));
@@ -286,6 +317,7 @@ pub struct PadCapture {
 
 impl PadCapture {
     pub fn update(&mut self, capture: bool) {
+        let capture=background_capture(capture,controls_unlocked());
         let Ok(manager) = (unsafe { FD4PadManager::instance_mut() }) else {
             return;
         };
@@ -297,8 +329,11 @@ impl PadCapture {
             self.saved = None;
         }
         if capture {
-            self.saved.get_or_insert((address, pad.allow_polling));
+            self.saved.get_or_insert((address, pad.allow_polling||controls_unlocked()));
             pad.allow_polling = false;
+        } else if controls_unlocked() {
+            self.saved=None;
+            pad.allow_polling=true;
         } else if let Some((_, previous)) = self.saved.take() {
             pad.allow_polling = previous;
         }

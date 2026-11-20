@@ -328,6 +328,7 @@ window.HOYO_CONFIG = {
               { type: 'switch', key: 'autoCheck', label: '启动时自动检查更新', value: true },
               { type: 'seg', key: 'route', label: '下载线路', hint: '自动检测可用线路，同版本优先响应较快的线路；下载失败自动切换',
                 value: '自动', options: ['自动', 'Cloudflare', 'GitHub'] },
+              { type: 'switch', key: 'aliyunFallback', label: '启用阿里云备用节点', hint: '尽量不要开启，除非下载失败；仅在 Cloudflare 和 GitHub 均失败时使用', value: false },
               { type: 'static', label: '整合包版本', key: 'version', value: '—' },
               { type: 'static', label: '启动器版本', key: 'launcherVersion', value: '—' },
               { type: 'static', label: '更新状态', key: 'updateStatus', value: '尚未检查' },

@@ -71,11 +71,22 @@ fn handshake_responses(handshake:&mut erdtree_tower::party_handshake::Handshake,
         }
     }
 }
+pub fn active_handshake_responses(handshake:&mut erdtree_tower::party_handshake::Handshake,lobby:bool,host:bool,peer:u64,message:erdtree_tower::party_handshake::Message)->Result<Vec<(u64,erdtree_tower::party_handshake::Message)>,String> {
+    let result=if lobby{handshake.receive_lobby(peer,message.clone())}else{handshake.receive(peer,message.clone())};
+    match result {
+        Err(error) if host&&!(lobby&&error.contains(erdtree_tower::party_handshake::RECONNECTED))=>{
+            super::log_repeating(format!("PARTY_HANDSHAKE_REJECT peer={peer}: {error}"));
+            Ok(handshake.rejections(peer,&message,&error))
+        },
+        result=>result,
+    }
+}
 impl Pending {
     pub fn restored(roster:Roster,transport:Transport,handshake:erdtree_tower::party_handshake::Handshake,packets:Vec<(u64,erdtree_tower::party_handshake::Payload)>)->Self {
         Self{roster,transport,handshake,packets,hello:std::time::Instant::now(),started:std::time::Instant::now(),failure:None}
     }
     pub fn waiting_reason(&self)->String {super::seamless::display_player_names(&self.failure.clone().unwrap_or_else(||self.handshake.waiting_reason()))}
+    pub fn failure(&self)->Option<&str> {self.failure.as_deref()}
     pub fn new(roster:Roster,nonce:u64,seed:u64,dlc:bool,profile:erdtree_tower::party_compat::Compatibility)->Result<Self,String> {
         let handshake=erdtree_tower::party_handshake::Handshake::new(roster.clone(),nonce,seed)?.with_dlc(dlc).with_compatibility(profile)?;
         Ok(Self{transport:Transport::load(roster.clone())?,roster,handshake,hello:std::time::Instant::now()-std::time::Duration::from_secs(1),started:std::time::Instant::now(),packets:vec![],failure:None})
@@ -108,7 +119,10 @@ impl Pending {
         if self.failure.is_some(){return Ok(None);}
         let ready=self.handshake.ready();
         if ready.is_none()&&handshake_expired(self.started.elapsed()) {
-            super::log(format!("Party handshake still waiting: host={} peers={}; retaining nonce and retrying",self.roster.local==self.roster.host,self.roster.members.len()-1));
+            let peers=self.handshake.waiting_peers();
+            self.transport.reopen_channels(&peers);
+            self.hello=std::time::Instant::now()-std::time::Duration::from_secs(1);
+            super::log(format!("PARTY_HANDSHAKE_RETRY peers={peers:?}; reopened tower message channels, retaining nonce"));
             self.started=std::time::Instant::now();
         }
         Ok(ready)
@@ -153,6 +167,13 @@ impl Transport {
     }
     /// 队员退出后换成缩小后的名单（之后不再给他发消息，也不收他的）
     pub fn set_roster(&mut self,roster:Roster) {self.roster=roster;}
+    fn reopen_channels(&self,peers:&[u64]) {
+        for &peer in peers {
+            if !allowed(&self.roster,peer,1){continue;}
+            let mut identity=Identity{bytes:[0;136]};
+            unsafe {(self.set)(&mut identity,peer);(self.close)(self.interface.as_ptr(),&identity,CHANNEL);(self.accept)(self.interface.as_ptr(),&identity);}
+        }
+    }
     pub fn send(&self,peer:u64,data:&[u8])->Result<(),String> {
         if !allowed(&self.roster,peer,data.len()){return Err("无效队伍消息目标或长度".into());}
         let mut identity=Identity{bytes:[0;136]};
@@ -237,6 +258,28 @@ impl Drop for Transport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn committed_host_restart_is_recoverable_only_in_idle_lobby() {
+        use erdtree_tower::party_handshake::{Handshake,Message as H};
+        let roster=|local|Roster{local,host:1,members:vec![1,2]};
+        let mut host=Handshake::new(roster(1),101,42).unwrap();
+        let mut guest=Handshake::new(roster(2),102,42).unwrap();
+        let offer=host.receive_lobby(2,guest.hello().unwrap().1).unwrap().remove(0).1;
+        let ack=guest.receive_lobby(1,offer).unwrap().remove(0).1;
+        host.receive_lobby(2,ack).unwrap();
+        let returning=Handshake::new(roster(2),202,42).unwrap();
+        assert!(active_handshake_responses(&mut host,true,true,2,returning.hello().unwrap().1).unwrap_err().contains("重新连上"));
+        let responses=active_handshake_responses(&mut host,false,true,2,returning.hello().unwrap().1).unwrap();
+        assert!(matches!(responses[0].1,H::Reject{nonce:202,..}));
+        assert_eq!(host.ready(),Some((101,42)));
+        let mut rebuilt=Handshake::new(roster(1),301,42).unwrap();
+        let mut guest=returning;
+        let offer=rebuilt.receive_lobby(2,guest.hello().unwrap().1).unwrap().remove(0).1;
+        let ack=guest.receive_lobby(1,offer).unwrap().remove(0).1;
+        for (_,commit) in rebuilt.receive_lobby(2,ack).unwrap(){guest.receive_lobby(1,commit).unwrap();}
+        assert_eq!(guest.ready(),rebuilt.ready());
+        assert_eq!(guest.ready(),Some((301,42)));
+    }
     #[test]
     fn failed_preflight_answers_late_peers_without_offering_a_session() {
         use erdtree_tower::{party_handshake::{Handshake,Message as HandshakeMessage},party_compat::Compatibility};

@@ -1,6 +1,8 @@
 use std::{path::Path,time::Instant,sync::{Mutex,atomic::{AtomicBool,AtomicU8,Ordering}}};
 use erdtree_tower::{Run,suspension::{Point,Snapshot}};
 pub static REQUEST:AtomicBool=AtomicBool::new(false);
+pub static RESTART_CONTEXT:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+pub static RESTART_REQUEST:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 pub static ROLE:AtomicU8=AtomicU8::new(0);
 static NOTICE:Mutex<String>=Mutex::new(String::new());
 pub fn notice(text:impl Into<String>){if let Ok(mut s)=NOTICE.lock(){*s=text.into();}}
@@ -48,6 +50,19 @@ pub fn clear(owner:(u32,i32))->Result<(),String> {
         std::fs::remove_file(path).map_err(|e|e.to_string())?;
     }Ok(())
 }
+pub fn backup_restart(owner:(u32,i32))->Result<(),String> {
+    let files=["paused","json","reconnect"].map(|ext|super::hub::path(owner,ext));
+    if !files.iter().any(|p|p.exists()){return Ok(());}
+    let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_nanos();
+    let folder=files[0].parent().ok_or("旅程目录无效")?.join("restart-backups").join(format!("{}-{}-{stamp}",owner.0,owner.1));
+    backup_files(&files,&folder)?;
+    super::log(format!("PARTY_RESTART backup={}",folder.display()));Ok(())
+}
+fn backup_files(files:&[std::path::PathBuf],folder:&Path)->Result<(),String> {
+    std::fs::create_dir_all(folder).map_err(|e|e.to_string())?;
+    for file in files {if file.exists(){std::fs::copy(file,folder.join(file.file_name().ok_or("旅程文件名无效")?)).map_err(|e|e.to_string())?;}}
+    Ok(())
+}
 pub fn draw(ui:&hudhook::imgui::Ui,view:Option<&super::runtime::View>) {
     use hudhook::imgui::Key;
     let eligible=view.and_then(|v|v.run.as_ref()).is_some_and(|r|!matches!(r.phase,erdtree_tower::Phase::Dead|erdtree_tower::Phase::Won));
@@ -65,8 +80,11 @@ mod tests {
         save_at(&path,owner,&run).unwrap();run.gold=456;save_at(&path,owner,&run).unwrap();
         assert_eq!(Snapshot::decode(&std::fs::read_to_string(&path).unwrap(),owner).unwrap().gold,456);
         let backup=path.with_extension("paused-backup");assert_eq!(Snapshot::decode(&std::fs::read_to_string(&backup).unwrap(),owner).unwrap().gold,123);
+        let restart=dir.join("restart");backup_files(&[path.clone()],&restart).unwrap();
+        let preserved=restart.join("session.paused");assert_eq!(Snapshot::decode(&std::fs::read_to_string(&preserved).unwrap(),owner).unwrap().gold,456);
         std::fs::write(&path,"broken").unwrap();assert!(save_at(&path,owner,&run).is_err());
         assert_eq!(Snapshot::decode(&std::fs::read_to_string(&backup).unwrap(),owner).unwrap().gold,123);
+        std::fs::remove_file(preserved).unwrap();std::fs::remove_dir(restart).unwrap();
         std::fs::remove_file(path).unwrap();std::fs::remove_file(backup).unwrap();std::fs::remove_dir(dir).unwrap();
     }
 }

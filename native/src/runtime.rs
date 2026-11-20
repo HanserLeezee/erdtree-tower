@@ -807,7 +807,9 @@ fn recover_party_at_hub(state:&mut Runtime,world:&WorldChrMan,game:&GameMan) {
         &&p.chr_ins.modules.physics.standing_on_solid_ground);
     let roster=super::seamless::roster(session).ok();
     let changed=lobby_roster_changed(state.party.as_ref().and_then(|p|p.roster()),state.party_pending.as_ref().map(|p|&p.roster),roster.as_ref());
-    let reconnect=lobby_reconnect_error(state.party_error.as_deref().or_else(||state.party.as_ref().and_then(|p|p.stopped.as_deref())));
+    let reconnect=lobby_reconnect_error(state.party_error.as_deref()
+        .or_else(||state.party.as_ref().and_then(|p|p.stopped.as_deref()))
+        .or_else(||state.party_pending.as_ref().and_then(|p|p.failure())));
     if rebuild_lobby(changed||reconnect,at_hub,state.hub.as_ref().is_some_and(|h|h.active),state.view.run.as_ref().map(|r|&r.phase)) {
         state.party=None;state.party_pending=None;state.party_error=None;
         state.command=None;state.view.ballots.clear();state.view.busy=false;
@@ -833,8 +835,10 @@ fn diagnostic_stall_victory(enabled:bool,authority:bool,elapsed:Duration)->bool 
 // [fix] Keep the attack-disable guard in sync on every tick, including the early-return error /
 // emergency-end paths. Before, those paths skipped ActionGuard::update, so a dialog that had just
 // disabled attacks (disabled_secondary_actions) could leave the player unable to attack for good.
+fn reconnect_locks_actions(waiting:bool,at_hub:bool)->bool {waiting&&!at_hub}
 fn sync_action_guard(state:&mut Runtime,world:&mut WorldChrMan) {
-    let menu_active=state.reconnect.is_some()||state.suspension.prepared.is_some()&&!state.suspension.leave||super::input::capture_actions(state.view.shared_event,super::input::active(),
+    let at_hub=world.main_player.as_ref().is_some_and(|p|i32::from(p.current_block_id)==super::hub::BLOCK);
+    let menu_active=reconnect_locks_actions(state.reconnect.is_some()||state.suspension.prepared.is_some()&&!state.suspension.leave,at_hub)||super::input::capture_actions(state.view.shared_event,super::input::active(),
         state.room.as_ref().is_some_and(|r|r.dialog_active())
         || state.attendant.as_ref().is_some_and(|r|r.dialog_active())
         || state.hub.as_ref().is_some_and(|h|h.dialog_active()));
@@ -1496,7 +1500,8 @@ fn tick_suspension(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)-
     if state.suspension.prepared.is_none(){return Ok(false);}
     state.view.busy=true;state.view.ready=false;state.command=None;
     state.view.room=state.suspension.leave.then(||super::rooms::RoomView{message:"正在保存暂退进度".into(),loading:false,completed:false});
-    super::input::CAPTURE.store(!state.suspension.leave,Ordering::Relaxed);state.pad_capture.update(!state.suspension.leave);
+    let capture=!state.suspension.leave&&!super::input::controls_unlocked();
+    super::input::CAPTURE.store(capture,Ordering::Relaxed);state.pad_capture.update(capture);
     let alive=world.main_player.as_ref().is_some_and(|p|p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag());
     let orders=state.party.as_mut().ok_or("暂退队伍通道已断开")?.poll(state.view.run.as_ref(),alive,false,false);
     for order in orders {apply_party_order(state,world,game,order)?;}
@@ -1575,6 +1580,7 @@ fn emergency_end(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->R
     let data=unsafe {player.player_game_data.as_ref()};
     let owner=(data.character_id,game.save_slot);
     if game.save_slot<0{return Ok(false);}
+    super::suspension::backup_restart(owner)?;
     if state.hub.is_none(){state.hub=Some(super::hub::Hub::new(owner,data.archetype)?);super::name_tags::load(owner);super::auras::load(owner);}
     super::legacy::set_owner(owner);
     if let Some(run)=state.view.run.as_ref() {
@@ -1591,6 +1597,7 @@ fn emergency_end(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->R
     state.hub.as_mut().unwrap().finish();
     let marker=super::hub::path(owner,"paused");
     if marker.exists(){std::fs::remove_file(marker).map_err(|e|e.to_string())?;}
+    super::reconnect::clear(owner)?;state.reconnect=None;state.suspension=Default::default();
     stop_map_combat(state,world);
     if let Some(room)=state.room.take(){room.retire(world);}
     if let Some(scene)=state.party_scene.take(){scene.retire(world);}
@@ -1613,6 +1620,8 @@ fn emergency_end(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->R
     Ok(true)
 }
 pub fn tick() {
+    static INPUT_MODE:std::sync::Once=std::sync::Once::new();
+    INPUT_MODE.call_once(||super::log("PLAYER_INPUT unrestricted: movement/action locks and input interception disabled globally"));
     if let Ok(world)=unsafe {WorldChrMan::instance_mut()}{super::frost_shackle::begin_frame(world);}
     super::dance_motion::tick();
     if let Ok(mut state)=STATE.try_lock(){sync_map(&mut state);}
@@ -1718,6 +1727,20 @@ fn tick_locked() {
             Ok(hub)=>{state.hub=Some(hub);if let Ok(mut path)=SESSION_PATH.lock(){*path=Some(super::hub::path(owner,"json"));}},
             Err(e)=>{report(&mut state,e);return;},
         }}
+    }
+    let restart_paused=!game.warp_requested&&state.view.run.is_none()
+        &&state.hub.as_ref().is_some_and(|h|h.active&&h.paused)
+        &&state.party_error.is_none()&&state.party_pending.is_none()&&state.reconnect.is_none()
+        &&world.main_player.as_ref().is_some_and(|p|i32::from(p.current_block_id)==super::hub::BLOCK&&p.chr_ins.modules.physics.standing_on_solid_ground)
+        &&state.party.as_ref().is_some_and(|p|p.can_restart_paused());
+    let restart_context=state.party.as_ref().filter(|_|restart_paused).map_or(0,|p|p.config.session);
+    super::suspension::RESTART_CONTEXT.store(restart_context,std::sync::atomic::Ordering::Release);
+    let restart_request=super::suspension::RESTART_REQUEST.swap(0,std::sync::atomic::Ordering::AcqRel);
+    if restart_request!=0 {
+        if restart_paused&&restart_request==restart_context {
+            super::log("PARTY_RESTART host confirmed abandoning paused journeys; using synchronized force end");
+            QUICK_END.store(true,std::sync::atomic::Ordering::Relaxed);
+        }else{super::run_screen::party_notice("队伍状态已变化，未放弃旅程。请等待全员返回大赐福并完成握手后重试。".into());}
     }
     if QUICK_END.load(std::sync::atomic::Ordering::Relaxed) {
         match emergency_end(&mut state,world,game) {
@@ -1838,6 +1861,7 @@ fn tick_locked() {
             report(&mut state,if quick_end{format!("已按 {} 结束本局。",super::options::label(erdtree_tower::options::Hotkey::Settle))}else{"已在赐福休息，本局结束。".into()});
         }
     }
+    super::seamless::trace_session();
     recover_party_at_hub(&mut state,world,game);
     let end_requested=super::native_talk::END_REQUESTED.swap(false,std::sync::atomic::Ordering::Relaxed);
     let end_allowed=can_end_run(state.view.run.as_ref().map(|r|&r.phase),state.party.as_ref().is_none_or(|p|p.host()),
@@ -1856,6 +1880,9 @@ fn tick_locked() {
     let party_waiting=match tick_auto_party(&mut state,world,game) {
         Ok(waiting)=>waiting,
         Err(error)=>{
+            if state.reconnect.take().is_some() {
+                super::log(format!("RECONNECT failed; wait released, saved progress retained: {error}"));
+            }
             if let Some(link)=state.party.as_mut(){link.stop(error.clone());}
             state.party_error=Some(error.clone());state.view.ready=false;state.command=None;report(&mut state,error);poll_blocked_hub(&mut state,world,game);return;
         },
@@ -2234,7 +2261,9 @@ fn tick_locked() {
         state.pad_capture.update(super::input::active());
         let mut hub=state.hub.take().unwrap();
         let paused_party=hub.paused&&!solo_session()&&!state.party.as_ref().is_some_and(|p|p.event.pause.resume_ready);
-        let blocked=(paused_party||party_waiting||state.party.as_ref().is_some_and(|p|p.needs_new_run())).then(||if paused_party {"正在等待所有人在大赐福读取同一局暂停的旅程。请大家都选择「继续旅程」，并确认读取的是同一局（种子、幕数、路线和律法相同）。".into()}else{party_block_reason(&state,world)});
+        let blocked=(paused_party||party_waiting||state.party.as_ref().is_some_and(|p|p.needs_new_run())).then(||
+            if paused_party&&!party_waiting {state.party.as_ref().map_or_else(||party_block_reason(&state,world),|p|p.resume_waiting_reason())}
+            else{party_block_reason(&state,world)});
         let result=hub.poll(world,game,blocked.as_deref());
         state.view.room=Some(hub.view());state.hub=Some(hub);
         match result {
@@ -5533,6 +5562,13 @@ mod tests {
         assert!(!super::release_closed_party(true,true,false,None));
         assert!(!super::release_closed_party(true,true,false,Some(&Phase::Map)));
         assert!(!super::release_closed_party(true,true,true,Some(&Phase::Map)));
+    }
+    #[test]
+    fn reconnect_wait_allows_hub_actions_but_guards_unsynced_arena() {
+        assert!(!super::reconnect_locks_actions(true,true));
+        assert!(super::reconnect_locks_actions(true,false));
+        assert!(!super::reconnect_locks_actions(false,false));
+        assert!(!super::reconnect_locks_actions(false,true));
     }
     #[test]
     fn material_confirmation_never_applies_to_another_character_or_reward() {

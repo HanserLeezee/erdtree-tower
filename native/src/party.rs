@@ -605,6 +605,19 @@ impl Link {
         Ok(true)
     }
     pub fn needs_new_run(&self)->bool {self.defeated||(self.victory&&self.rewards)}
+    pub fn can_restart_paused(&self)->bool {
+        self.host()&&self.stopped.is_none()&&self.gate.restart_paused_ready()
+            &&self.gate.members().iter().filter(|&&id|id!=self.config.player)
+                .all(|id|self.last_seen.iter().any(|(peer,at)|peer==id&&at.elapsed()<Duration::from_secs(2)))
+    }
+    pub fn resume_waiting_reason(&self)->String {
+        if !self.host(){return "正在等待房主自动核对全队的暂停旅程，无需同时点击继续。进度一致后即可继续。".into();}
+        let Some(point)=self.event.pause.resume.as_ref() else{return "本机暂停旅程尚未就绪，正在等待恢复点。".into();};
+        let waiting=self.gate.resume_waiting(point);
+        let mut reason="正在自动核对暂停旅程，无需同时点击继续。".to_string();
+        for (id,message) in waiting {reason+=&format!("\n队员 {id}：{message}");}
+        super::seamless::display_player_names(&reason)
+    }
     pub fn poll(&mut self,run:Option<&Run>,alive:bool,at_hub:bool,rest_end:bool)->Vec<Order> {
         if self.poll_force_end(at_hub&&run.is_none()){return vec![Order::ForceEnd];}
         if let Some(error)=&self.stopped{return vec![Order::Stop(error.clone())];}
@@ -648,12 +661,7 @@ impl Link {
                         Payload::Reconnect{session,message}=>reconnect.push((peer,session,message)),
                         Payload::Latency{session,snapshot}=>{steam.latency.accept(&steam.roster,peer,session,self.config.session,snapshot);},
                         Payload::Handshake(message)=>{
-                            let responses=if lobby{steam.handshake.receive_lobby(peer,message.clone())}else{steam.handshake.receive(peer,message.clone())};
-                            let responses=match responses {
-                                Ok(responses)=>responses,
-                                Err(e) if !guest=>{ignored(peer,&e);steam.handshake.rejections(peer,&message,&e)},
-                                Err(e)=>return Err(e),
-                            };
+                            let responses=super::steam_messages::active_handshake_responses(&mut steam.handshake,lobby,!guest,peer,message)?;
                             for (target,response) in responses {steam.transport.send(target,&Payload::Handshake(response).encode()?)?;}
                         },
                         packet=>if let Some(event)=steam_event(&self.config,peer,packet).unwrap_or_else(|e|{ignored(peer,&e);None}) {

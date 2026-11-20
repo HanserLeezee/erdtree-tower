@@ -10,19 +10,27 @@ const CARD_W:f32=760.0;const PAD:f32=56.0;
 
 pub enum Kind<'a> {
     /// 联机无法开始：原因（可能多行）
-    Failure{message:&'a str},
+    Failure{message:&'a str,restart:&'a mut Option<(f64,u64)>},
     /// 试炼完成：路线名与新获得的护符赐福编号
     Trial{route:&'a str,items:&'a [u32]},
 }
 fn col(c:[f32;4],a:f32)->ImColor32 {ImColor32::from_rgba((c[0]*255.0) as u8,(c[1]*255.0) as u8,(c[2]*255.0) as u8,(c[3]*a.clamp(0.0,1.0)*255.0) as u8)}
 fn fade(c:[f32;4],k:f32)->[f32;4] {[c[0],c[1],c[2],c[3]*k.clamp(0.0,1.0)]}
 fn ease(elapsed:f64,start:f64,len:f64)->f32 {let t=((elapsed-start)/len).clamp(0.0,1.0) as f32;1.0-(1.0-t).powi(3)}
+fn restart_request(context:u64,armed:Option<(f64,u64)>,now:f64,cancel:bool)->Option<u64> {
+    armed.filter(|(at,key)|!cancel&&context!=0&&*key==context&&now-*at>=0.75).map(|(_,key)|key)
+}
 
 /// 画一帧；返回 true 表示玩家确认关闭。opened 是首次显示的时间（入场动画与防误触）
-pub fn draw(ui:&Ui,kind:Kind<'_>,opened:f64,icon:&mut dyn FnMut(u32)->Option<TextureId>)->bool {
+pub fn draw(ui:&Ui,mut kind:Kind<'_>,opened:f64,icon:&mut dyn FnMut(u32)->Option<TextureId>)->bool {
     let size=ui.io().display_size;let s=(size[0]/1600.0).min(size[1]/900.0);
     let (ox,oy)=((size[0]-1600.0*s)*0.5,(size[1]-900.0*s)*0.5);let p=|x:f32,y:f32|[ox+x*s,oy+y*s];
     let now=ui.time();let t=now-opened;let time=now as f32;
+    let restart_context=crate::suspension::RESTART_CONTEXT.load(std::sync::atomic::Ordering::Acquire);
+    if let Kind::Failure{restart,..}=&mut kind {if restart.is_some_and(|(_,key)|key!=restart_context){**restart=None;}}
+    let confirming=matches!(&kind,Kind::Failure{restart,..} if restart.is_some());
+    let confirm_ready=match &kind {Kind::Failure{restart,..}=>restart.is_none_or(|(at,_)|now-at>=0.75),_=>true};
+    let mut arm_restart=false;
     let failure=matches!(kind,Kind::Failure{..});
     let accent=if failure{RED}else{AMBER};
     // ── 背景：压暗的原画与缓慢漂移的细斜纹 ──
@@ -31,7 +39,8 @@ pub fn draw(ui:&Ui,kind:Kind<'_>,opened:f64,icon:&mut dyn FnMut(u32)->Option<Tex
     let drift=(time*9.0*s)%(28.0*s);
     let mut x=-size[1]+drift;while x<size[0] {background.add_line([x,size[1]],[x+size[1],0.0],ImColor32::from_rgba(255,255,255,5)).thickness(1.0).build();x+=28.0*s;}
     drop(background);
-    let ready=t>=0.35;
+    let ready=t>=0.35&&confirm_ready;
+    let cancel=ready&&failure&&[Key::Escape,Key::GamepadFaceRight].into_iter().any(|k|ui.is_key_pressed_no_repeat(k));
     let mut close=ready&&([Key::Enter,Key::GamepadFaceDown].into_iter().any(|k|ui.is_key_pressed_no_repeat(k))
         ||failure&&[Key::Escape,Key::GamepadFaceRight].into_iter().any(|k|ui.is_key_pressed_no_repeat(k)));
     ui.window("##tower-notice").position([0.0,0.0],Condition::Always).size(size,Condition::Always)
@@ -60,12 +69,13 @@ pub fn draw(ui:&Ui,kind:Kind<'_>,opened:f64,icon:&mut dyn FnMut(u32)->Option<Tex
         };
         // ── 先排版，算出卡片高度 ──
         let inner=CARD_W-PAD*2.0;
-        let title=match &kind {Kind::Failure{..}=>crate::i18n::t("暂时无法开始联机旅程"),Kind::Trial{route,..}=>format!("{route} · {}",crate::i18n::t("挑战完成"))};
+        let title=match &kind {Kind::Failure{..}=>crate::i18n::t(if confirming{"放弃全队暂停旅程？"}else{"暂时无法开始联机旅程"}),Kind::Trial{route,..}=>format!("{route} · {}",crate::i18n::t("挑战完成"))};
         let title_px=fitted(&title,40.0,inner);
         enum Block {Reason(Vec<String>),Boon{id:u32,name:String,info:Vec<String>},Line(String)}
         let mut blocks=Vec::new();let mut body=0.0f32;
         match &kind {
-            Kind::Failure{message}=>{
+            Kind::Failure{message,..}=>{
+                let message=if confirming{"将放弃当前队伍所有人的暂停旅程，返回新旅程准备状态。\n每位玩家的旅程记录会先备份；暂停进度不会带入新局。\n确认后全队重新选择职业、开始旅程。按 Esc／手柄 B 可取消。"}else{message};
                 let lines=wrap(message,19.0,inner-48.0);body+=lines.len() as f32*30.0+40.0+18.0;blocks.push(Block::Reason(lines));
                 body+=26.0;blocks.push(Block::Line(crate::i18n::t("详细原因已记录到 tower-preview.log")));
             },
@@ -79,7 +89,8 @@ pub fn draw(ui:&Ui,kind:Kind<'_>,opened:f64,icon:&mut dyn FnMut(u32)->Option<Tex
                 if items.is_empty() {let lines=wrap(&crate::i18n::t("已拥有全部可获得的护符赐福，本次没有新增赐福。"),19.0,inner-48.0);body+=lines.len() as f32*30.0+40.0+18.0;blocks.push(Block::Reason(lines));}
             },
         }
-        let height=(196.0+body+118.0).min(860.0);
+        let restart_button=failure&&restart_context!=0&&!confirming;
+        let height=(196.0+body+118.0+if restart_button{66.0}else{0.0}).min(860.0);
         let rise=(1.0-ease(t,0.0,0.4))*18.0;let a=ease(t,0.0,0.3);
         let (left,top)=(800.0-CARD_W*0.5,450.0-height*0.5+rise);let right=left+CARD_W;let bottom=top+height;
         // ── 卡片：金边面板、左侧强调竖条、顶部一道强调色光晕 ──
@@ -140,7 +151,15 @@ pub fn draw(ui:&Ui,kind:Kind<'_>,opened:f64,icon:&mut dyn FnMut(u32)->Option<Tex
         }
         // ── 确认按钮：琥珀色实心，悬停提亮，右下切角 ──
         let foot=ease(t,0.3,0.3);
-        let label=&crate::i18n::t(if failure{"确定"}else{"继续选路"});
+        if restart_button {
+            let (x,y)=(left+PAD,bottom-156.0);
+            ui.set_cursor_screen_pos(p(x,y));ui.set_window_font_scale(s);
+            arm_restart=ready&&(ui.invisible_button("##restart-paused",[inner*s,48.0*s])
+                ||[Key::R,Key::GamepadFaceUp].into_iter().any(|k|ui.is_key_pressed_no_repeat(k)));
+            {let draw=ui.get_window_draw_list();draw.add_rect(p(x,y),p(x+inner,y+48.0),col(RED,foot)).thickness(1.5*s).build();}
+            text(800.0,y+12.0,"全队放弃暂停旅程并重开  [R / Y]",fade(WHITE,foot),20.0,0.5);
+        }
+        let label=&crate::i18n::t(if confirming{"确认放弃并重开"}else if failure{"确定"}else{"继续选路"});
         let bw=(measure(label,24.0)+130.0).max(240.0);let (bx,by)=(800.0-bw*0.5,bottom-90.0);
         ui.set_cursor_screen_pos(p(bx,by));ui.set_window_font_scale(s);
         if ui.invisible_button("##notice-ok",[bw*s,56.0*s])&&ready {close=true;}
@@ -154,6 +173,23 @@ pub fn draw(ui:&Ui,kind:Kind<'_>,opened:f64,icon:&mut dyn FnMut(u32)->Option<Tex
         text(tx+(bx+bw-24.0-tx-measure(label,24.0))*0.5,by+13.0,label,fade(INK,foot),24.0,0.0);
         ui.set_window_font_scale(1.0);
     });
+    if arm_restart {if let Kind::Failure{restart,..}=&mut kind {**restart=Some((now,restart_context));}close=false;}
+    if close&&confirming&&!cancel {
+        if let Kind::Failure{restart,..}=&kind {if let Some(key)=restart_request(restart_context,**restart,now,cancel) {
+            crate::suspension::RESTART_REQUEST.store(key,std::sync::atomic::Ordering::Release);
+        }}
+    }
     if close {crate::sfx::play("confirm");}
     close
+}
+
+#[cfg(test)]mod tests {
+    #[test]fn paused_restart_requires_a_second_confirmation_in_the_same_session(){
+        assert_eq!(super::restart_request(7,None,2.0,false),None);
+        assert_eq!(super::restart_request(7,Some((1.0,7)),1.5,false),None);
+        assert_eq!(super::restart_request(7,Some((1.0,7)),2.0,true),None);
+        assert_eq!(super::restart_request(8,Some((1.0,7)),2.0,false),None);
+        assert_eq!(super::restart_request(0,Some((1.0,7)),2.0,false),None);
+        assert_eq!(super::restart_request(7,Some((1.0,7)),2.0,false),Some(7));
+    }
 }

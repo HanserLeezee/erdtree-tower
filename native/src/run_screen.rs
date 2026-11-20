@@ -15,7 +15,7 @@ static CLASS_START:Mutex<Option<Class>>=Mutex::new(None);
 static ACTIVE:AtomicBool=AtomicBool::new(false);
 enum Screen {Summary{record:Record,gain:Option<Gain>,from_archive:bool,focus:usize,opened:Option<f64>,
     /// 往期最好的一局（不含这一局，先比评级再比评分）：新纪录提示用；从档案打开时为 None
-    best:Option<erdtree_tower::score::Score>,cues:Cues},Archive(Box<crate::archive_ui::Archive>),Notice{message:String,opened:Option<f64>},TrialRewards{route:String,items:Vec<u32>,opened:Option<f64>},Seed{input:String,error:String,digit:u8,opened:Option<f64>},Law{screen:crate::law_ui::LawScreen,seed:Option<u64>,record:Option<(u32,String)>,class:Class},
+    best:Option<erdtree_tower::score::Score>,cues:Cues},Archive(Box<crate::archive_ui::Archive>),Notice{message:String,opened:Option<f64>,restart:Option<(f64,u64)>},TrialRewards{route:String,items:Vec<u32>,opened:Option<f64>},Seed{input:String,error:String,digit:u8,opened:Option<f64>},Law{screen:crate::law_ui::LawScreen,seed:Option<u64>,record:Option<(u32,String)>,class:Class},
     /// 选择职业；law 为 false 时（客机）选完直接开局
     Class{screen:crate::class_ui::ClassScreen,seed:Option<u64>,law:bool}}
 fn show(next:Screen) {
@@ -23,7 +23,7 @@ fn show(next:Screen) {
     if screens.iter().any(|s|match (s,&next) {(Screen::Notice{message:a,..},Screen::Notice{message:b,..})=>a==b,(Screen::Seed{..},Screen::Seed{..})|(Screen::Law{..},Screen::Law{..})|(Screen::Class{..},Screen::Class{..})=>true,_=>false}) {return;}
     screens.push_back(next);ACTIVE.store(true,Ordering::Relaxed);
 }
-pub fn party_notice(message:String) {show(Screen::Notice{message,opened:None});}
+pub fn party_notice(message:String) {show(Screen::Notice{message,opened:None,restart:None});}
 pub fn trial_rewards(route:&str,before:&Run,after:&Run) {
     let items=after.elite_buffs.iter().copied().filter(|id|!before.elite_buffs.contains(id)).collect();
     show(Screen::TrialRewards{route:route.into(),items,opened:None});
@@ -123,7 +123,7 @@ fn render(ui:&Ui,current:&mut Screen,icon:&mut dyn FnMut(u32)->Option<TextureId>
     }
     if let Screen::Seed{input,error,digit,opened}=current {let opened=*opened.get_or_insert(ui.time());return seed_page(ui,input,error,digit,ui.time()-opened>=0.35);}
     // 联机无法开始、试炼完成：新版卡片界面（notice_ui）
-    if let Screen::Notice{message,opened}=current {let opened=*opened.get_or_insert(ui.time());return crate::notice_ui::draw(ui,crate::notice_ui::Kind::Failure{message},opened,icon);}
+    if let Screen::Notice{message,opened,restart}=current {let opened=*opened.get_or_insert(ui.time());return crate::notice_ui::draw(ui,crate::notice_ui::Kind::Failure{message,restart},opened,icon);}
     if let Screen::TrialRewards{route,items,opened}=current {let opened=*opened.get_or_insert(ui.time());return crate::notice_ui::draw(ui,crate::notice_ui::Kind::Trial{route,items},opened,icon);}
     unreachable!("law, class and archive screens are drawn by their own modules")
 }
@@ -147,7 +147,7 @@ pub fn test_frames(context:&mut hudhook::imgui::Context) {
     SCREEN.lock().unwrap().clear();ACTIVE.store(false,Ordering::Relaxed);
     for size in [[1280.0,720.0],[1920.0,1080.0],[3440.0,1440.0]] {
         context.io_mut().display_size=size;
-        for mut screen in [Screen::Notice{message:"爬塔协议版本不匹配：本机 23，对方 22。\n请所有玩家更新同一版爬塔补丁。".into(),opened:None},Screen::Summary{record:Record::new(&run,vec![erdtree_tower::journal::Fight{act:1,layer:9,kind:"精英".into(),won:false,enemies:vec!["黑骑士".into()]}],vec![],0),gain:Some(Gain{class:erdtree_tower::Class::Samurai,xp:320,before:4,after:5}),from_archive:false,focus:0,opened:None,best:None,cues:Cues::default()},Screen::TrialRewards{route:"史东薇尔突围".into(),items:vec![1000,1150],opened:None},Screen::TrialRewards{route:"异端魔法师塔·隐形桥".into(),items:vec![],opened:None},Screen::Seed{input:u64::MAX.to_string(),error:String::new(),digit:9,opened:None}] {
+        for mut screen in [Screen::Notice{message:"爬塔协议版本不匹配：本机 23，对方 22。\n请所有玩家更新同一版爬塔补丁。".into(),opened:None,restart:None},Screen::Summary{record:Record::new(&run,vec![erdtree_tower::journal::Fight{act:1,layer:9,kind:"精英".into(),won:false,enemies:vec!["黑骑士".into()]}],vec![],0),gain:Some(Gain{class:erdtree_tower::Class::Samurai,xp:320,before:4,after:5}),from_archive:false,focus:0,opened:None,best:None,cues:Cues::default()},Screen::TrialRewards{route:"史东薇尔突围".into(),items:vec![1000,1150],opened:None},Screen::TrialRewards{route:"异端魔法师塔·隐形桥".into(),items:vec![],opened:None},Screen::Seed{input:u64::MAX.to_string(),error:String::new(),digit:9,opened:None}] {
             render(context.frame(),&mut screen,&mut |_|None);
             let data=context.render();assert!(data.total_vtx_count>0);
             if matches!(screen,Screen::Summary{..}) {if let Ok(path)=std::env::var("ERDTREE_UI_PREVIEW") {

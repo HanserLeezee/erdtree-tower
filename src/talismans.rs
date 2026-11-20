@@ -22,12 +22,16 @@ const TRIGGER_KINDS:[&str;24]=["Gravity Hammer","beast claw","black flame","chil
     "greater phalanx guard","immortal will","lava exhaust","light rings","lighting call","magical ground","magma ball",
     "phalanx guard","sky spear assault","stomping dragon","summoners grace","thorns"];
 static TRIGGERS:LazyLock<Vec<&'static Vec<usize>>>=LazyLock::new(||GROUPS.iter().filter(|g|TRIGGER_KINDS.contains(&VARIANTS[g[0]].kind)).collect());
-fn triggered(run:&Run,seed:u64,repeat:bool,min:u8)->Option<u32> {
+pub fn owned_family(run:&Run,id:u32)->bool {
+    INDEX.get(&id).is_some_and(|&i|run.claimed_items.iter().any(|owned|
+        INDEX.get(owned).is_some_and(|&j|VARIANTS[i].kind==VARIANTS[j].kind)))
+}
+fn triggered(run:&Run,seed:u64,_repeat:bool,min:u8)->Option<u32> {
     let floor=min.min(3);let mut value=crate::mix(seed^0x726172697479)%100;let mut tier=3;
     for (i,odds) in crate::affixes::quality_odds(run).into_iter().enumerate() {if value<u64::from(odds){tier=i as u8;break;}value-=u64::from(odds);}
     tier=tier.max(floor);
     let eligible:Vec<_>=TRIGGERS.iter().flat_map(|g|g.iter()).map(|&i|&VARIANTS[i])
-        .filter(|v|v.tier==tier&&(repeat||!run.claimed_items.contains(&v.id))).collect();
+        .filter(|v|v.tier==tier&&!owned_family(run,v.id)).collect();
     if eligible.is_empty(){return None;}
     Some(eligible[(seed>>8) as usize%eligible.len()].id)
 }
@@ -38,14 +42,16 @@ pub fn roll_min(run:&Run,original:u32,entropy:u64,repeat:bool,min:u8)->u32 {
     if !run.talisman_affixes||original>>28!=2||lookup(original).is_some(){return original;}
     let seed=crate::mix(run.reward_seed()^entropy^u64::from(original)^0x74616c69736d616e);
     if run.talisman_passives {
-        if seed%2==1&&let Some(id)=triggered(run,seed,repeat,min){return id;}
+        if seed%100<15&&let Some(id)=triggered(run,seed,repeat,min){return id;}
         if let Some(id)=crate::talisman_passives::roll(run,original,entropy,repeat,min){return id;}
+        return original;
     }
-    if seed%2==0{return original;}
+    if seed%100>=15{return original;}
     let start=(seed>>8) as usize%GROUPS.len();
     let tier=match crate::mix(seed^0x726172697479)%100 {0..=44=>0,45..=74=>1,75..=92=>2,_=>3};
     for offset in 0..GROUPS.len() {
         let group=&GROUPS[(start+offset)%GROUPS.len()];
+        if owned_family(run,VARIANTS[group[0]].id){continue;}
         let picked=group.iter().position(|i|VARIANTS[*i].tier>=tier).unwrap_or(group.len()-1);
         for n in 0..group.len(){let id=VARIANTS[group[(picked+n)%group.len()]].id;if repeat||!run.claimed_items.contains(&id){return id;}}
     }
@@ -55,6 +61,19 @@ pub fn roll_min(run:&Run,original:u32,entropy:u64,repeat:bool,min:u8)->u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ruby_share_is_fifteen_percent_and_owned_families_never_repeat() {
+        for passives in [false,true] {
+            let mut run=Run::new(8,crate::Class::Samurai);run.talisman_passives=passives;
+            let count=(0..20000).filter(|&seed|INDEX.contains_key(&roll(&run,0x200003e8,seed,true))).count();
+            assert!((2800..3200).contains(&count),"passives={passives}: {count}");
+            run.claimed_items.extend(GROUPS.iter().map(|g|VARIANTS[g[0]].id));
+            for seed in 0..1000 {for floor in 0..=3 {
+                assert!(!INDEX.contains_key(&roll_min(&run,0x200003e8,seed,true,floor)));
+            }}
+        }
+    }
 
     #[test]
     fn trigger_quality_matches_journey_odds_and_source_floor() {
@@ -82,7 +101,7 @@ mod tests {
         let seed=(0..10000).find(|&s|crate::mix(s^0x726172697479)%100<45).unwrap();
         run.claimed_items.extend(TRIGGERS.iter().flat_map(|g|g.iter()).map(|&i|&VARIANTS[i]).filter(|v|v.tier==0).map(|v|v.id));
         assert_eq!(triggered(&run,seed,false,0),None);
-        assert_eq!(tier(triggered(&run,seed,true,0).unwrap()),Some(0));
+        assert_eq!(triggered(&run,seed,true,0),None);
         let remaining=run.claimed_items.pop().unwrap();
         assert_eq!(triggered(&run,seed,false,0),Some(remaining));
         assert_eq!(tier(triggered(&run,seed,false,3).unwrap()),Some(3));
