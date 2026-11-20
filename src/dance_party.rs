@@ -7,6 +7,7 @@ pub enum Command {Prepare{song:u8,players:Vec<u64>},Start,Complete,Cancel}
 #[derive(Default)]
 pub struct Round {epoch:u64,phase:u8,players:Vec<u64>,since:u64}
 impl Round {
+    pub fn active(&self)->bool {matches!(self.phase,1|2)}
     pub fn poll(&mut self,epoch:u64,now:u64,host:u64,rows:&[(u64,Option<Report>)],eligible:bool)->Option<Command>{
         if self.epoch!=epoch{*self=Self{epoch,..Self::default()};}
         let players:Vec<_>=rows.iter().map(|r|r.0).collect();

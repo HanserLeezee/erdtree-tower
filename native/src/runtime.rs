@@ -4034,6 +4034,7 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
             return Ok(());
         }
         if let Some(super::native_talk::EventRequest::Dance(song))=room.take_event_request() {
+            super::log(format!("DANCE_SELECT song={song} party={} host={} key={key:?}",state.party.is_some(),state.party.as_ref().is_some_and(|p|p.host())));
             if let Some(link)=state.party.as_mut(){
                 if link.host()&&!link.event.dance_preparing{link.event.dance.get_or_insert_with(Default::default).choice=Some(song as u8);}
                 room.view.message=if link.host(){"正在等待全员到达舞台…"}else{"联机舞会由房主选歌，请等待统一开场。"}.into();return Ok(());
@@ -4042,8 +4043,12 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
             let mut next=run.clone();next.begin_dance(song)?;record_checked(&next)?;
             room.suspend_dialogues()?;state.view.run=Some(next);super::dance_ui::request_event(key,song);
             room.view.message="舞会：跟随箭头与节拍完成歌曲。中途退出不发奖励。".into();
+        } else if state.party.as_ref().is_some_and(|p|p.event.dance_cancelled) {
+            room.view.message="联机舞会已取消：队员离场、音乐或动画未就绪，或准备超时。请保留各自日志；可从传送门离开。".into();
+        } else if state.party.as_ref().is_some_and(|p|p.event.dance.is_some_and(|r|r.choice.is_some())&&!p.event.dance_preparing) {
+            room.view.message="歌曲已选定，等待全员进入舞会房间并站稳。".into();
         } else if run.regional_event.opened==0 {
-            room.view.message="舞会：与引导者交谈选择歌曲。S / A / B / C：3000 / 2000 / 1200 / 800 卢恩。也可直接离开。".into();
+            room.view.message=if state.party.is_some(){"联机舞会由房主与引导者交谈选歌，全员自动进入。S / A / B / C：5000 / 3500 / 2000 / 1000 卢恩。"}else{"舞会：与引导者交谈选择歌曲。S / A / B / C：5000 / 3500 / 2000 / 1000 卢恩。也可直接离开。"}.into();
         } else if !super::dance_ui::active(){room.view.message=if party_exit{"本次舞会已参加，请从传送门离开。"}else{"本机已完成，等待队友结束舞会。"}.into();}
         return Ok(());
     }
@@ -5060,7 +5065,10 @@ fn request_travel(
         route_ready:run.phase==Phase::Map&&state.spawn_used&&state.reward_wait.is_none()&&state.room.is_none()
             &&state.pending.as_ref().is_none_or(|p|p.completed)&&state.lingering.is_none(),
         players_ready:scene_players_ready(state,world,arena),
-        clear:state.ash_guard.is_none()&&!world.summon_buddy_manager.groups.iter().any(|p|p.second.iter().next().is_some())
+        clear:state.ash_guard.is_none()&&world.summon_buddy_manager.active_summon_goods_id<=0
+            &&world.summon_buddy_manager.request_summon_speffect_id<0
+            &&!world.summon_buddy_manager.player_has_alive_summon
+            &&!world.summon_buddy_manager.groups.iter().any(|p|p.second.iter().next().is_some())
             &&unsafe {eldenring::cs::CSBulletManager::instance()}.is_ok_and(|b|b.bullets().next().is_none()),
         recovering:game.warp_requested||state.death_retry||run.retry_node.is_some()||state.reconnect.is_some()
             ||state.party_pending.is_some()||state.party_death.awaiting_revival(),
@@ -5073,6 +5081,10 @@ fn request_travel(
         }
     }else{vec![]};
     super::log(format!("TRAVEL_SCENE reuse={reuse} target={:08x} node={id} checks={reuse_check:?}",arena.block));
+    if reuse_check.same_scene&&!reuse {
+        let buddy=&world.summon_buddy_manager;
+        super::log(format!("TRAVEL_SUMMON reload active_goods={} active_effect={} pending={} active_stone={} alive={} dismiss={}",buddy.active_summon_goods_id,buddy.active_summon_speffect_id,buddy.request_summon_speffect_id,buddy.active_summmon_buddy_stone_entity_id,buddy.player_has_alive_summon,buddy.disappear_requested));
+    }
     state.combat_scene=None;
     super::native_talk::set_flag(super::travel::RESET_REQUEST,false)?;
     super::native_talk::set_flag(super::travel::RESET_CLEARED,false)?;

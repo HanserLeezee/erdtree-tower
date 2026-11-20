@@ -125,7 +125,8 @@ pub enum Stage {Map,Travel,Combat,Fighting,Service,Reward,Stopped}
 pub struct Gate {dance:crate::dance_party::Round,trial:Option<crate::regional_events::Trial>,pub epoch:u64,pub stage:Stage,peers:Vec<(u64,Option<Report>)>,events:Option<crate::party_events::Queue>,stormveil:Option<crate::stormveil::Decision>}
 impl Gate {
     pub fn dance_order(&mut self,host:u64,now:u64)->Option<Order>{
-        let eligible=self.stage==Stage::Service&&self.all(|r|r.arrived&&r.alive&&r.dance.is_some()&&!r.map_ready);
+        let active=self.dance.active();
+        let eligible=self.stage==Stage::Service&&self.all(|r|(active||r.arrived)&&r.alive&&r.dance.is_some()&&!r.map_ready);
         let rows:Vec<_>=self.peers.iter().map(|(id,r)|(*id,r.as_ref().and_then(|r|r.dance))).collect();
         self.dance.poll(self.epoch,now,host,&rows,eligible).map(|command|Order::Dance{epoch:self.epoch,command})
     }
@@ -391,6 +392,26 @@ impl Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dance_preparation_waits_for_landing_without_cancelling_the_party() {
+        use crate::dance_party::{Command,Report as DanceReport};
+        for count in 2..=8 {
+            let run=Run::new(42,crate::Class::Samurai);
+            let mut gate=Gate::new((1..=count).collect());gate.stage=Stage::Service;
+            let mut row=Report::new(&run,0,true,false,true);row.map_ready=false;
+            row.dance=Some(DanceReport::default());
+            for id in 1..=count {gate.report(id,row.clone()).unwrap();}
+            row.dance.as_mut().unwrap().choice=Some(0);gate.report(1,row.clone()).unwrap();
+            assert!(matches!(gate.dance_order(1,0),Some(Order::Dance{command:Command::Prepare{..},..})));
+            row.arrived=false;gate.report(count,row.clone()).unwrap();
+            assert!(gate.dance_order(1,200).is_none(),"placement must wait, not cancel");
+            row.arrived=true;row.dance.as_mut().unwrap().fingerprint=Some(123);
+            for id in 1..=count {gate.report(id,row.clone()).unwrap();}
+            assert!(matches!(gate.dance_order(1,400),Some(Order::Dance{command:Command::Start,..})));
+            row.map_ready=true;gate.report(count,row).unwrap();
+            assert!(matches!(gate.dance_order(1,600),Some(Order::Dance{command:Command::Cancel,..})));
+        }
+    }
     #[test]
     fn descent_completion_waits_for_survivors_and_never_rewards_a_wipe() {
         for count in 2..=8 {

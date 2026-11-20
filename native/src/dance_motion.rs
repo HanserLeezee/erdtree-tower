@@ -16,11 +16,14 @@ fn loop_speed(beat:f64,duration:f64)->f32 {
     (duration/(bars*16.0*beat)).clamp(0.25,2.0) as f32
 }
 pub fn available()->bool {crate::LOG_PATH.with_file_name("scene-assets").join("chr/c0000_a00_hi.anibnd.dcx").is_file()&&crate::LOG_PATH.with_file_name("scene-assets").join("dance/hip-hop-motion.txt").is_file()}
-struct Playback {owner:usize,handle:FieldInsHandle,previous:i32,speed:f32,requested:i32,started:Instant}
+struct Playback {owner:usize,handle:FieldInsHandle,previous:i32,speed:f32,requested:i32,started:Instant,retries:u8,last_restore:Option<Instant>}
 static PLAYBACK:Mutex<Option<Playback>>=Mutex::new(None);
 fn family(anim:i32)->i32 {(anim%1_000_000)/10*10}
 fn restore(active:bool,elapsed:f32,actual:i32,requested:i32)->bool {
     (!active||elapsed>=10.0)&&family(actual)==family(requested)
+}
+fn restore_ready(active:bool,elapsed:f32,locked:bool,actual:i32,requested:i32)->bool {
+    !locked&&(restore(active,elapsed,actual,requested)||(!active&&actual>=0&&family(actual)==family(HIP_HOP)))
 }
 pub fn tick(){
     let requested=crate::dance_ui::take_move();
@@ -35,23 +38,39 @@ pub fn tick(){
         let previous=playback.as_ref().map_or(actual,|p|p.previous);
         let speed=playback.as_ref().map_or(chr.modules.behavior.animation_speed,|p|p.speed);
         if previous<0{return;}
-        *playback=Some(Playback{owner,handle:chr.field_ins_handle,previous,speed,requested:anim,started:Instant::now()});
+        *playback=Some(Playback{owner,handle:chr.field_ins_handle,previous,speed,requested:anim,started:Instant::now(),retries:0,last_restore:None});
         chr.modules.behavior.animation_speed=if anim==HIP_HOP{f32::from_bits(SPEED.load(Ordering::Relaxed))}else{speed};
         chr.modules.event.request_animation_id=anim;crate::gesture_trace::requested(anim);
-    } else if let Some(p)=playback.as_ref() {
+    } else if let Some(p)=playback.as_mut() {
         if p.requested==HIP_HOP&&crate::dance_ui::dancing(){
             if family(actual)==family(HIP_HOP){chr.modules.behavior.animation_speed=f32::from_bits(SPEED.load(Ordering::Relaxed));}
             return;
         }
         let elapsed=p.started.elapsed().as_secs_f32();
-        if restore(crate::dance_ui::active(),elapsed,actual,p.requested){
-            chr.modules.event.request_animation_id=p.previous;
-            crate::log(format!("DANCE animation restored from={actual} to={} actions_locked={} movement_locked={}",p.previous,chr.debug_flags.disabled_secondary_actions(),chr.debug_flags.disabled_movement()));
+        let active=crate::dance_ui::active();
+        if !active||elapsed>=10.0 {
+            chr.modules.behavior.animation_speed=p.speed;
+            if actual>=0&&family(actual)!=family(p.requested)&&family(actual)!=family(HIP_HOP){
+                crate::log(format!("DANCE animation exit confirmed actual={actual} retries={}",p.retries));*playback=None;return;
+            }
+            let locked=chr.debug_flags.disabled_movement()||chr.debug_flags.disabled_secondary_actions();
+            if restore_ready(active,elapsed,locked,actual,p.requested)&&p.last_restore.is_none_or(|at|at.elapsed().as_millis()>=250){
+                if p.retries>=8{crate::log(format!("DANCE animation exit unconfirmed actual={actual}; retries exhausted"));*playback=None;return;}
+                let idle=chr.modules.event.idle_anim_id;
+                let target=if idle>=0&&family(idle)!=family(p.requested)&&family(idle)!=family(HIP_HOP){idle}else{p.previous};
+                chr.modules.event.request_animation_id=target;p.retries+=1;p.last_restore=Some(Instant::now());
+                crate::log(format!("DANCE animation exit requested from={actual} to={target} attempt={}",p.retries));
+            }
         }
-        if !crate::dance_ui::active()||elapsed>=10.0{chr.modules.behavior.animation_speed=p.speed;*playback=None;}
     }
 }
 #[cfg(test)]mod tests {
+    #[test]fn exit_waits_for_menu_lock_release_and_handles_pending_finale(){
+        assert!(!super::restore_ready(false,2.4,true,80800,80800));
+        assert!(super::restore_ready(false,2.8,false,80800,80800));
+        assert!(super::restore_ready(false,2.8,false,80720,80800));
+        assert!(!super::restore_ready(false,2.8,false,3000,80800));
+    }
     #[test]fn dance_loop_spans_whole_four_bar_groups(){
         for bpm in [122.0f64,87.26]{for duration in [212.0/30.0,57.3]{
             let beat=60.0/bpm;let groups=(duration/(16.0*beat)).round().max(1.0);

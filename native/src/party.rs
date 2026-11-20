@@ -24,6 +24,7 @@ pub struct EventSync {
     pub dance_prepare:Option<(u8,Vec<u64>)>,
     pub dance_preparing:bool,
     pub dance_complete:bool,
+    pub dance_cancelled:bool,
     pub pause:super::suspension::LinkState,
     pub frost_shackles:Vec<(u8,Instant)>,
     frost_sent:Option<Instant>,
@@ -443,6 +444,7 @@ impl Link {
     pub fn accept(&mut self,order:&Order)->Result<bool,String> {
         match order {
             Order::Dance{epoch,command} if *epoch==self.epoch=>{
+                super::log(format!("DANCE_SYNC receive epoch={epoch} host={} command={command:?}",self.host()));
                 use erdtree_tower::dance_party::Command;
                 match command {
                     Command::Prepare{song,players} if *song<2&&!players.is_empty()&&players.len()<=8=>{
@@ -453,9 +455,10 @@ impl Link {
                         super::dance_ui::start_prepared(Duration::from_millis(3000-half_ping));
                     },
                     Command::Complete=>self.event.dance_complete=true,
-                    Command::Cancel=>{self.event.dance_complete=true;self.event.dance_prepare=None;super::dance_ui::cancel();},
+                    Command::Cancel=>{self.event.dance_complete=true;self.event.dance_cancelled=true;self.event.dance_prepare=None;super::dance_ui::cancel();},
                     _=>return Err("舞会同步指令无效".into()),
                 }
+                return Ok(false);
             },
             Order::PausePrepare{epoch,ticket} if *epoch==self.epoch&&*ticket!=0=>{
                 if self.event.pause.ticket.is_none(){self.event.pause.ticket=Some(*ticket);self.event.pause.started=Some(Instant::now());self.selected=None;self.ballots.clear();}
@@ -597,7 +600,7 @@ impl Link {
                 self.selected=None;self.ballots.clear();
             },
             Order::Stop(error)=>{self.stopped=Some(error.clone());self.gate.stop();},
-            _=>return Err("收到过期或不适用的战斗指令".into()),
+            _=>{super::log(format!("PARTY_ORDER_REJECT local_epoch={} host={} order={order:?}",self.epoch,self.host()));return Err("收到过期或不适用的战斗指令".into());},
         }
         Ok(true)
     }
@@ -840,6 +843,19 @@ pub fn random_entropy()->Result<u64,String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dance_orders_finish_dispatch_for_both_host_and_guest() {
+        use super::*;
+        use erdtree_tower::dance_party::Command;
+        for player in [1,2] {
+            let (mut link,_events,_commands)=test_link(player);let epoch=link.epoch;
+            for command in [Command::Prepare{song:0,players:vec![1,2]},Command::Start,Command::Complete,Command::Cancel] {
+                assert_eq!(link.accept(&Order::Dance{epoch,command}),Ok(false));
+                assert!(link.stopped.is_none());
+            }
+            assert!(link.event.dance_preparing&&link.event.dance_complete&&link.event.dance_cancelled);
+        }
+    }
     #[test]
     fn reconnect_ack_is_bound_to_peer_nonce_session_epoch_and_is_idempotent() {
         use super::*;

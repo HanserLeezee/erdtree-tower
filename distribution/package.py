@@ -72,6 +72,10 @@ if args.build_number is not None:
 stage = dist / f'ErdtreeTower-v{version}'
 if stage.exists():
     raise SystemExit('Staging directory already exists; preserve it or choose a new release directory.')
+if args.slim_game:
+    subprocess.run(['dotnet', 'run', '--project', str(project / 'scene-builder'), '--',
+                    str(args.slim_game), str(dist / f'audit-v{version}'),
+                    str(project / 'scene-assets'), 'spirit-resource-verify'], cwd=project, check=True)
 built_native = build_native(project)
 # Launcher: exe and its config at the package root, every other build output under launcher/ (App.config probes there)
 launcher_build = Path(tempfile.mkdtemp(prefix='tower-launcher-'))

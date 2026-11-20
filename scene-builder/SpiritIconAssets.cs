@@ -65,8 +65,11 @@ static class SpiritIconAssets {
         var dds=new byte[128+pixels.Length];
         void U(int offset,uint value)=>BitConverter.GetBytes(value).CopyTo(dds,offset);
         U(0,0x20534444);U(4,124);U(8,0x100f);U(12,(uint)height);U(16,(uint)width);U(20,(uint)width*4);U(28,1);U(76,32);U(80,0x41);U(88,32);U(92,0xff0000);U(96,0xff00);U(100,0xff);U(104,0xff000000);U(108,0x1000);pixels.CopyTo(dds,128);
-        foreach(var quality in new[]{"hi","low"}) {
-            var dir=Path.Combine(input,"menu",quality);var tpf=TPF.Read(Path.Combine(dir,"01_common.tpf.dcx"));var layout=BND4.Read(Path.Combine(dir,"01_common.sblytbnd.dcx"));
+        var roots=new[]{input}.Concat(Directory.Exists(Path.Combine(input,"locales"))?Directory.GetDirectories(Path.Combine(input,"locales")):Array.Empty<string>());
+        foreach(var root in roots)foreach(var quality in new[]{"hi","low"}) {
+            var relative=Path.GetRelativePath(input,Path.Combine(root,"menu",quality));
+            var dir=Path.Combine(input,relative);if(!Directory.Exists(dir))continue;
+            var tpf=TPF.Read(Path.Combine(dir,"01_common.tpf.dcx"));var layout=BND4.Read(Path.Combine(dir,"01_common.sblytbnd.dcx"));
             foreach(var f in layout.Files.Where(f=>f.Name.EndsWith(".layout")&&!f.Name.EndsWith(Atlas+".layout"))) {
                 var xml=XElement.Parse(Encoding.UTF8.GetString(f.Bytes));
                 foreach(var e in xml.Elements())if(Regex.Match((string)e.Attribute("name")??"",@"MENU_ItemIcon_(\d+)") is var m&&m.Success&&icons.Contains(int.Parse(m.Groups[1].Value)))throw new Exception("Native icon ID collision");
@@ -79,13 +82,13 @@ static class SpiritIconAssets {
             var template=layout.Files.First(f=>f.Name.EndsWith(".layout"));
             var name=template.Name[..(template.Name.LastIndexOf('\\')+1)]+Atlas+".layout";
             layout.Files.Add(new BinderFile(template.Flags,layout.Files.Max(f=>f.ID)+1,name,Encoding.UTF8.GetBytes(xmlOut.ToString())){CompressionInfo=template.CompressionInfo});
-            var dest=Path.Combine(output,"menu",quality);Directory.CreateDirectory(dest);
+            var dest=Path.Combine(output,relative);Directory.CreateDirectory(dest);
             tpf.Write(Path.Combine(dest,"01_common.tpf.dcx"));layout.Write(Path.Combine(dest,"01_common.sblytbnd.dcx"));
             var check=TPF.Read(Path.Combine(dest,"01_common.tpf.dcx"));var checkLayout=BND4.Read(Path.Combine(dest,"01_common.sblytbnd.dcx"));
             foreach(var t in originalTextures)if(!check.Textures.Single(x=>x.Name==t.Name).Bytes.SequenceEqual(t.Bytes))throw new Exception("Unrelated texture changed");
             foreach(var f in originalLayouts)if(!checkLayout.Files.Single(x=>x.ID==f.ID).Bytes.SequenceEqual(f.Bytes))throw new Exception("Unrelated layout changed");
             if(!check.Textures.Single(t=>t.Name==Atlas).Bytes.SequenceEqual(dds))throw new Exception("Spirit atlas roundtrip failed");
-            Console.WriteLine($"{quality}: {icons.Length} spirit ash icons added ({width}x{height}), existing resources preserved");
+            Console.WriteLine($"{relative}: {icons.Length} spirit ash icons added ({width}x{height}), existing resources preserved");
         }
     }
 }

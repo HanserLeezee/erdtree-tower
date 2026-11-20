@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <TowerProductVersion Condition="'$(TowerProductVersion)' == '' and '$(TOWER_PRODUCT_VERSION)' != ''">$(TOWER_PRODUCT_VERSION)</TowerProductVersion>
-    <TowerProductVersion Condition="'$(TowerProductVersion)' == ''">2.3.0</TowerProductVersion>
+    <TowerProductVersion Condition="'$(TowerProductVersion)' == ''">2.3.1</TowerProductVersion>
     <Company>TamikiP</Company>
     <Authors>TamikiP</Authors>
     <Copyright>Copyright © 2026 TamikiP. GPL-3.0-or-later.</Copyright>

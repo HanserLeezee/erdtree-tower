@@ -1,5 +1,9 @@
 using SoulsFormats;
 using System.Numerics;
+if(args.Length==4&&args[3]=="spirit-resource-verify") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    SpiritResourceAudit.Verify(args[2]);return;
+}
 if(args.Length==4&&args[3]=="scene-reuse-patch") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     SceneReuseAssets.Patch(args[2],args[1]);return;

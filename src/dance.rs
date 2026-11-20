@@ -58,7 +58,7 @@ const LATE:f64=0.300;
 fn next(state:&mut u64)->u64 {*state^=*state<<13;*state^=*state>>7;*state^=*state<<17;*state}
 /// 第 k 句的箭头数：随进度变长，困难更长；困难下每句 8 拍的歌多给一个
 pub fn arrows_in(song:&Song,difficulty:Difficulty,k:u32)->usize {
-    let (low,high)=match difficulty {Difficulty::Normal=>(2,4),Difficulty::Hard=>(4,7)};
+    let (low,high)=match difficulty {Difficulty::Normal=>(3,5),Difficulty::Hard=>(5,8)};
     let extra=usize::from(difficulty==Difficulty::Hard&&song.phrase_beats>=8);
     low+extra+((high-low) as u32*k/song.phrases.max(1)) as usize
 }
@@ -273,8 +273,8 @@ mod tests {
             assert!(c.windows(2).all(|w|w[0].len()<=w[1].len()));
             assert!(c.iter().all(|l|l.windows(3).all(|w|!(w[0]==w[1]&&w[1]==w[2]))));
         }
-        assert_eq!((arrows_in(&s,Difficulty::Normal,0),arrows_in(&s,Difficulty::Hard,15)),(2,6));
-        assert_eq!((arrows_in(&song(8),Difficulty::Normal,0),arrows_in(&song(8),Difficulty::Hard,0)),(2,5));
+        assert_eq!((arrows_in(&s,Difficulty::Normal,0),arrows_in(&s,Difficulty::Hard,15)),(3,7));
+        assert_eq!((arrows_in(&song(8),Difficulty::Normal,0),arrows_in(&song(8),Difficulty::Hard,0)),(3,6));
     }
     #[test]
     fn judge_windows_have_exact_boundaries() {

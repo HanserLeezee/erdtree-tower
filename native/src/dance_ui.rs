@@ -7,7 +7,6 @@ use hudhook::imgui::{Condition,ImColor32,Key,Ui,WindowFlags};
 use erdtree_tower::dance::{Arrow,Difficulty,Grade,Judge,Play};
 
 static ACTIVE:AtomicBool=AtomicBool::new(false);
-static RULES:AtomicBool=AtomicBool::new(false);
 static DANCING:AtomicBool=AtomicBool::new(false);
 static PENDING_MOVE:AtomicI32=AtomicI32::new(0);
 pub type EventKey=(u64,u8,usize);
@@ -44,7 +43,6 @@ pub fn start(index:usize,difficulty:Difficulty,seed:u64) {
 }
 fn start_mode(index:usize,difficulty:Difficulty,seed:u64,party:bool){
     CANCEL.store(false,Ordering::Release);PENDING_MOVE.store(0,Ordering::Release);
-    RULES.store(false,Ordering::Relaxed);
     let songs=erdtree_tower::dance::songs();
     let Some(mut song)=songs.get(index).or(songs.first()).cloned() else {crate::log("Dance: no songs");return;};
     let music=crate::sfx::Music::prepare(&song.file);
@@ -135,7 +133,7 @@ pub fn draw(ui:&Ui)->bool {
         let dt=f64::from(ui.io().delta_time).clamp(0.0,0.1);
         session.fx.score+=(session.play.score-session.fx.score)*(dt*12.0).min(1.0);
         let close=match session.result {
-            None=>{if crate::dance_art::ready() {stage(ui,&session.play,&session.fx,t);} else {stage_plain(ui,&session.play,t);}rules(ui);false},
+            None=>{if crate::dance_art::ready() {stage(ui,&session.play,&session.fx,t);} else {stage_plain(ui,&session.play,t);}false},
             Some(at)=>result(ui,&session.play,session.quit,ui.time()-at),
         };
         if close {*slot=None;ACTIVE.store(false,Ordering::Relaxed);DANCING.store(false,Ordering::Relaxed);}
@@ -176,26 +174,6 @@ impl Canvas<'_> {
         self.ui.text_colored([0.0,0.0,0.0,color[3]*0.35],value);
         self.ui.set_cursor_screen_pos([self.ox+x*self.s-w*align,self.oy+y*self.s]);self.ui.text_colored(color,value);
     }
-}
-fn rules(ui:&Ui) {
-    if ui.is_key_pressed_no_repeat(Key::F1){RULES.fetch_xor(true,Ordering::Relaxed);}
-    let c=Canvas::new(ui);
-    ui.window("##dance-rules").position(c.p(24.0,190.0),Condition::Always)
-        .flags(WindowFlags::NO_DECORATION|WindowFlags::ALWAYS_AUTO_RESIZE|WindowFlags::NO_MOVE|WindowFlags::NO_NAV).build(||{
-            ui.set_window_font_scale(c.s);
-            if ui.button(if RULES.load(Ordering::Relaxed){"收起规则 [F1]"}else{"规则 [F1]"}){RULES.fetch_xor(true,Ordering::Relaxed);}
-            if RULES.load(Ordering::Relaxed){
-                ui.separator();
-                for line in ["按顺序输入箭头：方向键 / WASD / 手柄十字键。",
-                    "箭头完成后，等星星到达爱心，按空格 / 手柄 A。",
-                    "判定越准、连击越多，最终评级越高。",
-                    "完整跳完歌曲后领取卢恩：",
-                    "S 5000 / A 3500 / B 2000 / C 1000",
-                    "同一事件只领取一次；Esc / 手柄 B 退出无奖励。",
-                    "联机统一开场，各自计分领奖。",
-                    "查看规则不会暂停歌曲。"]{ui.text(line);}
-            }
-        });
 }
 fn window(ui:&Ui,id:&str,f:impl FnOnce()) {
     let size=ui.io().display_size;
@@ -294,7 +272,7 @@ fn stage_plain(ui:&Ui,play:&Play,t:f64) {
 fn coach(play:&Play,t:f64)->(String,f32) {
     let song=&play.song;
     let Some(line)=play.current() else {return (String::new(),18.0);};
-    let size=if play.phrase<4 {22.0} else {17.0};
+    let size=28.0;
     if play.ready() {
         let left=song.target(play.phrase)-t;
         let text=if left>song.beat()*1.5 {"② 箭头按完了！等星星走到爱心，再按 空格".to_owned()} else {"② 现在按 空格！".to_owned()};
@@ -339,7 +317,7 @@ fn stage(ui:&Ui,play:&Play,fx:&Fx,t:f64) {
         }
         // ── 顶部名牌与分数 ──
         let pw=320.0;image("plate",800.0-pw*0.5,6.0,pw,pw*aspect("plate"),WHITE_FULL);
-        c.plain(800.0,36.0,&format!("{TITLE} · {}",song.name),ROSE,20.0,0.5);
+        c.plain(800.0,32.0,&format!("{TITLE} · {}",song.name),ROSE,28.0,0.5);
         let bump=fx.gain.map_or(0.0,|(_,at)|(1.0-((t-at)/0.25) as f32).clamp(0.0,1.0));
         outlined(1560.0,14.0-bump*4.0,&format!("{:.0}",fx.score.round()),PINK,30.0+bump*8.0,1.0);
         if let Some((gain,at))=fx.gain && t-at<0.8 {
@@ -348,9 +326,9 @@ fn stage(ui:&Ui,play:&Play,fx:&Fx,t:f64) {
         if play.combo>=2 {outlined(1560.0,84.0,&format!("{} COMBO",play.combo),fade(PINK,0.85),16.0,1.0);}
         // ── 操作提示：名牌下面一直显示当前该做什么 ──
         let (hint,size)=coach(play,t);
-        ui.get_window_draw_list().add_rect(c.p(420.0,94.0),c.p(1180.0,166.0),ImColor32::from_rgba(255,241,247,235)).filled(true).rounding(12.0*s).build();
+        ui.get_window_draw_list().add_rect(c.p(340.0,94.0),c.p(1260.0,180.0),ImColor32::from_rgba(255,241,247,235)).filled(true).rounding(12.0*s).build();
         c.plain(800.0,102.0,&hint,ROSE,size,0.5);
-        c.plain(800.0,140.0,"方向键 / WASD → 空格确认　·　手柄十字键 → A　·　Esc 放弃",ROSE,17.0,0.5);
+        c.plain(800.0,146.0,"方向键 / WASD → 空格确认　·　手柄十字键 → A　·　Esc 放弃",ROSE,22.0,0.5);
         // ── 预备：倒数 ──
         let first=song.phrase_start(0);
         if t<first {
