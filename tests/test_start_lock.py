@@ -9,6 +9,31 @@ import unittest
 
 @unittest.skipUnless(os.name == 'nt', 'Windows PowerShell startup test')
 class StartLockTests(unittest.TestCase):
+    def test_migration_does_not_copy_its_own_held_launch_lock(self):
+        project = Path(__file__).resolve().parents[1]
+        source = (project / 'Launch-Seamless-Tower.ps1').read_text(encoding='utf-8-sig')
+        function = source[source.index('function Copy-TowerSoloData('):source.index('function Set-TowerSpectatorMode(')]
+        shell = Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+        with tempfile.TemporaryDirectory(prefix='tower-migrate-lock-') as folder:
+            root = Path(folder)
+            runtime = root / 'runtime'
+            runtime.mkdir()
+            (root / 'tower-0-0.json').write_text('progress')
+            (root / 'tower-0-1.json').write_text('old progress')
+            (runtime / 'tower-0-1.json').write_text('current progress')
+            (root / 'tower-debug.enable').touch()
+            (root / 'tower-lobby.json').write_text('private')
+            fixture = root / 'migration.ps1'
+            fixture.write_text("$ErrorActionPreference='Stop'\n$env:APPDATA=$null\n" + function + '''
+$guard=[IO.File]::Open((Join-Path $PSScriptRoot '.tower-launch.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+try {Copy-TowerSoloData $PSScriptRoot (Join-Path $PSScriptRoot 'runtime') 'ertowercoop'} finally {$guard.Dispose()}
+''', encoding='utf-8-sig')
+            result = subprocess.run([str(shell), '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(fixture)], capture_output=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((runtime / 'tower-0-0.json').read_text(), 'progress')
+            self.assertEqual((runtime / 'tower-0-1.json').read_text(), 'current progress')
+            self.assertEqual(sorted(p.name for p in runtime.iterdir()), ['tower-0-0.json', 'tower-0-1.json'])
+
     def test_two_launchers_cannot_start_the_same_package_and_lock_releases(self):
         script = Path(__file__).resolve().parents[1] / 'distribution/Start-Tower.ps1'
         shell = Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'

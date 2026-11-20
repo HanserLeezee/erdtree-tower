@@ -49,6 +49,7 @@ function Copy-TowerSoloData([string]$PackageRoot, [string]$Runtime, [string]$Ext
     }
     $skip = @('tower-session.json','tower-debug.enable','tower-lobby.json')
     foreach ($file in Get-ChildItem -LiteralPath $PackageRoot -File -Filter 'tower-*') {
+        if (!$file.Name.StartsWith('tower-', [StringComparison]::OrdinalIgnoreCase) -or $file.Extension -eq '.lock') {continue}
         if ($file.Extension -in @('.log','.party-award') -or $skip -contains $file.Name) {continue}
         $target = Join-Path $Runtime $file.Name
         if (Test-Path -LiteralPath $target) {continue}
