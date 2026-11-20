@@ -72,6 +72,7 @@ mod scaling;
 mod law;
 mod embers;
 mod debug_menu;
+mod gesture_trace;
 mod run_log;
 mod build_panel;
 mod archive_ui;
@@ -84,6 +85,9 @@ mod class_ui;
 mod legacy;
 mod law_ui;
 mod dance_ui;
+mod dance_camera;
+mod dance_motion;
+mod dance_stage;
 mod dance_art;
 mod notice_ui;
 mod reward_ui;
@@ -223,6 +227,7 @@ struct TowerPreview {
     rewards: reward_ui::Panel,
     debug: debug_menu::Menu,
     visible: bool,
+    map_preview: bool,
     run: Option<Run>,
     last_archetype: Option<u8>,
     last_prompt: u64,
@@ -251,6 +256,10 @@ fn draw_resource_alert(ui:&hudhook::imgui::Ui,files:&[String]) {
     }
 }
 
+fn map_preview_available(view:&runtime::View)->bool {
+    view.ready&&!view.travelling&&view.run.as_ref().is_some_and(|run|run.retry_node.is_none()&&!matches!(run.phase,Phase::Dead|Phase::Won))
+}
+
 impl TowerPreview {
     fn new() -> Self {
         Self {
@@ -258,6 +267,7 @@ impl TowerPreview {
             rewards: reward_ui::Panel::default(),
             debug: Default::default(),
             visible: true,
+            map_preview: false,
             run: Some(Run::new(42, Class::Vagabond)),
             last_archetype: None,
             last_prompt: 0,
@@ -270,7 +280,8 @@ impl ImguiRenderLoop for TowerPreview {
     fn before_render(&mut self, ctx: &mut Context, renderer: &mut dyn RenderContext) {
         self.rewards.load_icons(renderer);
         let player_present = SNAPSHOT.lock().is_ok_and(|snapshot| snapshot.is_some());
-        let capture = runtime::with_view(|view| input::capture_route(self.visible, player_present, view)).unwrap_or(false);
+        let capture = runtime::with_view(|view| input::capture_route(self.visible, player_present, view)
+            || self.map_preview&&player_present&&map_preview_available(view)).unwrap_or(false);
         input::CAPTURE.store(capture, Ordering::Relaxed);
         input::watch_pointer();
         if {let io=ctx.io();io.mouse_down[0]||io.mouse_wheel!=0.0||io.mouse_delta[0]!=0.0||io.mouse_delta[1]!=0.0} {input::note_mouse();}
@@ -415,10 +426,20 @@ impl ImguiRenderLoop for TowerPreview {
         }
         let view = runtime::view();
         suspension::draw(ui,view.as_ref());
-        let map_open=self.visible&&view.as_ref().and_then(|v|v.run.as_ref()).or(self.run.as_ref()).is_some_and(|r|matches!(r.phase,Phase::Map));
-        if options::pressed(ui,Hotkey::Overlay)&&!map_open {
-            self.visible = !self.visible;
-            log(format!("F10: visible={}", self.visible));
+        if let Some(view)=&view {
+            if self.last_prompt!=view.prompt {
+                self.last_prompt=view.prompt;
+                self.visible=!view.run.as_ref().is_some_and(|run|matches!(run.phase,Phase::Combat{..}));
+                self.map_preview=false;
+            }
+            if !map_preview_available(view) {self.map_preview=false;}
+            if !ui.io().want_text_input&&!run_screen::active()&&!debug_menu::open()
+                &&options::pressed(ui,Hotkey::Map)&&map_preview_available(view) {
+                if self.map_preview {self.map_preview=false;}
+                else if view.room.is_none()&&!view.shared_event&&view.run.as_ref().is_some_and(|run|run.phase==Phase::Map&&!run.contract_pending()) {self.visible=!self.visible;}
+                else {self.map_preview=true;}
+                if !self.map_preview {input::CAPTURE.store(input::capture_route(self.visible,runtime::PLAYER_READY.load(Ordering::Relaxed),view),Ordering::Relaxed);}
+            }
         }
         let snapshot = SNAPSHOT.lock().ok().and_then(|guard| *guard);
         if let Some(snapshot) = snapshot
@@ -468,6 +489,11 @@ impl ImguiRenderLoop for TowerPreview {
             if self.resource_alert.is_some_and(|(_,at)|at.elapsed()<std::time::Duration::from_secs(20)) {draw_resource_alert(ui,files);}
         }
         if run_screen {return;}
+        if self.map_preview&&let Some(view)=view.as_ref().filter(|view|map_preview_available(view))&&let Some(run)=&view.run {
+            map_ui::preview(ui,run,view);
+            if build_panel::open() {let rewards=&mut self.rewards;build_panel::draw(ui,run,view,&mut |icon|rewards.icon(icon));}
+            return;
+        }
         if let Some(view) = &view {
             if let Some(dummy)=&view.dummy {dummy::draw_hud(ui,dummy);}
             if view.room.is_some()||view.shared_event {
@@ -475,17 +501,14 @@ impl ImguiRenderLoop for TowerPreview {
             }
             if view.travelling||view.run.as_ref().is_some_and(|r|r.retry_node.is_some()) {
                 input::CAPTURE.store(false, Ordering::Relaxed);
+                if runtime::PLAYER_READY.load(Ordering::Relaxed) {
+                    let text=crate::i18n::t(&view.status);let x=(ui.io().display_size[0]-ui.calc_text_size(&text)[0])*0.5;
+                    let draw=ui.get_foreground_draw_list();
+                    draw.add_text([x+1.0,81.0],[0.0,0.0,0.0,1.0],&text);
+                    draw.add_text([x,80.0],[1.0,0.88,0.65,1.0],text);
+                }
                 return;
             }
-        }
-        if let Some(view) = &view
-            && self.last_prompt != view.prompt
-        {
-            self.last_prompt = view.prompt;
-            self.visible = !view
-                .run
-                .as_ref()
-                .is_some_and(|run| matches!(run.phase, Phase::Combat { .. }));
         }
         if !self.visible {
             return;
@@ -622,6 +645,8 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
         );
         std::mem::forget(recurring);
         log("Character capture task registered");
+        let camera_task=task.run_recurring(dance_camera::tick as fn(&FD4TaskData),CSTaskGroupIndex::CameraStep);
+        std::mem::forget(camera_task);
         transmog::initialize(diagnostics::module_path(address));
     });
     1

@@ -23,12 +23,21 @@ static class SpiritBalanceAssets {
         var goods=Read("EquipParamGoods");var buddies=Read("BuddyParam");
         var g=goods.Rows.ToDictionary(r=>r.ID);var b=buddies.Rows.ToDictionary(r=>r.ID);
         var allowedGoods=new HashSet<int>();var allowedBuddies=new HashSet<int>();
+        var removedBuddies=new HashSet<int>();
         foreach(var s in specs)for(int level=0;level<=SpiritLevelAssets.Max;level++) {
             int buddyId=1600000000+s.Family*40000+level*1000;
             int trigger=610000000+s.Family*40000+level*1000;
             var source=b[buddyId];
             if(source.Name!=$"Tower custom spirit buddy {s.Id}+{level}"||I(source,"triggerSpEffectId")!=trigger||I(g[s.Id+level],"refId_default")!=trigger)throw new Exception("Unexpected custom summon reference");
             Set(g[s.Id+level],"rarity",s.Tier);allowedGoods.Add(s.Id+level);
+            if(s.Id==309000) {
+                if(s.Count!=1)throw new Exception("Silver sphere must summon one unit");
+                SilverSphereAssets.ConfigureBuddy(source);allowedBuddies.Add(buddyId);
+                for(int slot=1;slot<=2;slot++)if(b.TryGetValue(buddyId+slot,out var extra)) {
+                    if(extra.Name!=$"Tower custom spirit buddy {s.Id}+{level}/{slot}"||I(extra,"triggerSpEffectId")!=trigger)throw new Exception("Unexpected silver sphere summon row");
+                    b.Remove(extra.ID);buddies.Rows.Remove(extra);removedBuddies.Add(extra.ID);
+                }
+            }
             for(int slot=0;slot<s.Count;slot++) {
                 int id=buddyId+slot;
                 if(!b.TryGetValue(id,out var row)) {
@@ -49,6 +58,7 @@ static class SpiritBalanceAssets {
             var before=PARAM.Read(originals[File_(name).Name]);before.ApplyParamdef(p.AppliedParamdef);
             var rows=p.Rows.ToDictionary(r=>r.ID);
             foreach(var row in before.Rows)foreach(var cell in row.Cells) {
+                if(name=="BuddyParam"&&removedBuddies.Contains(row.ID))continue;
                 if(name=="EquipParamGoods"&&allowedGoods.Contains(row.ID)&&cell.Def.InternalName=="rarity")continue;
                 if(name=="BuddyParam"&&allowedBuddies.Contains(row.ID)&&cell.Def.InternalName is "x_offset" or "z_offset")continue;
                 if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,rows[row.ID][cell.Def.InternalName].Value))throw new Exception($"Unrelated field changed: {name}/{row.ID}/{cell.Def.InternalName}");
@@ -93,6 +103,7 @@ static class SpiritBalanceAssets {
         foreach(var f in BND4.Read(textPath).Files)if(!f.Bytes.SequenceEqual(changedTables.Contains(f.ID)?text.Files.Single(t=>t.ID==f.ID).Bytes:textBefore[f.ID]))throw new Exception("Spirit text serialization mismatch");
         File.WriteAllLines(Path.Combine(output,"custom-spirit-definitions.tsv"),lines);
         File.WriteAllText(Path.Combine(output,"spirit-balance.json"),JsonSerializer.Serialize(specs,new JsonSerializerOptions{WriteIndented=true}));
+        SpiritPlacementAssets.Patch(output,output);
         Console.WriteLine($"PASS: {specs.Length} spirit families x 40 levels; group counts, AI/scaling, rarity, descriptions and unrelated fields verified");
     }
 }

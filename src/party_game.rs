@@ -32,6 +32,7 @@ impl Config {
 }
 #[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
 pub struct Report {
+    #[serde(default)] pub dance:Option<crate::dance_party::Report>,
     #[serde(default)] pub pause_saved:Option<u64>,
     #[serde(default)] pub leaving:bool,
     #[serde(default)] pub resume:Option<crate::suspension::Point>,
@@ -78,15 +79,16 @@ impl ScarabClaim {
 }
 impl Report {
     pub fn new(run:&Run,epoch:u64,arrived:bool,bound:bool,alive:bool)->Self {
-        Self{leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,embers:run.embers.clone(),strikes:vec![],epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
+        Self{dance:None,leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,embers:run.embers.clone(),strikes:vec![],epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
     }
     pub fn unavailable(epoch:u64)->Self {
-        Self{leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,embers:vec![],strikes:vec![],epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
+        Self{dance:None,leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,embers:vec![],strikes:vec![],epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
     }
     pub fn at_hub(epoch:u64)->Self {Self{present:true,at_hub:true,alive:true,..Self::unavailable(epoch)}}
 }
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub enum Order {
+    Dance{epoch:u64,command:crate::dance_party::Command},
     PausePrepare{epoch:u64,ticket:u64},
     PauseCommit{epoch:u64,ticket:u64},
     PauseAbort{epoch:u64,ticket:u64},
@@ -120,8 +122,13 @@ pub enum Order {
 }
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum Stage {Map,Travel,Combat,Fighting,Service,Reward,Stopped}
-pub struct Gate {trial:Option<crate::regional_events::Trial>,pub epoch:u64,pub stage:Stage,peers:Vec<(u64,Option<Report>)>,events:Option<crate::party_events::Queue>,stormveil:Option<crate::stormveil::Decision>}
+pub struct Gate {dance:crate::dance_party::Round,trial:Option<crate::regional_events::Trial>,pub epoch:u64,pub stage:Stage,peers:Vec<(u64,Option<Report>)>,events:Option<crate::party_events::Queue>,stormveil:Option<crate::stormveil::Decision>}
 impl Gate {
+    pub fn dance_order(&mut self,host:u64,now:u64)->Option<Order>{
+        let eligible=self.stage==Stage::Service&&self.all(|r|r.arrived&&r.alive&&r.dance.is_some()&&!r.map_ready);
+        let rows:Vec<_>=self.peers.iter().map(|(id,r)|(*id,r.as_ref().and_then(|r|r.dance))).collect();
+        self.dance.poll(self.epoch,now,host,&rows,eligible).map(|command|Order::Dance{epoch:self.epoch,command})
+    }
     pub fn skip_node(&mut self,rewards:bool) {
         self.stage=if rewards{Stage::Reward}else{Stage::Service};
         self.events=None;self.trial=None;self.stormveil=None;
@@ -178,7 +185,7 @@ impl Gate {
     pub fn ballots(&self)->Vec<crate::party_vote::Ballot> {
         self.peers.iter().map(|(player,report)|crate::party_vote::Ballot{player:*player,node:report.as_ref().filter(|r|r.present&&r.map_ready&&r.alive).and_then(|r|r.selected)}).collect()
     }
-    pub fn new(ids:Vec<u64>)->Self {Self{trial:None,epoch:0,stage:Stage::Map,peers:ids.into_iter().map(|id|(id,None)).collect(),events:None,stormveil:None}}
+    pub fn new(ids:Vec<u64>)->Self {Self{dance:Default::default(),trial:None,epoch:0,stage:Stage::Map,peers:ids.into_iter().map(|id|(id,None)).collect(),events:None,stormveil:None}}
     pub fn trial_order(&mut self)->Option<Order> {
         use crate::regional_events::Trial;
         if self.stage!=Stage::Service||self.trial.is_some()||!self.all(|r|r.trial&&r.arrived&&r.alive&&r.trial_choice.is_some()){return None;}
@@ -888,7 +895,7 @@ mod tests {
                 let mut run=Run::new(seed,crate::Class::Samurai);
                 for _ in 0..15 {
                     let available=run.available();
-                    if let Some(&id)=available.iter().find(|&&id|run.nodes[id].kind==kind&&(kind!=crate::NodeKind::Event||run.event_draw(id)!=crate::events::Draw::Trial)){return Some((run,id));}
+                    if let Some(&id)=available.iter().find(|&&id|run.nodes[id].kind==kind&&(kind!=crate::NodeKind::Event||!matches!(run.event_draw(id),crate::events::Draw::Trial|crate::events::Draw::Mausoleum))){return Some((run,id));}
                     run.finish(available[0]);
                 }
                 None

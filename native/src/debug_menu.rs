@@ -21,6 +21,32 @@ static CHEATS_BLOCKED:AtomicBool=AtomicBool::new(false);
 /// 离玩家最近的敌人的韧性：调试菜单打开时游戏任务线程每帧写，菜单里显示
 static NEAREST:Mutex<Option<String>>=Mutex::new(None);
 static SUMMONS:Mutex<Vec<String>>=Mutex::new(Vec::new());
+static SUMMON_TRACE:LazyLock<Mutex<std::collections::HashMap<String,(std::time::Instant,u32)>>>=LazyLock::new(||Mutex::new(Default::default()));
+fn trace_custom_spirits(world:&eldenring::cs::WorldChrMan) {
+    let Some(player)=world.main_player.as_ref() else{return};
+    let origin=&player.chr_ins.modules.physics.position;
+    let Ok(mut traces)=SUMMON_TRACE.try_lock() else{return};
+    let now=std::time::Instant::now();
+    if traces.len()>64 {traces.clear();}
+    for group in world.summon_buddy_manager.groups.iter().flat_map(|pair|pair.second.iter()).filter(|g|!g.is_remote) {
+        let chr=unsafe {group.chr_ins.as_ref()};
+        let Some(goods)=custom_buddy_item(group.buddy_param_id) else {continue;};
+        let state=traces.entry(chr.field_ins_handle.to_string()).or_insert((now,0));
+        if state.1>=120||state.1>0&&now.duration_since(state.0)<std::time::Duration::from_millis(250) {continue;}
+        state.0=now;state.1+=1;
+        let physics=&chr.modules.physics;let p=&physics.position;
+        let time=&chr.modules.time_act;
+        let animation=time.anim_queue.get(time.read_idx as usize).map(|a|a.anim_id);
+        crate::log(format!("ASH_PHYS goods={} npc={} sample={} handle={} buddy={} hp={}/{} dead={} dismiss={} pos=[{:.3},{:.3},{:.3}] player=[{:.3},{:.3},{:.3}] delta_y={:.3} solid={} grounded={} falling={} gravity_off={} fade_gravity_off={} disabled={}",
+            goods&0x0fffffff,chr.npc_param_id,state.1,chr.field_ins_handle,group.buddy_param_id,chr.modules.data.hp,chr.modules.data.max_hp,chr.chr_flags1c5.death_flag(),group.disappear_requested,
+            p.0,p.1,p.2,origin.0,origin.1,origin.2,p.1-origin.1,physics.touching_solid_ground,physics.is_touching_ground,physics.is_falling,
+            physics.gravity_disabled,physics.fade_out_gravity_disabled,chr.debug_flags.character_disabled()));
+        crate::log(format!("ASH_COLLISION goods={} handle={} sample={} animation={animation:?} ctrl={:#x} proxy={:#x} map_disabled={} capsule_disabled={} shape=[{:.3},{:.3}] char_shape=[{:.3},{:.3}] push_up={:.3} gravity_mult={:.3} high_adjust={} proxy_update={} effects={:?}",
+            goods&0x0fffffff,chr.field_ins_handle,state.1,chr.chr_ctrl.flags.0,chr.chr_ctrl.chr_proxy_flags.0,chr.chr_ctrl.flags.disable_map_collision(),chr.chr_ctrl.flags.disable_character_capsule_collision(),
+            physics.hit_height,physics.hit_radius,physics.chr_hit_height,physics.chr_hit_radius,physics.chr_push_up_factor,physics.gravity_multiplier,
+            physics.adjust_to_hi_collision,physics.chr_proxy_pos_update_requested,chr.special_effect.entries().map(|e|e.param_id).collect::<Vec<_>>()));
+    }
+}
 fn new_spirits(level:u32)->Vec<(u32,&'static str)> {
     if ![0,10,39].contains(&level){return Vec::new();}
     erdtree_tower::rewards::CATALOG.iter().filter(|i|erdtree_tower::rewards::custom_spirit(i.id)).map(|i|(i.id+level,i.name)).collect()
@@ -39,6 +65,8 @@ fn custom_buddy_item(param:i32)->Option<u32> {
 }
 /// 每帧（游戏任务线程）：攻击立刻爆条开着时压低全部敌人的韧性；菜单打开时记下最近那个敌人的韧性。只看敌人，不动玩家、队友与召唤物
 pub fn tick_enemies(world:&mut eldenring::cs::WorldChrMan) {
+    crate::gesture_trace::tick(world);
+    if enabled(){trace_custom_spirits(world);}
     let (open,instant)=(OPEN.load(Ordering::Relaxed),INSTANT_BREAK.load(Ordering::Relaxed));
     if !enabled()||!open&&!instant {return;}
     let Some(player)=world.main_player.as_ref() else{return};
@@ -48,7 +76,7 @@ pub fn tick_enemies(world:&mut eldenring::cs::WorldChrMan) {
             let chr=unsafe {group.chr_ins.as_ref()};let p=&chr.modules.physics.position;
             let distance=((p.0-origin[0]).powi(2)+(p.1-origin[1]).powi(2)+(p.2-origin[2]).powi(2)).sqrt();
             let name=custom_buddy_item(group.buddy_param_id).and_then(erdtree_tower::rewards::lookup).map_or("原版召唤物",|i|i.name);
-            format!("{name} · 生命 {}/{} · 距离 {distance:.1} 米{}",chr.modules.data.hp,chr.modules.data.max_hp,if group.disappear_requested{" · 正在离场"}else{""})
+            format!("{name} · 生命 {}/{} · 距离 {distance:.1} 米 · 高差 {:.1} · 落地 {} · 下坠 {}{}",chr.modules.data.hp,chr.modules.data.max_hp,p.1-origin[1],chr.modules.physics.is_touching_ground,chr.modules.physics.is_falling,if group.disappear_requested{" · 正在离场"}else{""})
         }).collect();
     }
     let friends:Vec<eldenring::cs::FieldInsHandle>=world.player_chr_set.characters().map(|p|p.chr_ins.field_ins_handle)
@@ -180,7 +208,7 @@ impl Bout {
 }
 
 #[derive(Default)]
-pub struct Menu {enemy_filter:String,item_query:String,items:Vec<(u32,String)>,searched:String,count:i32,bout:[usize;2],bout_team:usize,bout_both:bool}
+pub struct Menu {enemy_filter:String,item_query:String,items:Vec<(u32,String)>,searched:String,count:i32}
 const LEVELS:[&str;4]=["无","I","II","III"];
 impl Menu {
     pub fn draw(&mut self,ui:&Ui,view:Option<&crate::runtime::View>) {
@@ -193,9 +221,8 @@ impl Menu {
             let Some(run)=view.run.as_ref() else {ui.text(crate::i18n::t("尚未开始旅程：在大赐福开始新局后再使用"));return;};
             ui.text(crate::i18n::t(format!("第 {} 幕 · 已走 {} 层 · {:?}{}",run.act,run.visited.len(),run.phase,if run.debug{" · 调试旅程"}else{""})));
             if let Some(_bar)=ui.tab_bar("##debug-tabs") {
-                if let Some(_tab)=ui.tab_item("处刑之链实测") {chain_test(ui,run);}
-                if let Some(_tab)=ui.tab_item("Boss 测试") {self.boss_tests(ui,view,run);}
-                if let Some(_tab)=ui.tab_item("新骨灰测试") {self.spirit_tests(ui,view,run);}
+                if let Some(_tab)=ui.tab_item("Boss") {self.boss_tests(ui,view,run);}
+                if let Some(_tab)=ui.tab_item("骨灰") {self.spirit_tests(ui,view,run);}
                 if let Some(_tab)=ui.tab_item("战斗") {self.combat(ui,run);}
                 if let Some(_tab)=ui.tab_item("构筑") {self.build(ui,run);}
                 if let Some(_tab)=ui.tab_item("物品") {self.items(ui);}
@@ -206,29 +233,23 @@ impl Menu {
                     if ui.button(crate::i18n::t("试炼完成：两项护符赐福")) {crate::run_screen::preview_trial("史东薇尔突围",vec![1000,1150]);}
                     if ui.button(crate::i18n::t("试炼完成：没有新增赐福")) {crate::run_screen::preview_trial("异端魔法师塔·隐形桥",vec![]);}
                     ui.separator();
-                    ui.text_wrapped(crate::i18n::t("癫火舞会试跳：方向键按箭头，判定点按空格；不发奖励。先关掉调试菜单再跳。"));
+                    ui.text_wrapped(crate::i18n::t("癫火舞会试跳：方向键按箭头，判定点按空格；不发奖励。选择后自动关闭调试菜单。"));
                     for (index,song) in erdtree_tower::dance::songs().iter().enumerate() {
                         for (label,difficulty) in [("普通",erdtree_tower::dance::Difficulty::Normal),("困难",erdtree_tower::dance::Difficulty::Hard)] {
                             if ui.button(format!("{}（{} BPM）· {}##dance-{index}-{label}",song.name,song.bpm,crate::i18n::t(label))) {
                                 let seed=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(7,|d|d.as_secs());
-                                crate::dance_ui::start(index,difficulty,seed);
+                                crate::dance_ui::start(index,difficulty,seed);close();
                             }
                             ui.same_line();
                         }
                         ui.new_line();
                     }
                 }
-                if let Some(_tab)=ui.tab_item("灵庙测试") {
-                    ui.text_wrapped(crate::i18n::t("进入引路人问号房，再选择前往龙王平台灵庙或领取 800 卢恩。联机由房主发起，全员需开启调试并回到路线图，不计正式解锁。"));
-                    ui.text_wrapped(crate::i18n::t("复制前在右手装备目标武器；可先在物品页用拼音搜索领取测试武器。"));
-                    let _disabled=ui.begin_disabled(PARTY_ROLE.load(Ordering::Relaxed)==2||run.phase!=erdtree_tower::Phase::Map||view.busy||view.travelling);
-                    if ui.button(crate::i18n::t("进入灵庙事件测试")){send(Command::MausoleumTest);}
-                }
-                if let Some(_tab)=ui.tab_item("事件测试") {
+                if let Some(_tab)=ui.tab_item("事件") {
                     use erdtree_tower::events::Draw;
                     ui.text_wrapped(crate::i18n::t("先开始旅程并停在路线图。联机由房主选择事件，全员需更新版本、开启调试并完成领奖。隐形道路在试炼 NPC 菜单里选择；测试旅程不计正式解锁。"));
                     let _disabled=ui.begin_disabled(PARTY_ROLE.load(Ordering::Relaxed)==2||run.phase!=erdtree_tower::Phase::Map||view.busy||view.travelling);
-                    for (label,draw) in [("试炼岔路（含异端塔隐形桥）",Draw::Trial),("恢复泉水",Draw::Spring),("骰子赌徒",Draw::Dice),("盲盒商人",Draw::Mystery),("词条重铸",Draw::Reforge),("重练炉",Draw::Furnace),("粪金龟",Draw::Scarabs),("灵庙引路人",Draw::Mausoleum),("多宝箱",Draw::Chests),("祭坛",Draw::Altar),("上锁宝箱",Draw::Locked)] {
+                    for (label,draw) in [("舞会",Draw::Dance),("试炼岔路（含异端塔隐形桥）",Draw::Trial),("恢复泉水",Draw::Spring),("骰子赌徒",Draw::Dice),("盲盒商人",Draw::Mystery),("词条重铸",Draw::Reforge),("重练炉",Draw::Furnace),("粪金龟",Draw::Scarabs),("灵庙引路人",Draw::Mausoleum),("多宝箱",Draw::Chests),("祭坛",Draw::Altar),("上锁宝箱",Draw::Locked)] {
                         if ui.button(crate::i18n::t(label)){send(Command::EventTest(draw));}
                     }
                 }
@@ -241,19 +262,6 @@ impl Menu {
         let blocked=PARTY_ROLE.load(Ordering::Relaxed)!=0||view.travelling||!view.ready||matches!(run.phase,erdtree_tower::Phase::Reward{..});
         ui.text_wrapped(crate::i18n::t("全部自制骨灰（含按怪池补齐的），每次领取 1 份，可重复补充。装备到快捷栏后，在战斗场地手动召唤；检验胜利返还请使用召唤师。"));
         if PARTY_ROLE.load(Ordering::Relaxed)!=0 {ui.text_disabled(crate::i18n::t("实际组队时禁止发放调试物品；无缝入口独自游玩可用。"));}
-        {
-            let _disabled=ui.begin_disabled(blocked||view.busy||run.phase!=erdtree_tower::Phase::Map);
-            if ui.button(crate::i18n::t("获得双生的灵唤铃")) {send(Command::Ember(Ember::SpiritTwin,true));}
-            if let Some(index)=crate::enemies::debug_encounters().iter().position(|group|group.len()==1&&group[0].model==3251) {
-                ui.same_line();
-                if ui.button(crate::i18n::t("进入大树守卫测试战斗")) {send(Command::BossTest(index as u16));}
-            }
-        }
-        ui.text_disabled(crate::i18n::t("测试战斗会切换到第一幕 Boss 节点，并标记为调试旅程。"));
-        if run.boss_test.is_some() {
-            let _disabled=ui.begin_disabled(blocked);
-            if ui.button(crate::i18n::t("结束测试，返回大赐福##spirit")) {send(Command::EndBossTest);}
-        }
         ui.separator();
         {
             let _disabled=ui.begin_disabled(blocked);
@@ -293,11 +301,6 @@ impl Menu {
         let groups=crate::enemies::debug_encounters();
         ui.text(crate::i18n::t(format!("共 {} 个 Boss 组合；多实体组合整组测试",groups.len())));
         let ready=role!=2&&run.phase==erdtree_tower::Phase::Map&&!view.travelling&&!view.busy;
-        {
-            let _disabled=ui.begin_disabled(!ready||party);
-            if ui.button(crate::i18n::t("碎星拉塔恩：陨石阶段复现（单人）")) {send(Command::RadahnTest);}
-        }
-        ui.text_wrapped(crate::i18n::t("自动降至 40% 血量，玩家免伤；靠近中心开战，必要时轻击一次。仅记录，不强制落地。"));
         ui.child_window("##boss-tests").size([0.0,0.0]).build(|| {
             for (index,group) in groups.iter().enumerate() {
                 let names=crate::enemies::debug_group_name(group);
@@ -323,31 +326,6 @@ impl Menu {
                 }
             }
         });
-        ui.separator();
-        ui.text_colored([0.95,0.75,0.45,1.0],crate::i18n::t("斗蛐蛐实验：下一场生成两只敌人并改阵营，你在这场不会受伤，请不要攻击"));
-        let pool=crate::enemies::debug_pool();
-        let names:Vec<String>=pool.iter().map(|e|format!("第{}幕 {}",e.act,e.name)).collect();
-        for (slot,label) in ["红方##bout-a","蓝方（改阵营）##bout-b"].into_iter().enumerate() {
-            ui.set_next_item_width(260.0);ui.combo_simple_string(label,&mut self.bout[slot],&names);
-        }
-        let teams:Vec<String>=BOUT_TEAMS.iter().map(|t|format!("阵营 {t}")).collect();
-        ui.set_next_item_width(120.0);ui.combo_simple_string("##bout-team",&mut self.bout_team,&teams);
-        ui.same_line();ui.checkbox(crate::i18n::t("两只都改阵营"),&mut self.bout_both);
-        ui.same_line();
-        if ui.small_button(crate::i18n::t("设为下一场##bout")) {
-            let (a,b)=(pool[self.bout[0].min(pool.len()-1)],pool[self.bout[1].min(pool.len()-1)]);
-            set_roster(vec![a,b]);
-            if let Ok(mut bout)=BOUT.lock(){*bout=Some(BoutSetup{team:BOUT_TEAMS[self.bout_team.min(BOUT_TEAMS.len()-1)],both:self.bout_both});}
-        }
-        ui.separator();
-        // 血条颜色标签测试：需要先在 Windows 上运行 text-update 写入测试文字
-        let mut tags=crate::boss_affixes::bar_tag_test();
-        if ui.checkbox(crate::i18n::t("血条颜色标签测试（主 Boss 血条换成带颜色标签的测试文字）"),&mut tags) {crate::boss_affixes::set_bar_tag_test(tags);}
-        // 物品名颜色标签测试：text-update 把原版道具“饶舌头颅”（2207）改成带颜色标签的名字，领取后在背包里查看
-        ui.same_line();
-        if ui.small_button(crate::i18n::t("发放颜色标签测试道具")) {
-            match crate::items::give(&[(0x40000000|2207,1,-1)]) {Ok(())=>crate::log("Color tag test goods given"),Err(error)=>crate::log(format!("Color tag test goods failed: {error}"))}
-        }
         ui.separator();
         ui.text(crate::i18n::t(format!("下一场战斗的敌人：{}",pending_roster().unwrap_or_else(||"按路线正常抽取".into()))));
         if ui.small_button(crate::i18n::t("恢复正常抽取")) {if let Ok(mut roster)=ROSTER.lock(){*roster=None;}if let Ok(mut bout)=BOUT.lock(){*bout=None;}}
@@ -389,7 +367,6 @@ impl Menu {
             let mut held=run.embers.contains(&ember);
             if ui.checkbox(crate::i18n::t(format!("{}##ember-{i}",ember.name())),&mut held) {send(Command::Ember(ember,held));}
         }
-        ui.text(crate::i18n::t("双生的灵唤铃：保留第一组；召唤师按各组存活返还骨灰"));
         ui.separator();
         ui.text(crate::i18n::t(format!("苦难律法：{} 分 · 律法码 {}",run.law.score(),run.law.code())));
         ui.same_line();if ui.small_button(crate::i18n::t("清空律法")) {send(Command::Law(Law::default()));}
@@ -460,16 +437,7 @@ fn arenas(ui:&Ui,run:&Run) {
     crate::fancy_text::text_wrapped(ui,format!("本幕主题：{}（{}）　场地键：{}",theme.name,theme.region,if theme.arena.is_empty(){"（用竞技场）"}else{theme.arena}));
     crate::fancy_text::text_wrapped(ui,format!("下一战（单人）：{}　地图块 {:#010x}",current.name,current.block));
     ui.separator();
-    ui.text(crate::i18n::t("当前单机／联机三幕统一使用龙王平台，场地选择暂时停用。"));
-    let _disabled=ui.begin_disabled(true);
-    let chosen=crate::arenas::override_key();
-    if ui.radio_button_bool("按主题",chosen.is_none()) {crate::arenas::set_override(None);}
-    let built=crate::arenas::built();
-    if built.is_empty() {crate::fancy_text::text_wrapped(ui,"还没有生成好的场地：在 Windows 上运行 scene-builder arena-build 后，把输出的 arenas-built.txt 与地图放进 scene-assets。");}
-    for (key,name) in built {
-        if ui.radio_button_bool(format!("{name}##arena-{key}"),chosen==Some(key)) {crate::arenas::set_override(Some(key));}
-    }
-    drop(_disabled);
+    ui.text(crate::i18n::t("当前三幕统一使用龙王平台。"));
     ui.separator();
     if ui.button(crate::i18n::t("记下当前位置")) {
         let line=match unsafe {eldenring::cs::PlayerIns::local_player()} {
@@ -488,25 +456,6 @@ fn arenas(ui:&Ui,run:&Run) {
     POINT.with(|p|if !p.borrow().is_empty(){crate::fancy_text::text_wrapped(ui,&*p.borrow());});
 }
 thread_local! {static POINT:std::cell::RefCell<String>=const {std::cell::RefCell::new(String::new())};}
-fn chain_test(ui:&Ui,run:&Run) {
-    ui.text_wrapped(crate::i18n::t("测试会将本局标记为调试，不计正式成绩。只修改当前角色的处刑之链。"));
-    if ui.button(crate::i18n::t("开始真实触发测试（获得余烬，重置为 0 层）")) {send(Command::ChainTest(0));}
-    if ui.button(crate::i18n::t("设为 10 层，对照 +60% 致命一击倍率")) {send(Command::ChainTest(10));}
-    ui.separator();
-    let (trace,count)=crate::embers::chain_trace();
-    let level=run.ember_stacks.level(Ember::Chain);
-    ui.text(crate::i18n::t(format!("持有余烬：{}   当前层数：{level}",run.embers.contains(&Ember::Chain))));
-    ui.text(crate::i18n::t(format!("本次观察到的真实致命一击标记：{count} 次")));
-    ui.text(crate::i18n::t(format!("原生处决监听：{}   待处理处决事件：{}",trace.resident,trace.marker)));
-    let expected=erdtree_tower::embers::stack_rates(Ember::Chain,level).unwrap().attack;
-    ui.text(crate::i18n::t(format!("预期倍率：{expected:.2}x   实际参数：{}",trace.rate.map_or("未挂载".into(),|rate|format!("{rate:.2}x")))));
-    let ok=trace.level==level&&trace.resident&&if level==0 {trace.effects==0}else{trace.effects==1&&trace.critical_only&&trace.rate.is_some_and(|r|(r-expected).abs()<0.0001)};
-    ui.text_colored(if ok{[0.5,0.95,0.6,1.0]}else{[1.0,0.65,0.35,1.0]},crate::i18n::t(if ok{"参数检查通过（不代表已完成实战伤害验证）"}else{"参数未就绪或与层数不符"}));
-    ui.text(crate::i18n::t(format!("已挂载倍率效果数：{}   限定致命一击：{}",trace.effects,trace.critical_only)));
-    ui.separator();
-    ui.text_wrapped(crate::i18n::t("进入战斗后背刺或处决一次，再打开此页：真实触发次数应 +1，层数应 +1，倍率应增加 0.05。普通攻击不应加层。营地假人不走战斗叠层检测，请使用战斗或 Boss 测试入口。"));
-    ui.text_wrapped(crate::i18n::t("10 层按钮仅用于手动对照参数，不计入真实触发次数。比较伤害请保持同一把武器、同一敌人及其他增益不变，并关闭秒杀。"));
-}
 fn set_roster(roster:Vec<Enemy>) {
     crate::log(format!("DEBUG_MENU next roster: {}",roster.iter().map(|e|e.name).collect::<Vec<_>>().join(",")));
     if let Ok(mut slot)=ROSTER.lock(){*slot=Some(roster);}

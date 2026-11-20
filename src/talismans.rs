@@ -25,11 +25,11 @@ static TRIGGERS:LazyLock<Vec<&'static Vec<usize>>>=LazyLock::new(||GROUPS.iter()
 fn triggered(run:&Run,seed:u64,repeat:bool,min:u8)->Option<u32> {
     let floor=min.min(3);let mut value=crate::mix(seed^0x726172697479)%100;let mut tier=3;
     for (i,odds) in crate::affixes::quality_odds(run).into_iter().enumerate() {if value<u64::from(odds){tier=i as u8;break;}value-=u64::from(odds);}
-    let eligible:Vec<_>=TRIGGERS.iter().filter(|g|g.iter().any(|&i|VARIANTS[i].tier>=floor&&(repeat||!run.claimed_items.contains(&VARIANTS[i].id)))).collect();
+    tier=tier.max(floor);
+    let eligible:Vec<_>=TRIGGERS.iter().flat_map(|g|g.iter()).map(|&i|&VARIANTS[i])
+        .filter(|v|v.tier==tier&&(repeat||!run.claimed_items.contains(&v.id))).collect();
     if eligible.is_empty(){return None;}
-    let group=eligible[(seed>>8) as usize%eligible.len()];
-    let available=||group.iter().map(|&i|&VARIANTS[i]).filter(|v|v.tier>=floor&&(repeat||!run.claimed_items.contains(&v.id)));
-    available().find(|v|v.tier>=tier.max(floor)).or_else(||available().last()).map(|v|v.id)
+    Some(eligible[(seed>>8) as usize%eligible.len()].id)
 }
 pub fn roll(run:&Run,original:u32,entropy:u64,repeat:bool)->u32 {
     roll_min(run,original,entropy,repeat,0)
@@ -55,6 +55,38 @@ pub fn roll_min(run:&Run,original:u32,entropy:u64,repeat:bool,min:u8)->u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trigger_quality_matches_journey_odds_and_source_floor() {
+        let mut run=Run::new(8,crate::Class::Samurai);
+        for (act,layer) in [(1,0),(2,6),(3,12)] {
+            run.act=act;run.reached_layer=layer;
+            for floor in 0..=3 {
+                let mut counts=[0u32;4];let mut expected=[0u32;4];
+                for (tier,odds) in crate::affixes::quality_odds(&run).into_iter().enumerate(){expected[tier.max(floor)]+=odds;}
+                for seed in 0..20000 {
+                    let id=triggered(&run,seed,false,floor as u8).unwrap();
+                    counts[tier(id).unwrap() as usize]+=1;
+                }
+                for tier in 0..4 {
+                    assert!((counts[tier] as i64-i64::from(expected[tier])*200).abs()<300,
+                        "act={act} floor={floor} tier={tier}: {counts:?}, expected={expected:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn exhausted_trigger_quality_does_not_upgrade_or_duplicate() {
+        let mut run=Run::new(8,crate::Class::Samurai);
+        let seed=(0..10000).find(|&s|crate::mix(s^0x726172697479)%100<45).unwrap();
+        run.claimed_items.extend(TRIGGERS.iter().flat_map(|g|g.iter()).map(|&i|&VARIANTS[i]).filter(|v|v.tier==0).map(|v|v.id));
+        assert_eq!(triggered(&run,seed,false,0),None);
+        assert_eq!(tier(triggered(&run,seed,true,0).unwrap()),Some(0));
+        let remaining=run.claimed_items.pop().unwrap();
+        assert_eq!(triggered(&run,seed,false,0),Some(remaining));
+        assert_eq!(tier(triggered(&run,seed,false,3).unwrap()),Some(3));
+    }
 
     #[test]
     fn riding_and_finding_variants_remain_readable_but_never_roll() {

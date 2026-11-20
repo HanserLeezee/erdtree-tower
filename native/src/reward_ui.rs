@@ -422,6 +422,7 @@ impl Panel {
         let _bg=ui.push_style_color(StyleColor::WindowBg,[0.0,0.0,0.0,0.0]);
         let _border=ui.push_style_color(StyleColor::Border,[0.0,0.0,0.0,0.0]);
         ui.window("幕间契约").position([0.0,0.0],Condition::Always).size(size,Condition::Always)
+            .flags(hudhook::imgui::WindowFlags::NO_NAV)
             .title_bar(false).resizable(false).movable(false).collapsible(false).scroll_bar(false).build(|| {
             // 透出游戏场景：整体压暗，上下两端与四周再暗一些（与三选一相同）
             {
@@ -583,6 +584,7 @@ impl Panel {
         let _button=ui.push_style_color(StyleColor::Button,[0.16,0.14,0.10,1.0]);
         let _hover=ui.push_style_color(StyleColor::ButtonHovered,[0.32,0.26,0.15,1.0]);
         ui.window("战利品##reward").position([0.0,0.0],Condition::Always).size(size,Condition::Always)
+            .flags(hudhook::imgui::WindowFlags::NO_NAV)
             .title_bar(false).resizable(false).movable(false).collapsible(false).scroll_bar(false).build(|| {
             ui.set_window_font_scale(scale);
             {
@@ -851,6 +853,30 @@ pub fn test_frames(context:&mut hudhook::imgui::Context) {
     let mut run=Run::new(42,erdtree_tower::Class::Samurai);
     run.phase=Phase::Reward{id:0,offers:vec![Reward::Blessing(erdtree_tower::BlessingKind::Vigor),Reward::Item(9000000),Reward::UpgradeWeapon]};
     let mut view=runtime::view().unwrap();view.ready=true;view.busy=false;view.status.clear();
+    {
+        context.io_mut().config_flags.insert(hudhook::imgui::ConfigFlags::NAV_ENABLE_GAMEPAD);
+        context.io_mut().backend_flags.insert(hudhook::imgui::BackendFlags::HAS_GAMEPAD);
+        context.io_mut().display_size=[1920.0,1080.0];
+        context.io_mut().add_mouse_pos_event([960.0,400.0]);
+        for oath in [false,true] {
+            let mut pad_run=run.clone();if oath {pad_run.enable_contracts();}
+            let draw:fn(&mut Panel,&Ui,&Run,&View)=if oath {Panel::draw_contract}else{Panel::draw};
+            let count=if oath{pad_run.contract.as_ref().unwrap().cards().len()}else{3};
+            for target in 0..count {
+                let mut panel=Panel::default();
+                for _ in 0..40 {draw(&mut panel,context.frame(),&pad_run,&view);context.render();}
+                let (direction,steps)=if target==count-1 {(Key::GamepadDpadLeft,1)}else{(Key::GamepadDpadRight,target)};
+                for _ in 0..steps {
+                    context.io_mut().add_key_event(direction,true);draw(&mut panel,context.frame(),&pad_run,&view);context.render();
+                    context.io_mut().add_key_event(direction,false);draw(&mut panel,context.frame(),&pad_run,&view);context.render();
+                }
+                assert_eq!(panel.selection.selected,target);
+                context.io_mut().add_key_event(Key::GamepadFaceDown,true);draw(&mut panel,context.frame(),&pad_run,&view);context.render();
+                assert_eq!(panel.selection.closing.map(|(_,p)|p),Some(Pending::Claim(target)),"Controller confirm must claim the highlighted card, oath={oath}");
+                context.io_mut().add_key_event(Key::GamepadFaceDown,false);draw(&mut panel,context.frame(),&pad_run,&view);context.render();
+            }
+        }
+    }
     let mut panel=Panel::default();
     panel.card=Some(TextureId::new(200003));
     panel.rarity_cards=Some(TextureId::new(200004));

@@ -40,6 +40,18 @@ impl Snapshot {
 mod tests {
     use super::*;
     #[test]
+    fn launcher_map_recovery_snapshot_preserves_progress_and_owner() {
+        let mut run=Run::new(42,crate::Class::Samurai);
+        let node=run.start_nodes()[0];run.enter(node).unwrap();run.win_combat().unwrap();run.claim_reward(0).unwrap();
+        let text=serde_json::json!({"version":1,"owner":[17,2],"run":run.encode().unwrap()}).to_string();
+        let restored=Snapshot::decode(&text,(17,2)).unwrap();
+        assert_eq!(restored,run);
+        assert!(Snapshot::decode(&text,(17,1)).is_err());
+        let mut invalid=serde_json::to_value(&run).unwrap();invalid["hp"]=serde_json::json!(u32::MAX);
+        let text=serde_json::json!({"version":1,"owner":[17,2],"run":invalid.to_string()}).to_string();
+        assert!(Snapshot::decode(&text,(17,2)).is_err());
+    }
+    #[test]
     fn combat_restarts_same_room_without_restoring_spent_currency_or_flasks() {
         let mut run=Run::new(42,crate::Class::Samurai);let id=run.available()[0];run.enter(id).unwrap();
         let saved=prepare(&run,123,Some(1)).unwrap();let loaded=Snapshot::decode(&Snapshot::encode((7,0),&saved).unwrap(),(7,0)).unwrap();

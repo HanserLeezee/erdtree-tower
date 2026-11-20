@@ -1,6 +1,26 @@
 use erdtree_tower::{Class,contracts::{State,Kind,reinforcement_level}};
 
 #[test]
+fn somber_levels_use_three_normal_levels() {
+    for level in 0..=33u8 {
+        assert_eq!(reinforcement_level(level*6,10),level);
+        assert_eq!(reinforcement_level(level*6,25),level*3);
+    }
+    assert_eq!(reinforcement_level(30,10),5);
+    for cap in [10,25] {for peak in 0..=erdtree_tower::contracts::MAX_PEAK {
+        let level=reinforcement_level(peak,cap);
+        let restored=erdtree_tower::contracts::reinforcement_peak(level,cap);
+        assert!(restored<=peak);
+        assert_eq!(reinforcement_level(restored,cap),level);
+    }}
+    let mut run=erdtree_tower::Run::new(1,Class::Samurai);
+    run.weapon_peak=Some(erdtree_tower::contracts::reinforcement_peak(39,10));
+    run.spirit_peak=Some(erdtree_tower::rewards::spirit_level_now(&run));
+    assert_eq!(run.spirit_peak,Some(39));
+    assert_eq!(erdtree_tower::Run::decode(&run.encode().unwrap()).unwrap().weapon_peak,Some(234));
+}
+
+#[test]
 fn ranged_oaths_are_retired_from_new_offers_and_deepening() {
     use erdtree_tower::contracts::Oath;
     for class in [Class::Vagabond,Class::Hero,Class::Samurai,Class::Astrologer,Class::Prophet,Class::Confessor] {
@@ -87,10 +107,10 @@ fn catch_up_never_exceeds_recorded_progress() {
     for peak in 0..=50 {for cap in [10,25] {
         let level=reinforcement_level(peak,cap);
         assert!(level<=cap);
-        assert!(u16::from(level)*50/u16::from(cap)<=u16::from(peak));
+        assert!(u16::from(erdtree_tower::contracts::reinforcement_peak(level,cap))<=u16::from(peak));
     }}
     assert_eq!(reinforcement_level(10,25),5);
-    assert_eq!(reinforcement_level(10,10),2);
+    assert_eq!(reinforcement_level(10,10),1);
     assert_eq!(reinforcement_level(9,10),1);
 }
 

@@ -51,7 +51,7 @@ mod tests {
         assert_ne!(before.seamless_hash,collect("0123456789abcdef","2.0.3",&module,&root).unwrap().seamless_hash);
         std::fs::write(root.join("Tower.SeamlessGate.dll"),b"gate fixture").unwrap();
         std::fs::write(root.join("regulation.bin"),b"modified").unwrap();
-        assert!(before.check(&collect("0123456789abcdef","2.0.3",&module,&root).unwrap()).unwrap_err().contains("关键资源"));
+        assert!(before.check(&collect("0123456789abcdef","2.0.3",&module,&root).unwrap()).unwrap_err().contains("场景资源不一致"));
         std::fs::remove_file(root.join("regulation.bin")).unwrap();
         assert!(collect("0123456789abcdef","2.0.3",&module,&root).unwrap_err().contains("regulation.bin"));
         for name in ASSETS.into_iter().filter(|&n|n!="regulation.bin").chain(["ersc.dll","ersc_settings.ini","Tower.SeamlessGate.dll"]) {std::fs::remove_file(root.join(name)).unwrap();}

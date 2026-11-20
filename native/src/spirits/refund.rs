@@ -5,7 +5,7 @@ use eldenring::cs::{SummonBuddyManager,WorldChrMan};
 struct Member {key:u64,param:i32,alive:bool}
 pub(super) struct Use {goods:u32,before:Vec<u64>,params:Vec<i32>,members:HashMap<u64,(bool,Instant)>}
 #[derive(Default)]
-struct Ledger {inventory:Vec<(u32,u32)>,observed_inventory:Option<Vec<(u32,u32)>>,uses:Vec<Use>,closed:bool}
+struct Ledger {inventory:Vec<(u32,u32)>,observed_inventory:Option<Vec<(u32,u32)>>,uses:Vec<Use>,closed:bool,owner_dead:bool}
 #[derive(Debug)]
 pub(crate) struct Refund {pub goods:u32,pub quantity:u32,post_spend_max:u32,target:Option<u32>,confirmed:bool}
 fn count(inventory:&[(u32,u32)],goods:u32)->u32 {inventory.iter().filter(|(id,_)|*id==goods).fold(0,|sum,(_,n)|sum.saturating_add(*n))}
@@ -32,7 +32,7 @@ impl Ledger {
         if !self.closed&&count(&self.inventory,usage.goods)>used{self.uses.push(usage);}
     }
     fn observe(&mut self,members:&[Member],cleanup:bool,now:Instant) {
-        if self.closed{return;}
+        if self.closed||self.owner_dead{return;}
         for usage in &mut self.uses {
             for (key,(alive,seen)) in &mut usage.members {
                 if let Some(member)=members.iter().find(|m|m.key==*key) {
@@ -46,6 +46,14 @@ impl Ledger {
             }
         }
     }
+    fn death(&mut self,members:&[Member],now:Instant) {
+        if self.closed||self.owner_dead{return;}
+        self.observe(members,true,now);self.owner_dead=true;
+    }
+    fn recover(&mut self,allowed:bool)->Vec<Refund> {
+        if !allowed||!self.owner_dead||self.closed{return Vec::new();}
+        self.owner_dead=false;self.settle()
+    }
     fn settle(&mut self)->Vec<Refund> {
         if self.closed{return Vec::new();}self.closed=true;
         let mut counts=BTreeMap::<u32,(u32,u32)>::new();
@@ -57,19 +65,19 @@ impl Ledger {
     }
 }
 
-static LEDGER:Mutex<Ledger>=Mutex::new(Ledger{inventory:Vec::new(),observed_inventory:None,uses:Vec::new(),closed:true});
-fn local_members(manager:&SummonBuddyManager,owner:i32)->Vec<Member> {
+static LEDGER:Mutex<Ledger>=Mutex::new(Ledger{inventory:Vec::new(),observed_inventory:None,uses:Vec::new(),closed:true,owner_dead:false});
+fn local_members(manager:&SummonBuddyManager,owner:i32,owner_dead:bool)->Vec<Member> {
     manager.groups.iter().filter(|pair|pair.first==owner).flat_map(|pair|pair.second.iter()).filter(|group|!group.is_remote).map(|group| {
         let chr=unsafe {group.chr_ins.as_ref()};let handle=chr.field_ins_handle;
         Member{key:(u64::from(handle.block_id.0 as u32)<<32)|u64::from(handle.selector.0),param:group.buddy_param_id,
-            alive:chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag()&&(!group.disappear_requested||manager.disappear_requested)}
+            alive:chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag()&&(owner_dead||!group.disappear_requested||manager.disappear_requested)}
     }).collect()
 }
 pub(super) fn capture(manager:&SummonBuddyManager,goods:i32,effect:i32)->Option<Use> {
     let goods=(goods>0).then_some(goods as u32&0x0fffffff)?;
     let player=unsafe {eldenring::cs::PlayerIns::local_player()}.ok()?;
     let owner=unsafe {player.player_game_data.as_ref()}.character_event_id as i32;
-    let before=local_members(manager,owner).into_iter().map(|m|m.key).collect();
+    let before=local_members(manager,owner,false).into_iter().map(|m|m.key).collect();
     let params=manager.trigger_speffect_to_buddy_map.iter().filter_map(|(trigger,param)|(*trigger==effect).then_some(*param)).collect();
     Some(Use{goods,before,params,members:HashMap::new()})
 }
@@ -80,14 +88,23 @@ pub(super) fn accepted(usage:Use) {
 }
 pub(crate) fn begin(before:&[(u32,u32)]) {if let Ok(mut ledger)=LEDGER.lock(){*ledger=Ledger{inventory:before.to_vec(),..Default::default()};}}
 pub(crate) fn tracking()->bool {LEDGER.lock().is_ok_and(|ledger|!ledger.closed)}
-pub(crate) fn close(){if let Ok(mut ledger)=LEDGER.lock(){ledger.closed=true;}}
+pub(crate) fn close(){if let Ok(mut ledger)=LEDGER.lock(){ledger.closed=true;ledger.owner_dead=false;}}
+pub(crate) fn recover(summoner:bool)->Vec<Refund> {
+    let Ok(mut ledger)=LEDGER.lock() else{return Vec::new();};
+    let plan=ledger.recover(summoner);
+    if !plan.is_empty(){super::super::log(format!("ASH_GROUP revival refunds={:?}",plan.iter().map(|r|(r.goods,r.quantity)).collect::<Vec<_>>()));}
+    plan
+}
 pub(crate) fn observe(world:&WorldChrMan) {
     let Some(player)=world.main_player.as_ref() else{return;};
     let manager=&world.summon_buddy_manager;
     let owner=unsafe {player.player_game_data.as_ref()}.character_event_id as i32;
-    let members=local_members(manager,owner);
+    let dead=player.chr_ins.modules.data.hp<=0||player.chr_ins.chr_flags1c5.death_flag();
+    let members=local_members(manager,owner,dead);
     let inventory=super::super::loadout::ash_snapshot(unsafe {player.player_game_data.as_ref()}).ok();
     if let Ok(mut ledger)=LEDGER.lock() {
+        if dead {ledger.death(&members,Instant::now());return;}
+        if ledger.owner_dead{return;}
         if let Some(inventory)=inventory {ledger.refresh_inventory(&inventory);}
         if !ledger.closed&&ledger.uses.is_empty()&&!members.is_empty()&&manager.active_summon_goods_id>0&&!manager.disappear_requested&&super::ACTIVE.load(std::sync::atomic::Ordering::Acquire) {
             // 召唤请求没被追踪到时（没装上追踪，或开战前就召唤了：倒数、敌人还没出现时追踪还没开），按场上的召唤物补记这一次，
@@ -131,6 +148,26 @@ pub(crate) fn pump(data:&mut eldenring::cs::PlayerGameData,plan:&mut [Refund])->
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn revival_preserves_living_ashes_before_owner_cleanup_only_once() {
+        let mut ledger=two();let now=Instant::now();
+        ledger.observe(&[member(1,10,true),member(3,20,false)],false,now);
+        ledger.death(&[],now);
+        ledger.observe(&[],false,now+Duration::from_secs(20));
+        ledger.death(&[],now+Duration::from_secs(20));
+        assert!(ledger.recover(false).is_empty());
+        let plan=ledger.recover(true);
+        assert_eq!(plan.iter().map(|r|(r.goods,r.quantity)).collect::<Vec<_>>(),[(100,1)]);
+        assert!(ledger.recover(true).is_empty());assert!(ledger.settle().is_empty());
+    }
+    #[test]
+    fn ash_killed_on_owner_death_frame_is_not_returned() {
+        let mut ledger=two();let now=Instant::now();
+        ledger.observe(&[member(1,10,true),member(3,20,true)],false,now);
+        ledger.death(&[member(1,10,false),member(3,20,true)],now);
+        let plan=ledger.recover(true);
+        assert_eq!(plan.iter().map(|r|(r.goods,r.quantity)).collect::<Vec<_>>(),[(200,1)]);
+    }
     #[test]
     fn shop_purchase_is_tracked_and_portal_cannot_refund_it_twice() {
         let mut ledger=Ledger::default();

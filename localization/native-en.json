@@ -338,7 +338,7 @@
   "生命低于 40% 时\n韧性（强韧度）提高 200%": "Below 40% HP\nPoise increased by 200%",
   "致命一击后 5 秒内\n精力消耗 -50%": "For 5s after a critical hit\nStamina costs -50%",
   "施放法术或祷告时\n受到的伤害降低 50%": "While casting sorceries or incantations\nDamage taken reduced by 50%",
-  "专注不低于 70% 时\n造成的伤害提高 50%": "At 70% FP or above\nDamage dealt increased by 50%",
+  "专注不低于 70% 时\n造成的伤害提高 30%": "At 70% FP or above\nDamage dealt increased by 30%",
   "召唤物在场时\n你造成的伤害 +40%": "While a summon is present\nYour damage dealt +40%",
   "战技伤害 +25%\n战技消耗的专注 -50%": "Skill damage +25%\nSkill FP costs -50%",
   "每次命中攻击 +2%，最多 +80%\n受伤时清零": "Attack +2% per hit, up to +80%\nResets when you take damage",

@@ -57,7 +57,7 @@ static class PortalArchAssets {
                 var other=checkEvents.Events.Single(e=>e.ID==ev.ID);
                 if(!EventBytes(ev).SequenceEqual(EventBytes(other)))throw new Exception("Unrelated event changed");
             }
-            string[] Guards(EMEVD.Event e)=>e.Instructions.Where(i=>i.Bank<1001&&!(i.Bank==1000&&i.ID==4)).Select(i=>$"{i.Bank}/{i.ID}/"+Convert.ToHexString(i.ArgData)).ToArray();
+            string[] Guards(EMEVD.Event e)=>SceneReuseAssets.BaseInstructions(e).Where(i=>i.Bank<1001&&!(i.Bank==1000&&i.ID==4)).Select(i=>$"{i.Bank}/{i.ID}/"+Convert.ToHexString(i.ArgData)).ToArray();
             if(!Guards(original.Events.Single(e=>e.ID==visual.ID)).SequenceEqual(Guards(visual)))throw new Exception("Victory gate changed");
             // Restore only portal-owned records and compare the complete map.
             check.Parts.Assets.RemoveAll(a=>VisualPart(a.EntityID));

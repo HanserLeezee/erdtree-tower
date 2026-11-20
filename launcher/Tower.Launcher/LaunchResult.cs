@@ -11,6 +11,11 @@ namespace Tower.Launcher
         internal static string Summary(string errorFile, string logs, int exitCode)
         {
             var reason = Tail(errorFile).Trim();
+            if (reason.IndexOf("Local asset generation failed",StringComparison.OrdinalIgnoreCase)>=0 || reason.Contains("本地资源生成失败")) {
+                var detail=Tail(Path.Combine(logs,"stderr.log")).Split(new[]{'\r','\n'},StringSplitOptions.RemoveEmptyEntries)
+                    .LastOrDefault(line=>line.Contains("资源准备失败："));
+                if(detail!=null) reason=detail.Substring(detail.IndexOf("资源准备失败：",StringComparison.Ordinal));
+            }
             if (reason.Length == 0) {
                 var lines = (Tail(Path.Combine(logs, "stdout.log")) + "\n" + Tail(Path.Combine(logs, "stderr.log")))
                     .Split(new[] {'\r','\n'}, StringSplitOptions.RemoveEmptyEntries);

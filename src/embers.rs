@@ -51,7 +51,7 @@ pub const CAST_LINGER_MS:u64=1200;
 pub const BARRIER_CUT_PERCENT:u32=50;
 pub const GLINTSTONE_FP_PERCENT:u32=25;
 pub const MOON_FP_PERCENT:u32=70;
-pub const MOON_ATTACK_PERCENT:u32=50;
+pub const MOON_ATTACK_PERCENT:u32=30;
 /// 战技的精粹：战技造成的伤害提高、战技消耗的专注降低（百分比）
 pub const ARTS_ATTACK_PERCENT:u32=25;
 pub const ARTS_FP_CUT_PERCENT:u32=50;
@@ -828,7 +828,7 @@ mod tests {
         assert_eq!(HARVEST_POINTS,[2,5,10]);
         assert_eq!(u32::from(FRENZY_STACKS)*FRENZY_STEP_PERCENT,80);
         assert_eq!(BUILDUP,40);
-        assert_eq!((BARRIER_CUT_PERCENT,MOON_ATTACK_PERCENT),(50,50));
+        assert_eq!((BARRIER_CUT_PERCENT,MOON_ATTACK_PERCENT),(50,30));
         assert_eq!((SPIRIT_BURST_PERCENT,SPIRIT_FEAST_HEAL_PERCENT,SPIRIT_FEAST_FP_PERCENT),(20,20,20));
         assert_eq!(wound_percent(Ember::SpiritBurst),Some(20));
         assert_eq!(BOSS_CAP_PERCENT,1,"the existing boss cap is unchanged");
@@ -845,7 +845,7 @@ mod tests {
     fn card_text_uses_the_tuned_numbers() {
         assert_eq!(Ember::Execution.effect(),"致命一击后 10 秒内\n精力消耗 -50%");
         assert_eq!(Ember::Barrier.effect(),"施放法术或祷告时\n受到的伤害降低 50%");
-        assert_eq!(Ember::FullMoon.effect(),"专注不低于 70% 时\n造成的伤害提高 50%");
+        assert_eq!(Ember::FullMoon.effect(),"专注不低于 70% 时\n造成的伤害提高 30%");
         assert_eq!(Ember::SpiritResonance.effect(),"召唤物在场时\n你造成的伤害 +40%");
         assert_eq!(Ember::Arts.effect(),"战技伤害 +25%\n战技消耗的专注 -50%");
         assert!(Ember::Arts.quality()==2&&!Ember::Arts.needs_spirit()&&!Ember::Arts.needs_casting());

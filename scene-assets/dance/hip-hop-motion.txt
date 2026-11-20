@@ -1,0 +1,6 @@
+animation=80720
+source=a000_080720.hkx
+frames=1720
+fps=30.000000399444744
+duration=57.29999923706055
+skeleton=c0000

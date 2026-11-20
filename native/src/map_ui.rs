@@ -192,6 +192,17 @@ mod tests {
                 assert_eq!(super::TEST_ENTER.load(super::Ordering::Relaxed),usize::MAX,"Drawing and erasing must never activate a node");
             }
             crate::map_ink::test_mode(crate::map_ink::Mode::Select);
+            context.io_mut().mouse_pos=super::TEST_TARGET.lock().unwrap().0;
+            super::TEST_ENTER.store(usize::MAX,super::Ordering::Relaxed);
+            crate::reward_ui::test_map_pad(context.io_mut(),super::TEST_TARGET.lock().unwrap().0,true);
+            super::preview(context.frame(),&run,&view);context.render();
+            assert_eq!(super::TEST_ENTER.load(super::Ordering::Relaxed),usize::MAX,"Read-only preview must reject node selection even in Map phase");
+            crate::reward_ui::poll_pad(context.io_mut(),false,false);
+            let mut combat=run.clone();let node=combat.start_nodes()[0];combat.enter(node).unwrap();
+            super::preview(context.frame(),&combat,&view);
+            assert!(context.render().total_vtx_count>0,"Combat preview must draw the route");
+            assert_eq!(super::TEST_ENTER.load(super::Ordering::Relaxed),usize::MAX);
+            super::draw(context.frame(),&run,&view,"");context.render();
             let before=super::TEST_TARGET.lock().unwrap().0[1];
             context.io_mut().mouse_pos=[width as f32*0.5,height as f32*0.5];
             super::draw(context.frame(),&run,&view,"");context.render();
@@ -231,8 +242,11 @@ pub fn class_name(class: Class) -> &'static str {
 }
 
 
-/// 选路阶段的路线图常驻：没有关闭键（手柄 B 原来能关，关掉后手柄没有办法再打开，键盘也一直关不掉）
 pub fn draw(ui: &Ui, run: &Run, view: &View, vitals: &str) {
+    draw_mode(ui,run,view,vitals,false);
+}
+pub fn preview(ui:&Ui,run:&Run,view:&View) {draw_mode(ui,run,view,"",true);}
+fn draw_mode(ui: &Ui, run: &Run, view: &View, vitals: &str, readonly:bool) {
     let size=ui.io().display_size;
     let scale=(size[0]/1600.0).min(size[1]/900.0).clamp(0.65,1.6);
     let left=0.0;let right=236.0*scale;let margin=18.0*scale;
@@ -246,12 +260,13 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, vitals: &str) {
         .title_bar(false).resizable(false).movable(false).collapsible(false).scroll_bar(false).build(|| {
             crate::oath_art::background(&ui.get_window_draw_list(),size);
             ui.set_window_font_scale(scale);
-            sidebar(ui,run,view,vitals,[size[0]-right,0.0],[right,size[1]],scale);
+            sidebar(ui,run,view,vitals,[size[0]-right,0.0],[right,size[1]],scale,readonly);
             ui.set_cursor_pos([left+margin,margin]);
             let _paper=ui.push_style_color(StyleColor::ChildBg,[0.84,0.79,0.66,1.0]);
             let _ink=ui.push_style_color(StyleColor::Text,crate::scenery::ink_rgba(run));
             let _popup=ui.push_style_color(StyleColor::PopupBg,[0.91,0.86,0.72,1.0]);
             ui.child_window("route-content").flags(hudhook::imgui::WindowFlags::NO_NAV).scroll_bar(false).scrollable(false).size([size[0]-left-right-2.0*margin,size[1]-2.0*margin]).build(|| {
+                if readonly {route_mode(ui,run,view.ready,&view.ballots,true);party_legend(ui,&view.ballots,&view.latencies,false);return;}
                 let _disabled=ui.begin_disabled(!view.ready||view.busy);
                 match &run.phase {
                     Phase::Reward { .. } => { ui.text(crate::i18n::t("选择战利品以继续旅程。")); }
@@ -275,7 +290,7 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, vitals: &str) {
 }
 /// 路线图右侧的信息栏：本幕与地区、旅程状态（层数、生命、专注、卢恩）、图例、地图工具、档案与构筑。
 /// 暗色面板配金色细边，与旅程档案、选择职业等界面同一套样式；文字按设计字号缩放，不放大位图
-fn sidebar(ui:&Ui,run:&Run,view:&View,vitals:&str,origin:[f32;2],extent:[f32;2],scale:f32) {
+fn sidebar(ui:&Ui,run:&Run,view:&View,vitals:&str,origin:[f32;2],extent:[f32;2],scale:f32,readonly:bool) {
     use crate::archive_style::{self as style,GOLD,WHITE,MUTED};
     let (x0,w)=(origin[0],extent[0]);let at=|x:f32,y:f32|[x0+x*scale,origin[1]+y*scale];
     let text=|x:f32,y:f32,value:&str,color:[f32;4],px:f32,align:f32| {
@@ -360,7 +375,7 @@ fn sidebar(ui:&Ui,run:&Run,view:&View,vitals:&str,origin:[f32;2],extent:[f32;2],
     let y=y+44.0+4.0*40.0-6.0;
     crate::law_ui::ornament(&ui.get_window_draw_list(),at(inner*0.5,y),(inner*0.5-18.0)*scale,scale);
     // ── 地图工具 ──
-    crate::map_ink::toolbar(ui,erdtree_tower::map_drawing::Scope::of(run),at(20.0,y+16.0),[(inner-40.0)*scale,34.0*scale],scale,view.ready&&!view.busy&&run.phase==Phase::Map);
+    crate::map_ink::toolbar(ui,erdtree_tower::map_drawing::Scope::of(run),at(20.0,y+16.0),[(inner-40.0)*scale,34.0*scale],scale,!readonly&&view.ready&&!view.busy&&run.phase==Phase::Map);
     // ── 档案与构筑 ──
     let bottom=extent[1]/scale;
     let archive_key=crate::pad::Input::new(crate::pad::Pad::View,crate::options::label(erdtree_tower::options::Hotkey::Archive));
@@ -441,6 +456,10 @@ fn party_legend(ui:&Ui,ballots:&[erdtree_tower::party_vote::Ballot],latencies:&[
     }
 }
 fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ballot]) {
+    route_mode(ui,run,ready,ballots,false);
+}
+fn route_mode(ui:&Ui,run:&Run,ready:bool,ballots:&[erdtree_tower::party_vote::Ballot],readonly:bool) {
+    let can_travel=ready&&!readonly;
     crate::map_ink::new_layer(run.visited.len());
     let selecting=crate::map_ink::selecting();
     let available = run.available();
@@ -492,7 +511,7 @@ fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ba
     for id in (0..run.nodes.len()).filter(|&id|reachable[id]) {
         let pos=point(id);
         ui.set_cursor_screen_pos([pos[0]-36.0,pos[1]-36.0]);
-        let enabled=ready&&selecting&&available.contains(&id);
+        let enabled=can_travel&&selecting&&available.contains(&id);
         let clicked=selecting&&ui.invisible_button(format!("node-{id}"),[72.0,72.0]);
         let pointed=if let Some(p)=pad_point {
             ui.is_item_visible()&&(0..2).all(|axis|p[axis]>=clip_min[axis]&&p[axis]<clip_max[axis]&&(p[axis]-pos[axis]).abs()<=36.0)
@@ -578,7 +597,7 @@ fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ba
     for (id, node) in run.nodes.iter().enumerate() {
         if !reachable[id] { continue; }
         let pos = point(id);
-        let enabled = ready && available.contains(&id);
+        let enabled = can_travel && available.contains(&id);
         let focus=emphasis[id];let shown=legend[id];
         let zoom=1.0+0.18*focus+0.45*shown-if pressed==Some(id){0.09}else{0.0};
         // 图例点亮的类型：金色光圈 + 脉冲环
@@ -662,7 +681,7 @@ fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ba
         }
     }
     drop(draw);
-    crate::map_ink::overlay(ui,erdtree_tower::map_drawing::Scope::of(run),[origin[0]+(content[0]-span)*0.5,origin[1]+70.0],[span,height-170.0],ready);
+    crate::map_ink::overlay(ui,erdtree_tower::map_drawing::Scope::of(run),[origin[0]+(content[0]-span)*0.5,origin[1]+70.0],[span,height-170.0],can_travel);
     ui.set_cursor_screen_pos(origin);
     ui.dummy([content[0], height]);
     ui.set_scroll_y(scroll);

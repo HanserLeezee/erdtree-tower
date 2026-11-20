@@ -52,6 +52,32 @@ static class CustomSpiritAssets {
         Console.WriteLine($"Verified {specs.Length} spirits x {SpiritLevelAssets.Max+1} levels x 3 text tables; {repaired} repairs; unrelated text preserved");
     }
     static int I(PARAM.Row row,string field)=>Convert.ToInt32(row[field].Value);
+    public static void PatchLocalizedText(string input,string output,string language,string templates) {
+        if(language is not ("zhocn" or "engus" or "zhotw")||Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate output and supported language required");
+        var specs=File.ReadAllLines(Path.Combine(input,"custom-spirit-definitions.tsv")).Select(l=>l.Split('|')).ToArray();
+        var values=JsonSerializer.Deserialize<string[]>(File.ReadAllText(templates))??throw new Exception("Missing spirit translations");
+        if(values.Length!=specs.Length*3||values.Any(string.IsNullOrWhiteSpace)||language=="engus"&&values.Any(v=>v.Any(c=>c>='\u3400'&&c<='\u9fff')))throw new Exception("Incomplete spirit translations");
+        string relative=$"msg/{language}/item_dlc02.msgbnd.dcx";
+        var text=BND4.Read(Path.Combine(input,relative));var before=text.Files.ToDictionary(f=>f.ID,f=>f.Bytes.ToArray());
+        var managed=specs.SelectMany(p=>Enumerable.Range(int.Parse(p[0]),40)).ToHashSet();
+        int changed=0;
+        var tables=new[]{"GoodsName","GoodsInfo","GoodsCaption"};
+        for(int table=0;table<tables.Length;table++) {
+            var file=text.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name).Split("_dlc")[0]==tables[table]&&FMG.Read(f.Bytes).Entries.Any(e=>e.ID==200000));
+            var fmg=FMG.Read(file.Bytes);var original=FMG.Read(before[file.ID]).Entries.Where(e=>!managed.Contains(e.ID)).ToDictionary(e=>e.ID,e=>e.Text);
+            fmg.Entries.RemoveAll(e=>managed.Contains(e.ID));
+            for(int family=0;family<specs.Length;family++)for(int level=0;level<40;level++) {
+                string value=values[family*3+table]+(table==0&&level>0?(language=="engus"?" +":"＋")+level:"");
+                fmg.Entries.Add(new FMG.Entry(int.Parse(specs[family][0])+level,value));changed++;
+            }
+            fmg.Entries.Sort((a,b)=>a.ID.CompareTo(b.ID));
+            if(fmg.Entries.Where(e=>!managed.Contains(e.ID)).Any(e=>!original.TryGetValue(e.ID,out var old)||old!=e.Text))throw new Exception("Unrelated text changed");
+            file.Bytes=fmg.Write();
+        }
+        var dest=Path.Combine(output,relative);Directory.CreateDirectory(Path.GetDirectoryName(dest)!);text.Write(dest);
+        foreach(var f in BND4.Read(dest).Files)if(!f.Bytes.SequenceEqual(text.Files.Single(x=>x.ID==f.ID).Bytes))throw new Exception("Localized spirit text roundtrip failed");
+        Console.WriteLine($"PASS: {specs.Length} spirits x40 levels x3 {language} text tables ({changed} entries)");
+    }
     static void Set(PARAM.Row row,string field,int value)=>row[field].Value=Convert.ChangeType(value,row[field].Value.GetType());
     public static void Patch(string input,string output) {
         if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging required");
@@ -89,6 +115,7 @@ static class CustomSpiritAssets {
             if(sourceMaps==0)throw new Exception($"Summon model c{s.Model:D4} not present in existing arena resources");
             // 已经生成过的骨灰（重跑或追加时）：参数保留原样，只核对名字
             if(index["NpcParam"].TryGetValue(npcId,out var existing)) {
+                if(s.Id==309000)SilverSphereAssets.ConfigureThink(index["NpcThinkParam"][thinkId]);
                 if(existing.Name!="Tower custom spirit "+s.Name||!index["EquipParamGoods"].ContainsKey(s.Id+SpiritLevelAssets.Max))throw new Exception($"Custom spirit ID collision: NpcParam/{npcId}");
                 audit.Add(new {s.Id,s.Model,s.Name,s.Tier,s.Hp,npcId,thinkId,levels=40,team=47,sourceMaps,liveTested=false});continue;
             }
@@ -101,6 +128,7 @@ static class CustomSpiritAssets {
             Add("NpcParam",npc);
             var think=new PARAM.Row(Row("NpcThinkParam",s.Think)){ID=thinkId,Name="Tower custom spirit AI "+s.Name};
             Set(think,"isBuddyAI",1);
+            if(s.Id==309000)SilverSphereAssets.ConfigureThink(think);
             foreach(var field in new[]{"maxBackhomeDist","backhomeDist","backhomeBattleDist"})Set(think,field,I(allyThink,field));
             Add("NpcThinkParam",think);
             for(int level=0;level<=SpiritLevelAssets.Max;level++) {
@@ -113,6 +141,7 @@ static class CustomSpiritAssets {
                 Set(buddy,"npcParamId_ridden",-1);Set(buddy,"npcThinkParamId_ridden",-1);Set(buddy,"npcPlayerInitParamId",-1);
                 // Enemy animations do not necessarily contain the native ashes' summon animation.
                 Set(buddy,"generateAnimId",-1);
+                if(s.Id==309000)SilverSphereAssets.ConfigureBuddy(buddy);
                 for(int n=0;n<=10;n++)Set(buddy,$"dopingSpEffect_lv{n}",scaling);
                 Add("BuddyParam",buddy);
                 var goods=new PARAM.Row(Row("EquipParamGoods",200000+Math.Min(level,10))){ID=s.Id+level,Name=$"Tower custom spirit {s.Name}+{level}"};

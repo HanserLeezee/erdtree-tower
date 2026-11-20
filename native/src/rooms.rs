@@ -83,6 +83,7 @@ pub struct Room {
     pub hunter:Option<super::map_guards::Guards>,
     hub: bool,
     event_host:usize,
+    dance_host:Option<(FieldInsHandle,usize,f32,f32)>,
     /// 三重宝匣不放引导 NPC：直接开箱，房间里只有三个箱子
     event_hostless:bool,
     patches_angry:bool,
@@ -148,14 +149,14 @@ impl Room {
         let progress=&run.regional_event;
         self.patches_angry|=progress.patches_angry;self.patches_dead|=progress.patches_dead;
         self.event_hostless=progress.mausoleum.is_none()&&!progress.trial&&progress.stormveil.is_none()&&!progress.descent&&!progress.recovery
-            &&!progress.scarabs&&!progress.locked&&run.gamble(self.node).filter(|_|solo).is_none()&&!run.altar(self.node);
+            &&!progress.scarabs&&!progress.locked&&run.event_draw(self.node)!=erdtree_tower::events::Draw::Dance&&run.gamble(self.node).filter(|_|solo).is_none()&&!run.altar(self.node);
         // 死亡重试回到已结束的事件：引导者不再提供任何选项
         if progress.settled {
             let menu=super::native_talk::EventMenu{trial:true,used:true,..Default::default()};
             for talk in &mut self.talks {talk.set_event_menu(menu);}
             return;
         }
-        let menu=super::native_talk::EventMenu{mausoleum_offer:progress.mausoleum.is_some(),gamble:run.gamble(self.node).filter(|_|solo).map(|g|g as u8),trial:progress.trial,chariot:progress.chariot,stormveil:progress.stormveil.is_some(),descent:progress.descent,recovery:progress.recovery,scarabs:progress.scarabs,locked:progress.locked,
+        let menu=super::native_talk::EventMenu{dance:run.event_draw(self.node)==erdtree_tower::events::Draw::Dance,mausoleum_offer:progress.mausoleum.is_some(),gamble:run.gamble(self.node).filter(|_|solo).map(|g|g as u8),trial:progress.trial,chariot:progress.chariot,stormveil:progress.stormveil.is_some(),descent:progress.descent,recovery:progress.recovery,scarabs:progress.scarabs,locked:progress.locked,
             altar:run.altar(self.node),used:progress.opened!=0||progress.stormveil.is_some_and(|s|s!=erdtree_tower::stormveil::Progress::Choosing),
             busy:progress.guards||self.scarabs.active()||party_busy||self.patches_angry||self.patches_dead,ready:self.scarabs.ready()||party_ready,attempts:progress.attempts};
         for talk in &mut self.talks {talk.set_event_menu(menu);}
@@ -229,7 +230,7 @@ impl Room {
             merchant_down:false,shop_refresh_pending:false,shop_counters:None,hunter:None,merchant_hit_logged:false,
             scarabs:Default::default(),
             chest_attempt:None,
-            hub,event_host:0,event_hostless:false,patches_angry:false,patches_dead:false,patches_hp:None,
+            hub,event_host:0,dance_host:None,event_hostless:false,patches_angry:false,patches_dead:false,patches_hp:None,
             node,
             kind,
             block,
@@ -446,12 +447,17 @@ impl Room {
             }
             self.view.message = "正在布置 NPC……".into();
         }
+        if !super::dance_ui::active(){self.restore_dance_host(world);self.dance_host=None;}
         for (index,&(handle, address)) in self.handles.iter().enumerate() {
             let chr = world
                 .chr_ins_by_handle_mut(&handle)
                 .filter(|c| std::ptr::from_ref(*c) as usize == address)
                 .ok_or("服务 NPC 已卸载")?;
             let merchant=self.kind==NodeKind::Shop&&index==0;
+            if self.kind==NodeKind::Event&&index==0&&super::dance_ui::active() {
+                self.dance_host.get_or_insert((handle,address,chr.base_transparency,chr.base_transparency_modifier));
+                chr.base_transparency=0.0;chr.base_transparency_modifier=0.0;
+            }
             let patches=self.patches_host()&&index==0;
             let vulnerable=merchant||patches;
             chr.team_type = if patches&&!self.patches_angry {26}else if vulnerable {6}else{0};
@@ -522,6 +528,7 @@ impl Room {
         ready_flag(self.kind) - 991
     }
     pub fn retire(&self, world: &mut WorldChrMan) {
+        self.restore_dance_host(world);
         if self.mausoleum {let _=super::native_talk::set_flag(45011859,false);}
         if let Some(hunter)=&self.hunter {hunter.retire();}
         self.scarabs.retire(world);
@@ -538,6 +545,13 @@ impl Room {
             {
                 chr.debug_flags.set_character_disabled(true);
             }
+        }
+    }
+    fn restore_dance_host(&self,world:&mut WorldChrMan){
+        if let Some((handle,address,alpha,modifier))=self.dance_host
+            &&let Some(chr)=world.chr_ins_by_handle_mut(&handle)
+            &&std::ptr::from_ref(chr) as usize==address&&chr.base_transparency==0.0&&chr.base_transparency_modifier==0.0 {
+            chr.base_transparency=alpha;chr.base_transparency_modifier=modifier;
         }
     }
     pub fn complete(&mut self, message: String) {

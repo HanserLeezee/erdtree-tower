@@ -1,6 +1,6 @@
 use serde::{Deserialize,Serialize};
 use crate::{party_roster::Roster,RuleResult};
-pub const VERSION:u32=100;
+pub const VERSION:u32=101;
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub enum Payload {
     Reconnect{session:u64,message:crate::party_reconnect::Message},

@@ -16,6 +16,7 @@ fn added_spirits_have_bounded_groups_and_matching_descriptions() {
     }
     assert_eq!(defs.iter().find(|d|d[0]=="308000").unwrap()[10],"3");
     assert_eq!(defs.iter().find(|d|d[0]=="304000").unwrap()[10],"1");
+    assert_eq!(defs.iter().find(|d|d[0]=="309000").unwrap()[10],"1");
 }
 #[test]
 fn all_custom_spirits_have_names_quality_and_forty_levels() {
@@ -41,12 +42,13 @@ fn all_custom_spirits_have_names_quality_and_forty_levels() {
 }
 
 #[test]
-fn custom_ashes_persist_and_can_roll_high_levels() {
+fn custom_ashes_persist_and_use_the_progress_cap() {
     let mut run=Run::new(42,Class::Confessor);run.spirit_peak=Some(39);
     for d in definitions() {run.claimed_items.push(0x40000000|d[0].parse::<u32>().unwrap()+39);}
     let loaded=Run::decode(&run.encode().unwrap()).unwrap();assert_eq!(loaded.claimed_items,run.claimed_items);
     for id in loaded.claimed_items {
-        let found:std::collections::HashSet<_>=(0..1000).map(|seed|rewards::random_spirit_level(id,seed,39)-rewards::spirit_base(id)).collect();
-        assert!(found.contains(&39));
+        for cap in [0,7,39] {
+            assert_eq!(rewards::capped_spirit_level(id,cap)-rewards::spirit_base(id),cap);
+        }
     }
 }

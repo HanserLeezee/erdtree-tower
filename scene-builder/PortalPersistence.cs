@@ -3,6 +3,7 @@ using SoulsFormats;
 static class PortalPersistence {
     public static void Apply(EMEVD.Event visual) {
         PersonalEvents.Verify(visual);
+        if(SceneReuseAssets.Armed(visual))return;
         var end=visual.Instructions.Last();
         if(end.Bank!=1000||end.ID!=4||end.ArgData.Length!=4||end.ArgData[0]>1)
             throw new Exception("Unexpected portal visual terminator");
@@ -19,7 +20,7 @@ static class PortalPersistence {
             var original=events.Write();
             var endings=visuals.ToDictionary(e=>e.ID,e=>e.Instructions.Last().ArgData[0]);
             foreach(var visual in visuals) {
-                if(visual.Instructions.Any(i=>i.Bank==2003&&i.ID==66||i.Bank==3&&i.ID==24))throw new Exception("Portal visual unexpectedly contains interaction logic");
+                if(visual.Instructions.Any(i=>i.Bank==2003&&i.ID==66&&BitConverter.ToUInt32(i.ArgData,4)!=SceneReuseAssets.Cleared||i.Bank==3&&i.ID==24))throw new Exception("Portal visual unexpectedly contains interaction logic");
                 Apply(visual);
             }
             var target=Path.Combine(output,"event",Path.GetFileName(path));Directory.CreateDirectory(Path.GetDirectoryName(target)!);events.Write(target);

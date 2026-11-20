@@ -223,8 +223,8 @@ window.HOYO_CONFIG = {
           {
             title: '启动',
             rows: [
-              { type: 'static', key: 'network', label: '联机环境', hint: '按游戏目录自动识别。外部补丁需单独手动安装或还原，启动器不替换游戏文件。', value: 'Steam' },
-              { type: 'select', key: 'loader', label: '加载器', hint: '专属联机由 ME3 加载，沿用现有存档与联机设置', value: 'ME3', options: ['ME3'] },
+              { type: 'static', key: 'network', label: '联机环境', value: 'Steam' },
+              { type: 'select', key: 'loader', label: '加载器', value: 'ME3', options: ['ME3', 'YAFSML'] },
               { type: 'static', label: '游戏目录', key: 'gameDir', value: '（未设置）' },
               { type: 'buttons', label: '目录', items: [{ text: '选择游戏目录…', action: 'chooseGameDir' }] },
             ],
@@ -257,7 +257,7 @@ window.HOYO_CONFIG = {
             title: '按键（下次启动游戏生效）',
             rows: [
               { type: 'select', key: 'key.settle', label: '快速结算', hint: '暂离并结束本局', value: 'Home', options: KEY_CHOICES },
-              { type: 'select', key: 'key.overlay', label: '显示/隐藏爬塔界面', value: 'Insert', options: KEY_CHOICES },
+              { type: 'select', key: 'key.map', label: '开关爬塔地图', value: 'F3', options: KEY_CHOICES },
               { type: 'select', key: 'key.archive', label: '旅程档案', value: 'J', options: KEY_CHOICES },
               { type: 'select', key: 'key.build', label: '构筑面板（地图界面）', value: 'C', options: KEY_CHOICES },
               { type: 'select', key: 'key.debug', label: '调试菜单', value: 'Delete', options: KEY_CHOICES },
@@ -303,7 +303,6 @@ window.HOYO_CONFIG = {
           {
             title: '联机设置（保存在包内 config，下次启动生效）',
             rows: [
-              { type: 'static', label: '加入队伍', value: '通过联机大厅快速加入、选择房间或输入好友分享的房间码，无需设置连接密码' },
               { type: 'static', label: '死亡惩罚', value: '关闭（爬塔固定）' },
             ],
           },
@@ -344,7 +343,10 @@ window.HOYO_CONFIG = {
       },
       {
         key: 'troubleshoot', name: '问题修复',
-        groups: [{ rows: [{ type: 'troubleshoot' }] }],
+        groups: [{ title: '地图卡档恢复', rows: [
+          { type: 'buttons', label: '旅程恢复', hint: '退出游戏后备份角色记录，将选地图阶段转为暂存；下次先单独返回大赐福继续旅程。',
+            items: [{ text: '修复地图卡档…', action: 'repairMapSave' }] },
+        ] }, { rows: [{ type: 'troubleshoot' }] }],
       },
       {
         key: 'general', name: '常规',

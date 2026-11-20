@@ -88,6 +88,7 @@ static class PortalReveal {
     }
 
     public static void Apply(EMEVD events,uint portal) {
+        SceneReuseAssets.Strip(Visual(events,portal));
         ClearReveal(events,portal);
         var visual=Visual(events,portal);var list=visual.Instructions;
         int at=list.FindIndex(i=>Anchor(i,portal));
@@ -112,6 +113,7 @@ static class PortalReveal {
         list.InsertRange(list.FirstOrDefault() is {Bank:2000,ID:2}?1:0,reset);
         events.Events.Single(e=>e.ID==0).Instructions.InsertRange(0,reset.Where(i=>i.Bank==2005));
         PortalPersistence.Apply(visual);
+        SceneReuseAssets.Apply(events,portal);
     }
 
     public static void Verify(MSBE map,EMEVD events,uint portal,string key) {
@@ -132,7 +134,7 @@ static class PortalReveal {
             if(carrier.ModelName!=(id==RuneEntity(portal)?RuneModel:CarrierModel)||carrier.Scale!=scale||carrier.Position!=position||carrier.Rotation!=rotation)throw new Exception("Rune/flow carrier mismatch");
         }
         if(map.Regions.SFX.Any(r=>Region(r.EntityID,portal)))throw new Exception("Portal ground light remains");
-        var visual=Visual(events,portal);PersonalEvents.Verify(visual);var list=visual.Instructions;
+        var visual=Visual(events,portal);PersonalEvents.Verify(visual);var list=SceneReuseAssets.BaseInstructions(visual);
         if(list.Last() is not {Bank:1000,ID:4}||list.Last().ArgData[0]!=0)throw new Exception("Portal visual must remain after interaction until map reload");
         int glow=list.FindIndex(i=>Anchor(i,portal));
         if(glow<3||!Is(list[glow-1],2005,3,portal))throw new Exception("Portal glow must follow carrier activation");
@@ -169,7 +171,7 @@ static class PortalReveal {
         visual.Instructions.Add(new(2006,4,new object[]{portal,200,806870}));
         foreach(uint flag in new uint[]{45020970,45020993})visual.Instructions.Add(new(3,0,new object[]{(sbyte)0,(byte)0,(byte)0,flag}));
         visual.Instructions.Add(new(1000,4,new object[]{(byte)1}));events.Events.Add(visual);
-        string[] Guards()=>visual.Instructions.Where(i=>i.Bank<1001&&!(i.Bank==1000&&i.ID==4)).Select(i=>$"{i.Bank}/{i.ID}/"+Convert.ToHexString(i.ArgData)).ToArray();
+        string[] Guards()=>SceneReuseAssets.BaseInstructions(visual).Where(i=>i.Bank<1001&&!(i.Bank==1000&&i.ID==4)).Select(i=>$"{i.Bank}/{i.ID}/"+Convert.ToHexString(i.ArgData)).ToArray();
         var guards=Guards();
         var map=new MSBE();map.Models.Assets.Add(new MSBE.Model.Asset{Name="AEG099_510"});
         map.Parts.Assets.Add(new MSBE.Part.Asset{Name="portal",ModelName="AEG099_510",EntityID=portal,Position=new(1,2,3)});
@@ -183,7 +185,7 @@ static class PortalReveal {
         if(visual.Instructions.Any(i=>i.Bank==2006&&i.ID==4&&new[]{PortalRuneFfx.Border,PortalRuneFfx.Rune}.Contains(BitConverter.ToInt32(i.ArgData,8))))throw new Exception("Crash-prone rune portal effects are still callable");
         if(!guards.SequenceEqual(Guards()))throw new Exception("Victory gates changed");
         var end=visual.Instructions.Last();
-        if(end.Bank!=1000||end.ID!=4||end.ArgData[0]!=0)throw new Exception("Consumed portal must stay visible until the scene reloads");
+        if(end.Bank!=1000||end.ID!=4||end.ArgData[0]!=1||!SceneReuseAssets.Armed(visual))throw new Exception("Consumed portal must wait for explicit reset and rearm");
         var first=events.Write();Apply(events,portal);if(!first.SequenceEqual(events.Write()))throw new Exception("Reveal generation is not idempotent");
         Console.WriteLine("Portal reveal: flags, idempotency, visibility, interrupted reset and binary roundtrip passed");
     }

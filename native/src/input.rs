@@ -53,12 +53,12 @@ impl Default for ActionGuard {
     fn default()->Self {Self{clock:std::time::Instant::now(),window:ActionWindow::default(),saved:None}}
 }
 impl ActionGuard {
-    pub fn update(&mut self,chr:&mut eldenring::cs::ChrIns,active:bool) {
+    pub fn update(&mut self,chr:&mut eldenring::cs::ChrIns,active:bool,dancing:bool) {
         let owner=std::ptr::from_ref(chr) as usize;
         if self.saved.is_some_and(|(address,handle,_,_)|address!=owner||handle!=chr.field_ins_handle) {self.saved=None;}
         if self.window.blocked(self.clock.elapsed(),active) {
             self.saved.get_or_insert((owner,chr.field_ins_handle,chr.debug_flags.disabled_secondary_actions(),chr.debug_flags.disabled_movement()));
-            chr.debug_flags.set_disabled_secondary_actions(true);
+            chr.debug_flags.set_disabled_secondary_actions(block_secondary_actions(dancing,self.saved.as_ref().is_some_and(|s|s.2)));
             chr.debug_flags.set_disabled_movement(true);
         } else if let Some((_,_,actions,movement))=self.saved.take() {
             chr.debug_flags.set_disabled_secondary_actions(actions);
@@ -66,6 +66,8 @@ impl ActionGuard {
         }
     }
 }
+
+fn block_secondary_actions(dancing:bool,previous:bool)->bool {!dancing||previous}
 
 pub fn capture_route(visible: bool, player_present: bool, view: &crate::runtime::View) -> bool {
     if crate::debug_menu::open(){return player_present;}
@@ -86,6 +88,12 @@ pub fn capture_route(visible: bool, player_present: bool, view: &crate::runtime:
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dance_releases_only_the_menu_action_lock() {
+        assert!(!block_secondary_actions(true,false));
+        assert!(block_secondary_actions(true,true));
+        assert!(block_secondary_actions(false,false));
+    }
     #[test]
     fn shared_guard_combat_releases_stale_overlay_and_dialog_locks() {
         for overlay in [false,true] {for dialog in [false,true] {

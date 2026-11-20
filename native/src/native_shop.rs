@@ -5,7 +5,7 @@ use eldenring::cs::{
 use erdtree_tower::{Blessing, BlessingKind, NodeKind, Run};
 use fromsoftware_shared::FromStatic;
 pub const GOODS: u32 = 9500000;
-pub const STOCK_COUNT: u32 = 43;
+pub const STOCK_COUNT: u32 = erdtree_tower::merchant::BASE_STOCK as u32;
 fn base_stock(class:erdtree_tower::Class)->usize {STOCK_COUNT as usize-usize::from(class==erdtree_tower::Class::Confessor)}
 pub const MAX_STOCK:u32=erdtree_tower::merchant::MAX_STOCK as u32;
 #[test]
@@ -18,7 +18,7 @@ fn merchant_bells_append_five_matching_items_and_keep_base_stock() {
         assert_eq!(items,stock(&run));
     }
     let mut run=base;run.bells.counts=[22,21,21];
-    assert_eq!(stock(&run).len(),MAX_STOCK as usize);
+    assert_eq!(stock(&run).len(),STOCK_COUNT as usize+erdtree_tower::merchant::MAX_BELLS*5);
     let flags:Vec<_>=(0..MAX_STOCK).flat_map(|i|stock_flag(i)..stock_flag(i)+8).collect();
     assert_eq!(flags.len(),flags.iter().collect::<std::collections::HashSet<_>>().len());
     for slot in STOCK_COUNT..MAX_STOCK {
@@ -112,7 +112,7 @@ fn refresh_special_prices(stock:&mut [Stock],run:&Run) {
             assert_eq!(cap,u32::from(peak),"new runs: the current ash level, no +1");
             for item in stock_capped(&run,cap).iter().filter(|s|s.kind==3) {
                 let id=0x40000000|item.id as u32;let base=spirit_base(id);
-                if base!=id||erdtree_tower::rewards::lookup(id).is_some_and(|i|i.kind==erdtree_tower::rewards::ItemKind::Spirit) {assert!(id-base<=cap,"{id} over +{cap}");}
+                if base!=id||erdtree_tower::rewards::lookup(id).is_some_and(|i|i.kind==erdtree_tower::rewards::ItemKind::Spirit) {assert_eq!(id-base,cap);}
             }
         }}
     }
@@ -180,9 +180,19 @@ fn owned_whetblades_are_hidden_without_refilling_other_saved_stock() {
 /// 特殊弩箭：雷电、调香师、黑钥、倒刺；特殊大弩箭：雷电、爆炸
 const SPECIAL_BOLTS:[i32;4]=[52010000,52020000,52030000,52040000];
 const SPECIAL_GREATBOLTS:[i32;2]=[53010000,53020000];
-fn withdrawn(item:&Stock)->bool {item.kind==3&&matches!(item.id,1150|1160|1170|1180|1190|1200)}
+fn withdrawn(item:&Stock)->bool {item.kind==3&&matches!(item.id,910|920|930|950|960|1150|1160|1170|1180|1190|1200)}
 fn withdraw_goods(stock:&mut [Stock]) {
     for item in stock.iter_mut().filter(|item|withdrawn(item)) {item.quantity=0;}
+}
+#[test]
+fn retired_boluses_are_withdrawn_without_restocking_saved_goods() {
+    let mut saved:Vec<_>=[900,910,920,930,940,950,960,300].into_iter().map(|id|Stock{kind:3,id,price:123,quantity:2}).collect();
+    saved[0].quantity=0;
+    let ids:Vec<_>=saved.iter().map(|s|s.id).collect();
+    withdraw_goods(&mut saved);
+    assert_eq!(saved.iter().map(|s|s.quantity).collect::<Vec<_>>(),[0,0,0,0,2,0,0,2]);
+    assert_eq!(saved.iter().map(|s|s.id).collect::<Vec<_>>(),ids);
+    assert!(saved.iter().all(|s|s.price==123));
 }
 #[test]
 fn livers_and_fowl_feet_cannot_be_bought_in_new_or_saved_stock() {
@@ -394,7 +404,7 @@ fn stock_capped(run:&Run,spirit_cap:u32)->Vec<Stock> {
         result.extend(select(pool,1,run.seed,visit));
     }
     for item in &mut result {
-        if item.kind==3 {item.id=(erdtree_tower::rewards::random_spirit_level(0x40000000|item.id as u32,run.reward_seed()^visit as u64,spirit_cap)&0x0fffffff) as i32;}
+        if item.kind==3 {item.id=(erdtree_tower::rewards::capped_spirit_level(0x40000000|item.id as u32,spirit_cap)&0x0fffffff) as i32;}
         if item.kind==3&&erdtree_tower::rewards::lookup(0x40000000|item.id as u32).is_some_and(|i|i.kind==ItemKind::Spirit) {item.price=spirit_price(0x40000000|item.id as u32);}
     }
     result.push(Stock{kind:3,id:8185,price:5000,quantity:-1});
@@ -411,7 +421,7 @@ fn stock_capped(run:&Run,spirit_cap:u32)->Vec<Stock> {
     let arrows=[50010000,50090000,50100000,50200000];
     let arrow=arrows[hash(run.reward_seed() ^ visit as u64 ^ 0xa440) as usize%arrows.len()];
     result.push(Stock{kind:0,id:arrow,price:60,quantity:20});
-    // 抗性药七种；原来的四种肝脏干已下架，这四格改卖弩箭：普通弩箭、随机一种特殊弩箭、大弩箭、随机一种特殊大弩箭
+    // 苔药只保留中毒与腐败；原肝脏干栏位继续出售弩箭。
     result.extend(extras("resistance").into_iter().filter(|item|!withdrawn(item)));
     let pick=|pool:&[i32],salt:u64|pool[hash(run.reward_seed()^visit as u64^salt) as usize%pool.len()];
     result.push(Stock{kind:0,id:52000000,price:20,quantity:100});
@@ -827,7 +837,8 @@ mod tests {
     fn every_shop_keeps_ten_boluses_and_no_livers() {
         for class in erdtree_tower::Class::PLAYABLE {for seed in 0..32 {
             let rows=super::stock(&erdtree_tower::Run::new(seed,class));
-            for id in [900,910,920,930,940,950,960] {
+            assert!(!rows.iter().any(|s|s.kind==3&&matches!(s.id,910|920|930|950|960)));
+            for id in [900,940] {
                 let matches:Vec<_>=rows.iter().filter(|s|s.kind==3&&s.id==id).collect();
                 assert_eq!(matches.len(),1,"missing or duplicate medicine {id}");
                 assert_eq!((matches[0].quantity,matches[0].price),(10,300));
@@ -908,7 +919,7 @@ mod tests {
                 let pots:Vec<_>=rows.iter().filter(|s|extras("pot").iter().any(|p|p.kind==s.kind&&p.id==s.id)).collect();
                 assert_eq!(pots.len(),2);
                 assert_ne!(pots[0].id,pots[1].id);
-                assert!(pots.iter().all(|s|s.quantity==3&&s.price==350));
+                assert!(pots.iter().all(|s|s.quantity==10&&s.price==350));
                 let catalyst=match class {Class::Astrologer=>Some("staff"),Class::Prophet|Class::Confessor=>Some("seal"),_=>None};
                 if let Some(group)=catalyst {
                     assert_eq!(rows.iter().filter(|s|extras(group).iter().any(|p|p.kind==s.kind&&p.id as u32==erdtree_tower::affixes::base(s.id as u32))).count(),2);
@@ -920,7 +931,7 @@ mod tests {
         assert_eq!(flags.iter().collect::<std::collections::HashSet<_>>().len(),flags.len());
     }
     #[test]
-    fn shop_spirits_cover_all_levels_in_every_act_with_quality_and_level_prices() {
+    fn shop_spirits_use_the_cap_in_every_act_with_quality_and_level_prices() {
         use erdtree_tower::rewards::{lookup,ItemKind};
         for act in 1..=3 {
             let mut levels=std::collections::BTreeSet::new();
@@ -935,7 +946,7 @@ mod tests {
                     assert_eq!(item.price,base+base*level/10);assert!((0..=39).contains(&level));levels.insert(level);
                 }
             }
-            assert_eq!(levels,(0..=39).collect());
+            assert_eq!(levels,[39].into_iter().collect());
         }
     }
     #[test]

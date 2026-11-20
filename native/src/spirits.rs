@@ -3,6 +3,9 @@ use fromsoftware_shared::FromStatic;
 use std::{ffi::c_void,sync::{Mutex,atomic::{AtomicBool,AtomicUsize,Ordering}}};
 use hudhook::mh::{MhHook,MH_EnableHook};
 mod seamless_hook;
+mod dismissal;
+mod fade;
+pub(crate) mod landing;
 pub(crate) mod refund;
 
 static ACTIVE:AtomicBool=AtomicBool::new(false);
@@ -112,6 +115,8 @@ unsafe extern "C" fn use_state(manager:*mut u8,goods:i32)->i32 {
 unsafe extern "C" fn clear_frame(manager:*mut u8) {
     let original:unsafe extern "C" fn(*mut u8)=unsafe {std::mem::transmute(CLEAR.load(Ordering::Acquire))};
     unsafe {original(manager);}
+    unsafe {fade::tick(manager);}
+    if REPLACE_READY.load(Ordering::Acquire) {unsafe {dismissal::tick(manager,REPLACE_ORIGINAL.load(Ordering::Acquire));}}
     if !ACTIVE.load(Ordering::Acquire)||BOUND.load(Ordering::Acquire)!=manager as usize {return;}
     // 双生的灵唤铃：第一只还在场时，让骨灰在这一阶段的使用检查里可用
     if TWIN_ARMED.load(Ordering::Acquire) {unsafe {(*manager.cast::<eldenring::cs::SummonBuddyManager>()).player_has_alive_summon=false;}}

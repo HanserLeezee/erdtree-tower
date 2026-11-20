@@ -9,6 +9,11 @@ spec.loader.exec_module(resources)
 
 
 class ResourceFilter(unittest.TestCase):
+    def test_only_selected_dance_tracks_ship(self):
+        for name in ('dance/song1.wav', 'dance/song2.wav'):
+            self.assertTrue(resources.include_scene_asset(name))
+        self.assertFalse(resources.include_scene_asset('dance/private-recording.wav'))
+
     def test_unknown_and_runtime_resources_remain(self):
         for name in ('theme-art/loading1.rgba', 'class-art/classes.rgba', 'law-art/icons.rgba',
                      'law-art/icons-line.rgba', 'fonts/ui-sans-glyphs.txt', 'fonts/ui-glyphs.txt',

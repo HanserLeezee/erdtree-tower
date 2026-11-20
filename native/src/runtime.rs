@@ -402,6 +402,8 @@ struct Runtime {
     ash_tracking:bool,
     ash_before:Vec<(u32,u32)>,
     ash_refunds:Vec<super::spirits::refund::Refund>,
+    ash_revival_refund:bool,
+    combat_scene:Option<(u64,u8,i32,usize)>,
     larval_retry: Option<Instant>,
     /// 本次游戏里已经为第几幕发过泪滴幼体：计数万一读不到，也只发一个，不会每 2 秒再发
     larval_sent: Option<(u64,u8)>,
@@ -489,6 +491,8 @@ fn fresh_runtime()->Runtime {
         ember_notice:Default::default(),
         ash_before:vec![],
         ash_refunds:vec![],
+        ash_revival_refund:false,
+        combat_scene:None,
         larval_retry: None,
         larval_sent: None,
         deepen_retry: None,
@@ -768,7 +772,7 @@ fn apply_party_order(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan
             if let Some(run)=state.view.run.as_mut(){run.end_on_death();record_checked(run)?;}
             Ok(())
         },
-        Order::Stop(error)=>{stop_map_combat(state,world);Err(error)},
+        Order::Stop(error)=>{super::dance_ui::cancel();stop_map_combat(state,world);Err(error)},
         _=>Ok(()),
     }
 }
@@ -834,7 +838,7 @@ fn sync_action_guard(state:&mut Runtime,world:&mut WorldChrMan) {
         state.room.as_ref().is_some_and(|r|r.dialog_active())
         || state.attendant.as_ref().is_some_and(|r|r.dialog_active())
         || state.hub.as_ref().is_some_and(|h|h.dialog_active()));
-    if let Some(player)=world.main_player.as_mut() {state.action_guard.update(&mut player.chr_ins,menu_active);}
+    if let Some(player)=world.main_player.as_mut() {state.action_guard.update(&mut player.chr_ins,menu_active,super::dance_ui::active());}
 }
 fn poll_blocked_hub(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan) {
     sync_action_guard(state,world);
@@ -856,12 +860,12 @@ fn party_block_reason(state:&Runtime,world:&WorldChrMan)->String {
     else {"正在检查你的游戏文件和联机设置，稍等几秒；检查通过后会和队友确认。".into()};
     player_names(reason,world)
 }
-/// 提示里的 Steam ID 换成角色名（「名字」）；不在附近、读不到名字的显示为「玩家（尾号 1234）」
+/// 提示优先显示 Steam 昵称，未读到的玩家保留尾号供区分。
 fn player_names(text:String,world:&WorldChrMan)->String {
     let mut text=text;
     for player in world.player_chr_set.characters() {
         let id=player.player_session_holder.player_network_session.remote_identity;
-        let name=unsafe {player.player_game_data.as_ref()}.character_name();
+        let name=super::seamless::player_name(id).unwrap_or_default();
         if id!=0&&!name.trim().is_empty() {text=text.replace(&id.to_string(),&format!("「{}」",name.trim()));}
     }
     // 剩下的 17 位 Steam ID（7656 开头）
@@ -1610,10 +1614,7 @@ fn emergency_end(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->R
 }
 pub fn tick() {
     if let Ok(world)=unsafe {WorldChrMan::instance_mut()}{super::frost_shackle::begin_frame(world);}
-    // 癫火舞会：界面判定完一句后交来的舞步，写进本机角色「下一帧强制播放的动画」
-    if let Some(anim)=super::dance_ui::take_move()&&let Ok(world)=unsafe {WorldChrMan::instance_mut()}&&let Some(player)=world.main_player.as_mut() {
-        player.chr_ins.modules.event.request_animation_id=anim;super::log(format!("DANCE move anim={anim}"));
-    }
+    super::dance_motion::tick();
     if let Ok(mut state)=STATE.try_lock(){sync_map(&mut state);}
     tick_locked();
     if let Ok(mut state)=STATE.try_lock() {
@@ -1685,6 +1686,7 @@ fn tick_locked() {
     }
     clear_ailments_under_overlay(&mut state,world,game);
     super::debug_menu::tick_enemies(world);
+    super::spirits::landing::tick(world,game.warp_requested);
     super::spawn_guard::tick(world,game);
     if state.view.resource_alert.is_none()&&let Some(bad)=resource_check().filter(|bad|!bad.is_empty()) {
         state.view.resource_alert=Some((1,bad.clone()));
@@ -1967,8 +1969,9 @@ fn tick_locked() {
         let steady=state.pending.is_none()&&!state.view.travelling&&state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Map|Phase::Node{..}));
         if due&&steady&&let Some(player)=world.main_player.as_ref()&&let Ok(params)=unsafe {SoloParamRepository::instance()} {
             let live=super::smith::effective_peak(unsafe {player.player_game_data.as_ref()},params).clamp(0,i32::from(erdtree_tower::contracts::MAX_PEAK)) as u8;
-            if let Some(run)=state.view.run.as_ref().filter(|r|live>r.weapon_peak.unwrap_or(0)||live/5>r.spirit_peak.unwrap_or(0)) {
-                let mut next=run.clone();next.weapon_peak=Some(live);next.spirit_peak=Some(next.spirit_peak.unwrap_or(0).max(live/5));
+            let spirit=(live/5).min(erdtree_tower::rewards::SPIRIT_MAX);
+            if let Some(run)=state.view.run.as_ref().filter(|r|live>r.weapon_peak.unwrap_or(0)||spirit>r.spirit_peak.unwrap_or(0)) {
+                let mut next=run.clone();next.weapon_peak=Some(live);next.spirit_peak=Some(next.spirit_peak.unwrap_or(0).max(spirit));
                 match record_checked(&next) {
                     Ok(())=>{super::log(format!("Weapon peak recorded: {recorded} -> {live}"));super::smith::set_run_peak(live);state.view.run=Some(next);},
                     Err(error)=>super::log_repeating(format!("Weapon peak not recorded: {error}")),
@@ -2111,7 +2114,13 @@ fn tick_locked() {
     let service_preparing=state.room.as_ref().is_some_and(|room|!room.view.loading)
         &&state.view.run.as_ref().is_some_and(|run|!matches!(run.phase,Phase::Dead|Phase::Won));
     let ash_context=ash_fighting||service_preparing;
-    if ash_tracking_start(ash_context,state.ash_tracking&&super::spirits::refund::tracking(),
+    let ash_owner_alive=player.chr_ins.modules.data.hp>0&&!player.chr_ins.chr_flags1c5.death_flag();
+    let ash_journey=state.view.run.as_ref().is_some_and(|r|!matches!(r.phase,Phase::Dead|Phase::Won));
+    if ash_owner_alive&&ash_journey&&state.ash_guard.is_none() {
+        let plan=super::spirits::refund::recover(state.view.run.as_ref().is_some_and(|r|r.summoner()));
+        if !plan.is_empty(){state.ash_refunds=plan;state.ash_guard=Some(Instant::now());state.ash_revival_refund=true;}
+    }
+    if ash_tracking_start(ash_context&&ash_owner_alive,state.ash_tracking&&super::spirits::refund::tracking(),
         state.ash_guard.is_some(),world.summon_buddy_manager.disappear_requested) {
         match super::loadout::ash_snapshot(player_data) {
             Ok(before)=>{
@@ -2126,11 +2135,11 @@ fn tick_locked() {
             },
             Err(error)=>super::log_repeating(format!("Spirit ash snapshot failed: {error}")),
         }
-    } else if !ash_context {
+    } else if !ash_context&&(ash_owner_alive||!ash_journey) {
         if state.ash_tracking {super::spirits::refund::close();}
         state.ash_tracking=false;
     }
-    if ash_context {super::spirits::refund::observe(world);}
+    if ash_context||(!ash_owner_alive&&ash_journey&&state.ash_tracking) {super::spirits::refund::observe(world);}
     // 双生的灵唤铃：第二只的召唤被原版拒绝时，补回白扣的骨灰（扣除可能稍晚于请求，5 秒内重试）
     if let Some(id)=super::spirits::take_twin_refund() {state.twin_refund=Some((id,Instant::now()));}
     if let Some((id,since))=state.twin_refund {
@@ -2141,12 +2150,12 @@ fn tick_locked() {
         }
     }
     // 已冻结的返还不因快速进入下一场而丢失；战斗中暂缓发放。
-    let ash_ready=ash_refund_ready(ash_fighting.then_some(false),world.summon_buddy_manager.player_has_alive_summon,&mut state.ash_guard);
+    let ash_ready=ash_owner_alive&&(state.ash_revival_refund||ash_refund_ready(ash_fighting.then_some(false),world.summon_buddy_manager.player_has_alive_summon,&mut state.ash_guard));
     if ash_ready && state.ashes_checked.is_none_or(|t|t.elapsed()>=Duration::from_millis(500)) {
         state.ashes_checked=Some(Instant::now());
         if state.ash_guard.is_some() {
             match super::spirits::refund::pump(player_data,&mut state.ash_refunds) {
-                Ok(true)=>{super::log(format!("ASH_GROUP all refunds confirmed: {:?}",state.ash_refunds));state.ash_guard=None;},
+                Ok(true)=>{super::log(format!("ASH_GROUP all refunds confirmed: {:?}",state.ash_refunds));state.ash_guard=None;state.ash_revival_refund=false;},
                 Ok(false)=>{},
                 Err(error)=>super::log_repeating(format!("Spirit ash refund failed: {error}")),
             }
@@ -2167,6 +2176,7 @@ fn tick_locked() {
         }
     }
     let dead=player.chr_ins.modules.data.hp<=0||player.chr_ins.chr_flags1c5.death_flag();
+    if dead||game.warp_requested {state.combat_scene=None;}
     if dead&&state.party.is_none()&&state.hub.as_ref().is_some_and(|h|!h.active) {
         let run=state.reward_wait.as_ref().map(|(_,run)|run)
             .or_else(||state.pending.as_ref().filter(|p|!p.completed).map(|p|&p.next_run)).or(state.view.run.as_ref());
@@ -2514,12 +2524,34 @@ fn tick_locked() {
             && player.chr_ins.modules.physics.standing_on_solid_ground
             && !player.chr_ins.modules.physics.is_falling
             && !player.chr_ins.chr_flags1c5.is_invincible();
-        if arrived&&grounded {let _=super::native_talk::set_flag(45007992,true);}
+        if game.warp_requested||block!=arena.block {
+            travel.reused_scene=false;
+            let _=super::native_talk::set_flag(super::travel::RESET_REQUEST,false);
+        }
+        if travel.reused_scene&&!travel.reuse_ready {
+            let at_entry=super::arenas::combat_arrival(arena.block).is_some_and(|p|
+                (player.block_position.x-p[0]).hypot(player.block_position.z-p[2])<2.0&&(player.block_position.y-p[1]).abs()<2.0);
+            if !at_entry||!grounded||!super::native_talk::flag(super::travel::RESET_CLEARED).unwrap_or(false) {
+                if started.elapsed()>Duration::from_secs(10) {
+                    let _=super::native_talk::set_flag(super::travel::RESET_REQUEST,false);
+                    let node=travel.node;*travel=super::travel::Travel::new(node);*started=Instant::now();
+                    game.move_map_target=BlockId::from(arena.block);game.initial_area_entity_id=arena.combat_entry();game.warp_requested=true;
+                    super::log("TRAVEL_REUSE reset timed out; falling back to map reload");
+                    report(&mut state,"场地重置未完成，正在重新加载。");
+                }else{report(&mut state,"正在返回出生点并清理上一场传送门……");}
+                return;
+            }
+            travel.reuse_ready=true;
+            let _=super::native_talk::set_flag(super::travel::RESET_REQUEST,false);
+            let _=super::native_talk::set_flag(45007993,true);
+            super::log(format!("TRAVEL_REUSE reset confirmed block={:08x}; player at entry and portal cleared",arena.block));
+        }
+        if arrived&&grounded&&!travel.reused_scene {let _=super::native_talk::set_flag(45007992,true);}
         // 龙王平台：本机已落地并站进中心圈，就当作已落位、已进圈（不等地图事件，联机队员不再等房主进圈）
         let inside=arrived&&grounded&&arena.inside_circle([player.block_position.x,player.block_position.y,player.block_position.z]);
-        let placed=inside||super::native_talk::flag(45007993).unwrap_or(false);
+        let placed=travel.reused_scene||inside||super::native_talk::flag(45007993).unwrap_or(false);
         let crossed=inside||super::native_talk::flag(45007991).unwrap_or(false);
-        let progress = if arena.uses_circle(){travel.poll_circle(started.elapsed(),arrived&&placed,grounded,crossed)}else{travel.poll_fog(started.elapsed(), arrived&&placed, grounded,crossed)};
+        let progress=travel.poll_entry(started.elapsed(),arrived,grounded,placed,crossed,arena.uses_circle());
         if arrived&&placed&&!travel.resources_restored {
             let (_,_,saved_hp,saved_fp)=state.travel.as_ref().unwrap();
             if let Some(player)=world.main_player.as_mut() {
@@ -3323,13 +3355,13 @@ fn member_held(delays:&mut Option<MemberSpawnGaps>,key:(u64,u64,u8,usize),world:
             .map(|chr|(chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag(),chr.modules.data.hp,chr.modules.data.max_hp))
     }).collect();
     (0..roster.len()).map(|i|{
-        let earlier:Vec<_>=(0..i).filter(|&j|super::enemies::elite_combatant(&roster[j])).map(|j|match state[j] {
+        let earlier:Vec<_>=(0..i).filter(|&j|super::enemies::paced_combatant(&roster[j])).map(|j|match state[j] {
             Some((true,_,_))=>(Spawn::Victory,None),
             Some((false,hp,max))=>(Spawn::Waiting,Some((hp,max))),
             None=>(Spawn::Waiting,None),
         }).collect();
         let previous:Vec<_>=state[..i].iter().map(|s|if matches!(s,Some((true,_,_))){Spawn::Victory}else{Spawn::Waiting}).collect();
-        let held=super::enemies::elite_combatant(&roster[i])&&pacing.waits(&earlier);
+        let held=super::enemies::paced_combatant(&roster[i])&&pacing.waits(&earlier);
         let eligible=erdtree_tower::encounter::may_spawn_paced(true,monster,held,&roles,i,&previous);
         !gaps[i].allows(now,eligible)
     }).collect()
@@ -3970,6 +4002,51 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
         set_flag(45010942,false)?;set_flag(45010995,true)?;
         room.view.message="是男人就下一百层".into();return Ok(());
     }
+    if run.event_draw(room.node)==erdtree_tower::events::Draw::Dance {
+        set_flag(45010965,false)?;set_flag(45010960,false)?;
+        set_flag(45010941,true)?;set_flag(45010940,true)?;
+        let party_exit=state.party.as_ref().is_none_or(|p|!p.event.dance_preparing||p.event.dance_complete);
+        set_flag(45010942,false)?;set_flag(45010995,!super::dance_ui::active()&&party_exit)?;
+        let key=(run.seed,run.act,room.node);
+        if let Some(link)=state.party.as_mut(){
+            let report=link.event.dance.get_or_insert_with(Default::default);
+            if link.event.dance_preparing{let (fingerprint,failed)=super::dance_ui::prepared();report.fingerprint=fingerprint.filter(|_|world.main_player.as_ref().is_some_and(|p|p.chr_ins.modules.physics.standing_on_solid_ground));report.failed=failed;}
+            if let Some((song,players))=link.event.dance_prepare.clone(){
+                let slot=players.iter().position(|p|*p==link.config.player).ok_or("舞台名单缺少本机玩家")?;
+                super::dance_stage::place(world,slot,players.len())?;
+                let mut next=run.clone();next.begin_dance(song as usize)?;record_checked(&next)?;
+                link.event.dance_prepare=None;link.event.dance=Some(Default::default());room.suspend_dialogues()?;
+                state.view.run=Some(next);super::dance_ui::request_party_event(key,song as usize);
+                room.view.message="舞会：等待全员加载音乐，随后统一倒计时。".into();return Ok(());
+            }
+        }
+        if let Some((result_key,grade))=super::dance_ui::take_result()&&result_key==key {
+            let mut next=run.clone();
+            let player=world.main_player.as_mut().ok_or("角色尚未加载")?;
+            next.gold=unsafe {player.player_game_data.as_ref()}.rune_count;
+            let reward=next.finish_dance(if player.chr_ins.modules.data.hp>0{grade}else{None})?;
+            record_checked(&next)?;
+            unsafe {player.player_game_data.as_mut()}.rune_count=next.gold;state.view.runes=next.gold;
+            state.view.run=Some(next);
+            if let Some(link)=state.party.as_mut(){link.event.dance.get_or_insert_with(Default::default).finished=true;}
+            room.view.message=format!("舞会结束，获得 {reward} 卢恩。请从传送门离开。");
+            super::log(format!("DANCE reward key={key:?} runes={reward}"));
+            return Ok(());
+        }
+        if let Some(super::native_talk::EventRequest::Dance(song))=room.take_event_request() {
+            if let Some(link)=state.party.as_mut(){
+                if link.host()&&!link.event.dance_preparing{link.event.dance.get_or_insert_with(Default::default).choice=Some(song as u8);}
+                room.view.message=if link.host(){"正在等待全员到达舞台…"}else{"联机舞会由房主选歌，请等待统一开场。"}.into();return Ok(());
+            }
+            super::dance_stage::place(world,0,1)?;
+            let mut next=run.clone();next.begin_dance(song)?;record_checked(&next)?;
+            room.suspend_dialogues()?;state.view.run=Some(next);super::dance_ui::request_event(key,song);
+            room.view.message="舞会：跟随箭头与节拍完成歌曲。中途退出不发奖励。".into();
+        } else if run.regional_event.opened==0 {
+            room.view.message="舞会：与引导者交谈选择歌曲。S / A / B / C：3000 / 2000 / 1200 / 800 卢恩。也可直接离开。".into();
+        } else if !super::dance_ui::active(){room.view.message=if party_exit{"本次舞会已参加，请从传送门离开。"}else{"本机已完成，等待队友结束舞会。"}.into();}
+        return Ok(());
+    }
     if run.regional_event.recovery {
         set_flag(45010965,false)?;set_flag(45010960,false)?;
         set_flag(45010941,true)?;set_flag(45010940,true)?;
@@ -4271,6 +4348,7 @@ fn resource_result(
 fn request_spawn(state: &mut Runtime, world: &mut WorldChrMan, id: usize) -> Result<(), String> {
     let run = state.view.run.as_ref().ok_or("角色未就绪")?;
     start_allowed(run, id, state.spawn_used)?;
+    state.combat_scene=world.main_player.as_ref().map(|p|(run.seed,run.act,i32::from(p.current_block_id),id));
     if let Some(test)=run.boss_test.filter(|t|run.debug&&t.act==run.act&&run.nodes[id].kind==erdtree_tower::NodeKind::Boss) {
         super::enemies::boss_test_roster(test.encounter,state.party.is_some(),erdtree_tower::dlc::enemies_allowed())?;
     }
@@ -4354,17 +4432,17 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
     let mut spawning = false;
     let roles:Vec<_>=pending.foes.iter().map(|f|super::enemies::role(&f.spec)).collect();
     let monster_node=matches!(pending.next_run.phase,Phase::Combat{id} if pending.next_run.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Monster));
-    // 精英战里精英怪池的精英：平时一只一只上；苦难律法「精英成双 I」前一只半血时下一只上，「精英成双 II」一起上
+    // 精英和强怪随从共用出场节奏：默认逐只、成双 I 半血、成双 II 同时。
     let elite_node=matches!(pending.next_run.phase,Phase::Combat{id} if pending.next_run.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Elite));
     let pacing=if elite_node {pending.next_run.law.elite_pacing()}else{erdtree_tower::encounter::Pacing::Together};
     let mut untouched=Vec::new();
     let now=spawn_clock();
     for i in 0..count {
-        let earlier:Vec<_>=(0..i).filter(|&j|super::enemies::elite_combatant(&pending.foes[j].spec)).map(|j|{
+        let earlier:Vec<_>=(0..i).filter(|&j|super::enemies::paced_combatant(&pending.foes[j].spec)).map(|j|{
             let health=pending.foes[j].fight.handle().and_then(|h|world.chr_ins_by_handle(&h)).map(|c|(c.modules.data.hp,c.modules.data.max_hp));
             (outcomes[j],health)
         }).collect();
-        let held=super::enemies::elite_combatant(&pending.foes[i].spec)&&pacing.waits(&earlier);
+        let held=super::enemies::paced_combatant(&pending.foes[i].spec)&&pacing.waits(&earlier);
         let eligible=erdtree_tower::encounter::may_spawn_paced(pending.networked,monster_node,held,&roles,i,&outcomes);
         if !pending.foes[i].spawn_gap.allows(now,eligible) {
             outcomes.push(Outcome::Waiting);
@@ -4878,6 +4956,21 @@ fn recover_entry(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->R
     Ok(())
 }
 
+fn scene_players_ready(state:&Runtime,world:&WorldChrMan,arena:super::arenas::Arena)->bool {
+    let ready=|p:&eldenring::cs::PlayerIns|i32::from(p.current_block_id)==arena.block
+        &&(p.block_position.x-arena.center[0]).hypot(p.block_position.z-arena.center[2])<80.0
+        &&(p.block_position.y-arena.center[1]).abs()<15.0
+        &&p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag()
+        &&p.chr_ins.modules.physics.standing_on_solid_ground&&!p.chr_ins.modules.physics.is_falling;
+    let Some(local)=world.main_player.as_ref() else{return false;};
+    if !ready(local){return false;}
+    let Some(link)=state.party.as_ref() else {
+        return unsafe {eldenring::cs::CSSessionManager::instance()}.is_ok_and(|s|s.players.len()<=1);
+    };
+    let Some(roster)=link.roster() else{return false;};
+    link.stopped.is_none()&&!link.defeated&&roster.members.iter().all(|id|*id==roster.local
+        ||world.player_chr_set.characters().any(|p|p.player_session_holder.player_network_session.remote_identity==*id&&ready(p)))
+}
 fn request_travel(
     state: &mut Runtime,
     world: &mut WorldChrMan,
@@ -4960,6 +5053,29 @@ fn request_travel(
         report(state, "正在前往服务房间。");
         return Ok(());
     }
+    let arena=super::arenas::for_run(run,state.party.is_some());
+    let previous=state.combat_scene;
+    let reuse_check=super::travel::ReuseCheck {
+        same_scene:previous.is_some_and(|(seed,act,block,_)|(seed,act,block)==(run.seed,run.act,arena.block)),
+        route_ready:run.phase==Phase::Map&&state.spawn_used&&state.reward_wait.is_none()&&state.room.is_none()
+            &&state.pending.as_ref().is_none_or(|p|p.completed)&&state.lingering.is_none(),
+        players_ready:scene_players_ready(state,world,arena),
+        clear:state.ash_guard.is_none()&&!world.summon_buddy_manager.groups.iter().any(|p|p.second.iter().next().is_some())
+            &&unsafe {eldenring::cs::CSBulletManager::instance()}.is_ok_and(|b|b.bullets().next().is_none()),
+        recovering:game.warp_requested||state.death_retry||run.retry_node.is_some()||state.reconnect.is_some()
+            ||state.party_pending.is_some()||state.party_death.awaiting_revival(),
+    };
+    let arrival=super::arenas::combat_arrival(arena.block);
+    let mut reuse=reuse_check.allowed()&&arrival.is_some();
+    let previous_entities=if reuse&&state.party.is_some() {
+        match previous.and_then(|(_,_,_,node)|super::enemies::map_entities(&super::enemies::node_roster(run,node)).ok()) {
+            Some(ids)=>ids,None=>{reuse=false;vec![]}
+        }
+    }else{vec![]};
+    super::log(format!("TRAVEL_SCENE reuse={reuse} target={:08x} node={id} checks={reuse_check:?}",arena.block));
+    state.combat_scene=None;
+    super::native_talk::set_flag(super::travel::RESET_REQUEST,false)?;
+    super::native_talk::set_flag(super::travel::RESET_CLEARED,false)?;
     super::native_talk::set_flag(45020970, false)?;
     super::native_talk::set_flag(45020971, false)?;
     super::native_talk::set_flag(45020972, false)?;
@@ -4980,16 +5096,38 @@ fn request_travel(
         player.chr_ins.modules.data.hp,
         player.chr_ins.modules.data.fp,
     ));
+    if reuse {
+        super::native_talk::set_flag(super::enemies::MAP_COMBAT_FLAG,false)?;
+        super::native_talk::set_flag(45020993,false)?;
+        for entity in previous_entities {super::enemies::request_map_entity(entity,false)?;}
+        if let Some(pending)=state.pending.take(){retire_group(&pending,world);}
+        let player=world.main_player.as_mut().ok_or("角色未就绪")?;
+        let entry=arrival.unwrap();let p=&player.chr_ins.modules.physics.position;
+        let target=[p.0-player.block_position.x+entry[0],p.1-player.block_position.y+entry[1],p.2-player.block_position.z+entry[2]];
+        match super::spirits::landing::move_native(&mut player.chr_ins.modules.physics,target) {
+            Ok(())=>{
+                super::native_talk::set_flag(super::travel::RESET_REQUEST,true)?;
+                state.travel.as_mut().unwrap().0.reused_scene=true;
+                super::log(format!("TRAVEL_REUSE move to entry={entry:?} physics={target:?}"));
+            }
+            Err(error)=>{reuse=false;super::log(format!("TRAVEL_REUSE placement unavailable; reloading: {error}"));}
+        }
+        state.reward_portal=Default::default();
+    }
     state.pending = None;
     state.view.enemy_hp = None;
     state.view.travelling = true;
     state.pad_capture.update(false);
     super::input::CAPTURE.store(false, std::sync::atomic::Ordering::Relaxed);
-    let arena=super::arenas::for_run(run,state.party.is_some());
-    game.move_map_target = BlockId::from(arena.block);
-    game.initial_area_entity_id = arena.combat_entry();
-    game.warp_requested = true;
-    report(state, format!("正在前往{}，{}",arena.name,if arena.uses_circle(){"靠近场地中心自动开始战斗。"}else{"穿过雾门开始战斗。"}));
+    if reuse {
+        super::log(format!("TRAVEL_REUSE block={:08x} node={id} party={}; keeping loaded scene and normal spawn barrier",arena.block,state.party.is_some()));
+        report(state,"正在返回出生点并清理上一场传送门……");
+    }else {
+        game.move_map_target = BlockId::from(arena.block);
+        game.initial_area_entity_id = arena.combat_entry();
+        game.warp_requested = true;
+        report(state, format!("正在前往{}，{}",arena.name,if arena.uses_circle(){"靠近场地中心自动开始战斗。"}else{"穿过雾门开始战斗。"}));
+    }
     Ok(())
 }
 

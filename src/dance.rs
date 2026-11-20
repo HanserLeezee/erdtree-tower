@@ -8,6 +8,11 @@
 #[derive(Clone,Debug,PartialEq)]
 pub struct Song {pub id:String,pub file:String,pub name:String,pub bpm:f64,pub phrase_beats:u32,pub phrases:u32,pub intro_beats:u32}
 impl Song {
+    pub fn fit_audio(&mut self,seconds:f64) {
+        if !seconds.is_finite()||seconds<=0.0||self.phrase_beats==0{return;}
+        let phrases=((seconds/self.beat()-f64::from(self.intro_beats))/f64::from(self.phrase_beats)).floor();
+        if phrases>=1.0 {self.phrases=phrases.min(10000.0) as u32;}
+    }
     pub fn beat(&self)->f64 {60.0/self.bpm}
     /// 第 k 句开始的时间
     pub fn phrase_start(&self,k:u32)->f64 {f64::from(self.intro_beats+k*self.phrase_beats)*self.beat()}
@@ -74,6 +79,63 @@ pub fn chart(song:&Song,difficulty:Difficulty,seed:u64)->Vec<Vec<Arrow>> {
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum Grade {S,A,B,C}
 impl Grade {pub fn name(self)->&'static str {match self {Grade::S=>"S",Grade::A=>"A",Grade::B=>"B",Grade::C=>"C"}}}
+
+impl crate::Run {
+    fn dance_node(&self)->crate::RuleResult<usize> {
+        let node=self.active_node(crate::NodeKind::Event)?;
+        if self.event_draw(node)!=crate::events::Draw::Dance||self.regional_event.settled{return Err("当前不是可用的舞会事件".into());}Ok(node)
+    }
+    pub fn begin_dance(&mut self,song:usize)->crate::RuleResult<()> {
+        self.dance_node()?;
+        if song>=songs().len()||self.regional_event.opened!=0{return Err("舞会已经参加或曲目无效".into());}
+        self.regional_event.opened=1;Ok(())
+    }
+    pub fn finish_dance(&mut self,grade:Option<Grade>)->crate::RuleResult<u32> {
+        self.dance_node()?;
+        if self.regional_event.opened!=1{return Err("舞会未开始或已经结算".into());}
+        let reward=match grade{Some(Grade::S)=>5000,Some(Grade::A)=>3500,Some(Grade::B)=>2000,Some(Grade::C)=>1000,None=>0};
+        let gold=self.gold.checked_add(reward).ok_or("卢恩数量超限")?;
+        self.gold=gold;self.regional_event.opened=3;Ok(reward)
+    }
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+    fn room()->crate::Run {
+        let mut run=crate::Run::new(7,crate::Class::Samurai);
+        let node=run.nodes.iter().position(|n|n.kind==crate::NodeKind::Event).unwrap();
+        run.debug_jump(node).unwrap();run.event_test=Some((run.act,node,crate::events::Draw::Dance));run.enter(node).unwrap();run
+    }
+    #[test]
+    fn dance_is_consumed_before_playback_and_reward_is_once_only() {
+        let mut run=room();let gold=run.gold;
+        run.begin_dance(0).unwrap();assert!(run.begin_dance(1).is_err());
+        let mut run=crate::Run::decode(&run.encode().unwrap()).unwrap();
+        assert_eq!(run.finish_dance(Some(Grade::S)),Ok(5000));assert_eq!(run.gold,gold+5000);
+        assert!(run.finish_dance(Some(Grade::S)).is_err());run.leave_regional_event().unwrap();
+    }
+    #[test]
+    fn interrupted_and_skipped_dances_pay_nothing() {
+        let mut run=room();let gold=run.gold;
+        assert!(run.begin_dance(2).is_err());run.begin_dance(1).unwrap();
+        assert_eq!(run.finish_dance(None),Ok(0));assert_eq!(run.gold,gold);
+    }
+    #[test]
+    fn every_grade_pays_the_configured_reward_once() {
+        for (grade,reward) in [(Grade::S,5000),(Grade::A,3500),(Grade::B,2000),(Grade::C,1000)] {
+            let mut run=room();let gold=run.gold;run.begin_dance(0).unwrap();
+            assert_eq!(run.finish_dance(Some(grade)),Ok(reward));
+            assert_eq!(run.gold,gold+reward);assert!(run.finish_dance(Some(grade)).is_err());
+        }
+    }
+    #[test]
+    fn older_event_pools_never_draw_dance() {
+        for seed in 0..100 {let mut run=crate::Run::new(seed,crate::Class::Samurai);run.event_rules=5;
+            for (id,node) in run.nodes.iter().enumerate(){if node.kind==crate::NodeKind::Event{assert_ne!(run.event_draw(id),crate::events::Draw::Dance);}}
+        }
+    }
+}
 
 /// 一次跳舞的进度
 #[derive(Clone,Debug)]
@@ -164,6 +226,15 @@ pub fn finale(grade:Grade)->Option<i32> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn full_tracks_extend_the_chart_without_targets_after_audio_end() {
+        for (mut song,duration) in super::songs().into_iter().zip([238.435918,260.839388]) {
+            let old=song.phrases;song.fit_audio(duration);
+            assert!(song.phrases>old);
+            assert!(song.target(song.phrases-1)<duration);
+            assert!(duration-song.phrase_start(song.phrases)<f64::from(song.phrase_beats)*song.beat());
+        }
+    }
     use super::*;
     fn song(phrase_beats:u32)->Song {Song{id:"t".into(),file:"t.wav".into(),name:"测试".into(),bpm:120.0,phrase_beats,phrases:16,intro_beats:8}}
     fn perfect(play:&mut Play) {

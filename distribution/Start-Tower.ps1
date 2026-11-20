@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet('Solo', 'Seamless')][string]$Mode = 'Seamless',
     [ValidateSet('ME3', 'YAFSML')][string]$Loader = 'ME3',
     [ValidateSet('Auto', 'Steam', 'OnlineFix')][string]$Network = 'Auto',
@@ -43,5 +43,16 @@ if ($PartyConfig) {
 }
 $result = & $entry @options -CheckOnly
 if ($CheckOnly) { $result; return }
-[IO.File]::WriteAllText($pathFile, $GameDir, (New-Object Text.UTF8Encoding($true)))
-& $entry @options
+$launchGuard=$null
+try {
+    try {
+        $launchGuard=[IO.File]::Open((Join-Path $PSScriptRoot '.tower-launch.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    } catch [IO.IOException] {
+        if (($_.Exception.HResult -band 0xffff) -in @(32,33)) { throw '已有启动任务正在运行，请等待资源准备或游戏启动完成，勿重复启动。' }
+        throw
+    }
+    [IO.File]::WriteAllText($pathFile, $GameDir, (New-Object Text.UTF8Encoding($true)))
+    & $entry @options
+} finally {
+    if($launchGuard){$launchGuard.Dispose()}
+}

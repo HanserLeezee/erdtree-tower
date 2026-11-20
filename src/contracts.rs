@@ -208,13 +208,13 @@ impl State {
             }
     }
 }
-/// 武器强化上限（scene-builder weapon-level-patch 补了等级行）：普通 +99（武器编号能表示的最高等级）、失色 +39（每级相当于普通 2.5 级，取同一水平）。
-/// 原版是 +25、+10。等效等级 peak = 普通等级×2 = 失色等级×5（原版满级都是 50），最高 MAX_PEAK
+/// 武器上限保持普通 +99、失色 +39；peak 使用半个普通等级为单位。
 pub const NORMAL_MAX:u8=99;
 pub const SOMBER_MAX:u8=39;
-pub const MAX_PEAK:u8=198;
-/// 等效等级换算成某种武器的强化等级：cap 为原版满级（普通 25、失色 10），超过原版满级照比例继续
-pub fn reinforcement_level(peak:u8,cap:u8)->u8 {((u16::from(peak.min(MAX_PEAK))*u16::from(cap))/50) as u8}
+pub const MAX_PEAK:u8=SOMBER_MAX*6;
+/// cap 仅用于识别普通（25）或失色（10）武器，换算比例为 3:1。
+pub fn reinforcement_level(peak:u8,cap:u8)->u8 {match cap {25=>(peak.min(MAX_PEAK)/2).min(NORMAL_MAX),10=>(peak.min(MAX_PEAK)/6).min(SOMBER_MAX),_=>0}}
+pub fn reinforcement_peak(level:u8,cap:u8)->u8 {match cap {25=>level.min(NORMAL_MAX)*2,10=>level.min(SOMBER_MAX)*6,_=>0}}
 fn gear(kind:Kind,_class:Class,seed:u64,epic:bool)->[u32;3] {
     let mut pool:Vec<u32>=include_str!("../scene-assets/reward-rarities.tsv").lines().filter_map(|line| {
         let (id,tier)=line.split_once('\t')?;let id:u32=id.parse().ok()?;

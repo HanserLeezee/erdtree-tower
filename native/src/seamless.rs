@@ -18,6 +18,21 @@ fn remember(session:&eldenring::cs::CSSessionManager) {
     if let Ok(mut known)=NAMES.lock() {*known=names;}
 }
 pub fn player_name(id:u64)->Option<String> {NAMES.lock().ok()?.iter().find(|(p,_)|*p==id).map(|(_,n)|n.clone()).filter(|n|!n.is_empty())}
+pub fn display_player_names(message:&str)->String {named_message(message,player_name)}
+fn named_message(message:&str,lookup:impl Fn(u64)->Option<String>)->String {
+    let mut out=String::with_capacity(message.len());let mut rest=message;
+    while !rest.is_empty() {
+        let found=["队员 ","房主 "].iter().filter_map(|prefix|rest.find(prefix).map(|at|(at,*prefix))).min_by_key(|(at,_)|*at);
+        let Some((at,prefix))=found else{out.push_str(rest);break;};
+        let end=at+prefix.len();out.push_str(&rest[..end]);rest=&rest[end..];
+        let digits=rest.bytes().take_while(u8::is_ascii_digit).count();
+        if digits==0{continue;}
+        let name=rest[..digits].parse().ok().and_then(&lookup).map(|name|name.chars().filter(|c|!c.is_control()).collect::<String>());
+        out.push_str(name.as_deref().map(str::trim).filter(|s|!s.is_empty()).unwrap_or("昵称暂不可用"));
+        rest=&rest[digits..];
+    }
+    out
+}
 pub fn local_player()->Option<u64> {Some(LOCAL.load(std::sync::atomic::Ordering::Relaxed)).filter(|id|*id!=0)}
 pub fn roster(session:&eldenring::cs::CSSessionManager)->Result<erdtree_tower::party_roster::Roster,String> {
     use eldenring::cs::{LobbyState,ProtocolState};
@@ -36,6 +51,13 @@ pub fn preserve(item:ItemId,seamless:bool)->bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn handshake_display_uses_names_without_rewriting_protocol_numbers_or_inserted_names() {
+        let lookup=|id|match id {12=>Some(" 测试玩家\n ".into()),34=>Some("队员 12".into()),_=>None};
+        assert_eq!(super::named_message("队员 12：版本 123 不匹配\n等待房主 34 的握手回应",lookup),"队员 测试玩家：版本 123 不匹配\n等待房主 队员 12 的握手回应");
+        assert_eq!(super::named_message("队员 99：尚未收到消息",lookup),"队员 昵称暂不可用：尚未收到消息");
+        assert_eq!(super::named_message("队员 已连接，队伍 3 人",lookup),"队员 已连接，队伍 3 人");
+    }
     use super::*;
     #[test]
     fn seamless_online_keeps_runtime_but_vanilla_online_stays_blocked() {

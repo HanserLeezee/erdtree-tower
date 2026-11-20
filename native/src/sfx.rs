@@ -12,6 +12,8 @@ unsafe extern "system" {
     fn waveOutWrite(handle:isize,header:*mut WaveHeader,size:u32)->u32;
     fn waveOutUnprepareHeader(handle:isize,header:*mut WaveHeader,size:u32)->u32;
     fn waveOutReset(handle:isize)->u32;
+    fn waveOutPause(handle:isize)->u32;
+    fn waveOutRestart(handle:isize)->u32;
     fn waveOutClose(handle:isize)->u32;
     fn waveOutGetPosition(handle:isize,time:*mut MmTime,size:u32)->u32;
 }
@@ -75,12 +77,14 @@ pub fn play(name:&'static str) {
 
 /// 一整首舞曲（癫火舞会）：一次写进声卡，播放位置用 waveOutGetPosition 读，判定以它为准（比墙钟更贴近实际听到的声音）。
 /// 只在界面线程里持有；drop 时停止并释放。音量沿用 tower-options.ini 的 sfx。
-pub struct Music {handle:isize,header:Box<WaveHeader>,_bytes:Vec<u8>,bytes_per_second:u32,block_align:u16,started:Instant,length:f64}
+pub struct Music {handle:isize,header:Box<WaveHeader>,_bytes:Vec<u8>,bytes_per_second:u32,block_align:u16,started:Instant,length:f64,pub fingerprint:u64}
 impl Music {
-    /// 播放 scene-assets 下的 16 位 PCM 文件；打不开声卡时返回 None（调用方改用墙钟计时、静音跳舞）
-    pub fn start(relative:&str)->Option<Music> {
+    /// 预载 16 位 PCM 并暂停，全部队员就绪后再开始输出。
+    pub fn prepare(relative:&str)->Option<Music> {
+        use std::hash::{Hash,Hasher};
         let path=crate::LOG_PATH.with_file_name("scene-assets").join(relative);
-        let mut sound=std::fs::read(&path).ok().and_then(|b|parse(&b));
+        let file=std::fs::read(&path).ok()?;let mut hash=std::collections::hash_map::DefaultHasher::new();file.hash(&mut hash);let fingerprint=hash.finish();
+        let mut sound=parse(&file);
         if sound.is_none() {crate::log(format!("Dance music missing or unsupported: {}",path.display()));return None;}
         let sound=sound.as_mut().unwrap();
         let volume=f32::from(crate::options::get().sfx)/100.0;
@@ -93,10 +97,12 @@ impl Music {
         let size=std::mem::size_of::<WaveHeader>() as u32;
         if unsafe {waveOutPrepareHeader(handle,&mut *header,size)}!=0 {unsafe {waveOutClose(handle);}return None;}
         let started=Instant::now();
+        if unsafe{waveOutPause(handle)}!=0{unsafe{waveOutUnprepareHeader(handle,&mut *header,size);waveOutClose(handle);}return None;}
         if unsafe {waveOutWrite(handle,&mut *header,size)}!=0 {unsafe {waveOutUnprepareHeader(handle,&mut *header,size);waveOutClose(handle);}return None;}
         let length=bytes.len() as f64/f64::from(format.bytes_per_second);
-        Some(Music{handle,header,_bytes:bytes,bytes_per_second:format.bytes_per_second,block_align:format.block_align,started,length})
+        Some(Music{handle,header,_bytes:bytes,bytes_per_second:format.bytes_per_second,block_align:format.block_align,started,length,fingerprint})
     }
+    pub fn resume(&mut self)->bool{self.started=Instant::now();unsafe{waveOutRestart(self.handle)==0}}
     /// 已经播出的秒数；声卡不报告位置时退回墙钟
     pub fn position(&self)->f64 {
         let mut time=MmTime{kind:4,value:0,pad:0};

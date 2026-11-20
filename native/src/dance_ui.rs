@@ -1,5 +1,5 @@
 // 癫火舞会：跳舞画面（规则在 erdtree_tower::dance）。像跳舞机：角色在场上真的跳，界面只在脚下留一条箭头条与节拍光标。
-// 每句判定后挑一个手势动作当舞步（erdtree_tower::dance::move_for），交给游戏线程写进 CSChrEventModule.request_animation_id。
+// 曲中不插入评分反馈手势；结算时只播放一次收尾动作。
 // 时间以舞曲的实际播放位置为准（sfx::Music），开头的预备拍里显示倒数与操作说明；结束后弹出结算卡片。
 // 操作：方向键 / WASD / 手柄十字键按箭头，空格 / 手柄 A 在判定点确认；Esc / 手柄 B 放弃（按当前分数结算）。
 use std::{cell::RefCell,sync::atomic::{AtomicBool,AtomicI32,Ordering},time::Instant};
@@ -7,8 +7,26 @@ use hudhook::imgui::{Condition,ImColor32,Key,Ui,WindowFlags};
 use erdtree_tower::dance::{Arrow,Difficulty,Grade,Judge,Play};
 
 static ACTIVE:AtomicBool=AtomicBool::new(false);
+static RULES:AtomicBool=AtomicBool::new(false);
 static DANCING:AtomicBool=AtomicBool::new(false);
 static PENDING_MOVE:AtomicI32=AtomicI32::new(0);
+pub type EventKey=(u64,u8,usize);
+static EVENT_START:std::sync::Mutex<Option<(EventKey,usize,bool)>>=std::sync::Mutex::new(None);
+static START_AT:std::sync::Mutex<Option<Instant>>=std::sync::Mutex::new(None);
+static FINGERPRINT:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+static FAILED:AtomicBool=AtomicBool::new(false);
+static TIMELINE:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+static BEAT:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0.5f64.to_bits());
+pub fn beat()->f64{f64::from_bits(BEAT.load(Ordering::Relaxed))}
+pub fn timeline()->f64{f64::from_bits(TIMELINE.load(Ordering::Relaxed))}
+pub fn prepared()->(Option<u64>,bool){let hash=FINGERPRINT.load(Ordering::Acquire);((hash!=0).then_some(hash),FAILED.load(Ordering::Acquire))}
+pub fn start_prepared(delay:std::time::Duration){if let Ok(mut at)=START_AT.lock(){if at.is_none(){*at=Some(Instant::now()+delay);}}}
+static EVENT_RESULT:std::sync::Mutex<Option<(EventKey,Option<Grade>)>>=std::sync::Mutex::new(None);
+static CANCEL:AtomicBool=AtomicBool::new(false);
+pub fn request_event(key:EventKey,song:usize){if let Ok(mut start)=EVENT_START.lock(){*start=Some((key,song,false));}}
+pub fn request_party_event(key:EventKey,song:usize){FINGERPRINT.store(0,Ordering::Release);FAILED.store(false,Ordering::Release);if let Ok(mut start)=EVENT_START.lock(){*start=Some((key,song,true));}}
+pub fn take_result()->Option<(EventKey,Option<Grade>)>{EVENT_RESULT.lock().ok()?.take()}
+pub fn cancel(){CANCEL.store(true,Ordering::Release);}
 /// 跳舞中或结算卡片还开着（接管输入）
 pub fn active()->bool {ACTIVE.load(Ordering::Relaxed)}
 /// 舞曲正在放（游戏线程据此暂停背景音乐）
@@ -17,17 +35,28 @@ pub fn dancing()->bool {DANCING.load(Ordering::Relaxed)}
 pub fn take_move()->Option<i32> {Some(PENDING_MOVE.swap(0,Ordering::AcqRel)).filter(|m|*m>0)}
 fn perform(anim:Option<i32>) {if let Some(anim)=anim {PENDING_MOVE.store(anim,Ordering::Release);}}
 
-struct Session {play:Play,music:Option<crate::sfx::Music>,clock:Instant,difficulty:Difficulty,result:Option<f64>,quit:bool,seed:u64,last_move:Option<i32>,keys:u32,fx:Fx}
+struct Session {play:Play,music:Option<crate::sfx::Music>,clock:Instant,difficulty:Difficulty,result:Option<f64>,quit:bool,event:Option<EventKey>,motion_started:bool,keys:u32,fx:Fx,begins:Option<Instant>,begun:bool}
 thread_local! {static SESSION:RefCell<Option<Session>>=const {RefCell::new(None)};}
 
 /// 开始跳一首（界面线程调用）；index 超出范围时取第一首
 pub fn start(index:usize,difficulty:Difficulty,seed:u64) {
+    start_mode(index,difficulty,seed,false);
+}
+fn start_mode(index:usize,difficulty:Difficulty,seed:u64,party:bool){
+    CANCEL.store(false,Ordering::Release);PENDING_MOVE.store(0,Ordering::Release);
+    RULES.store(false,Ordering::Relaxed);
     let songs=erdtree_tower::dance::songs();
-    let Some(song)=songs.get(index).or(songs.first()).cloned() else {crate::log("Dance: no songs");return;};
-    let music=crate::sfx::Music::start(&song.file);
+    let Some(mut song)=songs.get(index).or(songs.first()).cloned() else {crate::log("Dance: no songs");return;};
+    let music=crate::sfx::Music::prepare(&song.file);
+    let ready=music.is_some()&&crate::dance_motion::available();
+    FINGERPRINT.store(if ready{music.as_ref().unwrap().fingerprint}else{0},Ordering::Release);FAILED.store(!ready,Ordering::Release);
+    if let Ok(mut at)=START_AT.lock(){*at=None;}
+    if let Some(audio)=&music {song.fit_audio(audio.length());crate::log(format!("DANCE full track seconds={:.3} phrases={}",audio.length(),song.phrases));}
     crate::log(format!("DANCE start song={} bpm={} difficulty={difficulty:?} music={}",song.id,song.bpm,music.is_some()));
-    SESSION.with(|s|*s.borrow_mut()=Some(Session{play:Play::new(song,difficulty,seed),music,clock:Instant::now(),difficulty,result:None,quit:false,seed,last_move:None,keys:0,fx:Fx::default()}));
-    ACTIVE.store(true,Ordering::Relaxed);DANCING.store(true,Ordering::Relaxed);
+    crate::dance_motion::set_tempo(song.beat());
+    BEAT.store(song.beat().to_bits(),Ordering::Relaxed);
+    SESSION.with(|s|*s.borrow_mut()=Some(Session{play:Play::new(song,difficulty,seed),music,clock:Instant::now(),difficulty,result:None,quit:!ready,event:None,motion_started:false,keys:0,fx:Fx::default(),begins:(!party).then(Instant::now),begun:false}));
+    ACTIVE.store(true,Ordering::Relaxed);DANCING.store(false,Ordering::Relaxed);
 }
 
 const AMBER:[f32;4]=[0.91,0.71,0.29,1.0];const WHITE:[f32;4]=[0.95,0.93,0.88,1.0];const MUTED:[f32;4]=[0.66,0.63,0.57,1.0];
@@ -40,11 +69,33 @@ fn grade_color(g:Grade)->[f32;4] {match g {Grade::S=>[1.0,0.84,0.38,1.0],Grade::
 
 /// 每帧画（返回 true 表示跳舞画面占着屏幕，其余界面不画）
 pub fn draw(ui:&Ui)->bool {
+    if let Some((key,song,party))=EVENT_START.lock().ok().and_then(|mut s|s.take()) {
+        start_mode(song,Difficulty::Normal,key.0^key.2 as u64,party);
+        SESSION.with(|s|{if let Some(s)=s.borrow_mut().as_mut(){s.event=Some(key);if s.music.is_none(){s.quit=true;}}});
+    }
     SESSION.with(|cell|{
         let mut slot=cell.borrow_mut();
         let Some(session)=slot.as_mut() else {ACTIVE.store(false,Ordering::Relaxed);return false;};
+        if session.result.is_none()&&!session.begun {
+            if let Some(at)=START_AT.lock().ok().and_then(|mut at|at.take()){session.begins=Some(at);}
+            if ui.is_key_pressed_no_repeat(Key::Escape)||ui.is_key_pressed_no_repeat(Key::GamepadFaceRight)||CANCEL.swap(false,Ordering::AcqRel){session.quit=true;}
+            if !session.quit&&session.begins.is_some_and(|at|Instant::now()>=at){
+                session.begun=true;session.clock=Instant::now();
+                session.quit=!session.music.as_mut().is_some_and(|m|m.resume());
+                DANCING.store(!session.quit,Ordering::Relaxed);
+            }
+            if !session.begun&&!session.quit {
+                window(ui,"##dance-ready",||{let c=Canvas::new(ui);let label=session.begins.map_or_else(||"等待全员就绪…".to_string(),|at|format!("{}",at.saturating_duration_since(Instant::now()).as_secs_f64().ceil() as u32));c.text(800.0,300.0,&label,WHITE,42.0,0.5);});return true;
+            }
+        }
         let t=session.music.as_ref().map_or_else(||session.clock.elapsed().as_secs_f64(),|m|m.position());
+        TIMELINE.store(t.to_bits(),Ordering::Relaxed);
         if session.result.is_none() {
+            if !session.motion_started&&t>=session.play.song.phrase_start(0) {
+                session.motion_started=true;
+                if crate::dance_motion::available(){perform(Some(crate::dance_motion::HIP_HOP));}
+                else{crate::log("DANCE custom animation assets missing");}
+            }
             let pressed=|keys:&[Key]|keys.iter().any(|k|ui.is_key_pressed_no_repeat(*k));
             for (keys,arrow) in [(&[Key::UpArrow,Key::W,Key::GamepadDpadUp][..],Arrow::Up),(&[Key::DownArrow,Key::S,Key::GamepadDpadDown][..],Arrow::Down),
                 (&[Key::LeftArrow,Key::A,Key::GamepadDpadLeft][..],Arrow::Left),(&[Key::RightArrow,Key::D,Key::GamepadDpadRight][..],Arrow::Right)] {
@@ -60,7 +111,7 @@ pub fn draw(ui:&Ui)->bool {
             }
             let before=session.play.phrase;let score_before=session.play.score;
             if pressed(&[Key::Space,Key::GamepadFaceDown]) {session.play.hit(t);}
-            if pressed(&[Key::Escape,Key::GamepadFaceRight]) {session.quit=true;}
+            if pressed(&[Key::Escape,Key::GamepadFaceRight])||CANCEL.swap(false,Ordering::AcqRel) {session.quit=true;}
             session.play.tick(t);
             // 这一帧判定了一句：角色做对应的舞步
             if session.play.phrase!=before && let Some((judge,_))=session.play.last {
@@ -69,11 +120,11 @@ pub fn draw(ui:&Ui)->bool {
                 let gain=session.play.score-score_before;
                 if gain>0.0 {session.fx.gain=Some((gain,t));}
                 if judge.keeps_combo()&&session.play.combo>=5&&session.play.combo%5==0 {session.fx.milestone=Some((session.play.combo,t));}
-                let anim=erdtree_tower::dance::move_for(judge,session.play.combo,session.play.phrase,session.seed,session.last_move);
-                if anim.is_some() {session.last_move=anim;}
-                perform(anim);
             }
-            if session.quit||session.play.finished(t)||session.music.as_ref().is_some_and(|m|t>=m.length()-0.05&&session.play.phrase>=session.play.song.phrases) {
+            let finished=session.music.as_ref().map_or_else(||session.play.finished(t),|m|t>=m.length()-0.01);
+            if session.quit||finished {
+                if session.quit&&!session.begun{FAILED.store(true,Ordering::Release);}
+                if let Some(key)=session.event.take()&&let Ok(mut result)=EVENT_RESULT.lock(){*result=Some((key,(!session.quit).then(||session.play.grade())));}
                 session.result=Some(ui.time());session.music=None;DANCING.store(false,Ordering::Relaxed);
                 perform(erdtree_tower::dance::finale(session.play.grade()));
                 let p=&session.play;
@@ -84,7 +135,7 @@ pub fn draw(ui:&Ui)->bool {
         let dt=f64::from(ui.io().delta_time).clamp(0.0,0.1);
         session.fx.score+=(session.play.score-session.fx.score)*(dt*12.0).min(1.0);
         let close=match session.result {
-            None=>{if crate::dance_art::ready() {stage(ui,&session.play,&session.fx,t);} else {stage_plain(ui,&session.play,t);}false},
+            None=>{if crate::dance_art::ready() {stage(ui,&session.play,&session.fx,t);} else {stage_plain(ui,&session.play,t);}rules(ui);false},
             Some(at)=>result(ui,&session.play,session.quit,ui.time()-at),
         };
         if close {*slot=None;ACTIVE.store(false,Ordering::Relaxed);DANCING.store(false,Ordering::Relaxed);}
@@ -121,12 +172,30 @@ impl Canvas<'_> {
         if color[3]<=0.01 {return;}
         let (_f,base)=self.font(value,px);self.ui.set_window_font_scale(px/base*self.s);
         let w=self.ui.calc_text_size(value)[0];
-        // 深色描边，叠在游戏画面上也看得清
-        for (dx,dy) in [(-1.5,0.0),(1.5,0.0),(0.0,-1.5),(0.0,1.5)] {
-            self.ui.set_cursor_screen_pos([self.ox+x*self.s-w*align+dx,self.oy+y*self.s+dy]);self.ui.text_colored([0.0,0.0,0.0,color[3]*0.7],value);
-        }
+        self.ui.set_cursor_screen_pos([self.ox+x*self.s-w*align+self.s,self.oy+y*self.s+self.s]);
+        self.ui.text_colored([0.0,0.0,0.0,color[3]*0.35],value);
         self.ui.set_cursor_screen_pos([self.ox+x*self.s-w*align,self.oy+y*self.s]);self.ui.text_colored(color,value);
     }
+}
+fn rules(ui:&Ui) {
+    if ui.is_key_pressed_no_repeat(Key::F1){RULES.fetch_xor(true,Ordering::Relaxed);}
+    let c=Canvas::new(ui);
+    ui.window("##dance-rules").position(c.p(24.0,190.0),Condition::Always)
+        .flags(WindowFlags::NO_DECORATION|WindowFlags::ALWAYS_AUTO_RESIZE|WindowFlags::NO_MOVE|WindowFlags::NO_NAV).build(||{
+            ui.set_window_font_scale(c.s);
+            if ui.button(if RULES.load(Ordering::Relaxed){"收起规则 [F1]"}else{"规则 [F1]"}){RULES.fetch_xor(true,Ordering::Relaxed);}
+            if RULES.load(Ordering::Relaxed){
+                ui.separator();
+                for line in ["按顺序输入箭头：方向键 / WASD / 手柄十字键。",
+                    "箭头完成后，等星星到达爱心，按空格 / 手柄 A。",
+                    "判定越准、连击越多，最终评级越高。",
+                    "完整跳完歌曲后领取卢恩：",
+                    "S 5000 / A 3500 / B 2000 / C 1000",
+                    "同一事件只领取一次；Esc / 手柄 B 退出无奖励。",
+                    "联机统一开场，各自计分领奖。",
+                    "查看规则不会暂停歌曲。"]{ui.text(line);}
+            }
+        });
 }
 fn window(ui:&Ui,id:&str,f:impl FnOnce()) {
     let size=ui.io().display_size;
@@ -253,8 +322,6 @@ fn stage(ui:&Ui,play:&Play,fx:&Fx,t:f64) {
             if let Some(id)=texture(name) {ui.get_window_draw_list().add_image(id,c.p(x,y),c.p(x+w,y+h)).col(col(tint,1.0)).build();}
         };
         let outlined=|x:f32,y:f32,value:&str,color:[f32;4],px:f32,align:f32| {
-            // 白色粗描边的粉字（底下的 text 自带一层深色描边，这里先垫一圈白）
-            for (dx,dy) in [(-2.0,0.0),(2.0,0.0),(0.0,-2.0),(0.0,2.0),(-1.5,-1.5),(1.5,1.5),(-1.5,1.5),(1.5,-1.5)] {c.text(x+dx,y+dy,value,[1.0,1.0,1.0,color[3]],px,align);}
             c.text(x,y,value,color,px,align);
         };
         // 每拍的闪光：拍点上 1，随后快速衰减
@@ -272,7 +339,7 @@ fn stage(ui:&Ui,play:&Play,fx:&Fx,t:f64) {
         }
         // ── 顶部名牌与分数 ──
         let pw=320.0;image("plate",800.0-pw*0.5,6.0,pw,pw*aspect("plate"),WHITE_FULL);
-        c.text(800.0,36.0,&format!("{TITLE} · {}",song.name),PINK,20.0,0.5);
+        c.plain(800.0,36.0,&format!("{TITLE} · {}",song.name),ROSE,20.0,0.5);
         let bump=fx.gain.map_or(0.0,|(_,at)|(1.0-((t-at)/0.25) as f32).clamp(0.0,1.0));
         outlined(1560.0,14.0-bump*4.0,&format!("{:.0}",fx.score.round()),PINK,30.0+bump*8.0,1.0);
         if let Some((gain,at))=fx.gain && t-at<0.8 {
@@ -281,8 +348,9 @@ fn stage(ui:&Ui,play:&Play,fx:&Fx,t:f64) {
         if play.combo>=2 {outlined(1560.0,84.0,&format!("{} COMBO",play.combo),fade(PINK,0.85),16.0,1.0);}
         // ── 操作提示：名牌下面一直显示当前该做什么 ──
         let (hint,size)=coach(play,t);
-        outlined(800.0,96.0,&hint,PINK,size,0.5);
-        outlined(800.0,96.0+size+8.0,"键盘：方向键（或 WASD）+ 空格　·　手柄：十字键 + A　·　Esc 放弃",fade(PINK,0.75),14.0,0.5);
+        ui.get_window_draw_list().add_rect(c.p(420.0,94.0),c.p(1180.0,166.0),ImColor32::from_rgba(255,241,247,235)).filled(true).rounding(12.0*s).build();
+        c.plain(800.0,102.0,&hint,ROSE,size,0.5);
+        c.plain(800.0,140.0,"方向键 / WASD → 空格确认　·　手柄十字键 → A　·　Esc 放弃",ROSE,17.0,0.5);
         // ── 预备：倒数 ──
         let first=song.phrase_start(0);
         if t<first {
@@ -426,7 +494,7 @@ fn result(ui:&Ui,play:&Play,quit:bool,age:f64)->bool {
             image(match judge {Judge::Perfect=>"judge_perfect",Judge::Great=>"judge_great",Judge::Cool=>"judge_cool",Judge::Bad=>"judge_bad",Judge::Miss=>"judge_miss"},x-w*0.5,top+350.0+(1.0-k)*10.0,w,h,k);
             c.plain(x,top+356.0+h,&play.counts[judge as usize].to_string(),fade(ROSE,k),24.0,0.5);
         }
-        if quit {c.plain(800.0,top+448.0,"中途放弃，按已跳的部分结算",fade([0.85,0.3,0.4,1.0],a),16.0,0.5);}
+        if quit {c.plain(800.0,top+448.0,"中途退出，无奖励",fade([0.85,0.3,0.4,1.0],a),16.0,0.5);}
         // 确认按钮：粉色胶囊、白字（不描边）
         let (bw,bh)=(240.0,52.0);let (bx,by)=(800.0-bw*0.5,bottom-82.0);
         ui.set_cursor_screen_pos(c.p(bx,by));ui.set_window_font_scale(s);

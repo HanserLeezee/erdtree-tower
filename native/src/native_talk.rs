@@ -26,9 +26,9 @@ impl Drop for NativeTalk {
     }
 }
 #[derive(Clone,Copy,Default)]
-pub struct EventMenu {pub mausoleum_offer:bool,pub gamble:Option<u8>,pub trial:bool,pub chariot:bool,pub stormveil:bool,pub descent:bool,pub recovery:bool,pub scarabs:bool,pub locked:bool,pub altar:bool,pub used:bool,pub busy:bool,pub ready:bool,pub attempts:u8}
+pub struct EventMenu {pub dance:bool,pub mausoleum_offer:bool,pub gamble:Option<u8>,pub trial:bool,pub chariot:bool,pub stormveil:bool,pub descent:bool,pub recovery:bool,pub scarabs:bool,pub locked:bool,pub altar:bool,pub used:bool,pub busy:bool,pub ready:bool,pub attempts:u8}
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub enum EventRequest {Gamble(usize),Trial(erdtree_tower::regional_events::Trial),Altar(usize),Scarabs,Recovery(usize),Descent,Stormveil(bool)}
+pub enum EventRequest {Dance(usize),Gamble(usize),Trial(erdtree_tower::regional_events::Trial),Altar(usize),Scarabs,Recovery(usize),Descent,Stormveil(bool)}
 /// 问号房赌运事件的对话文字（scene-builder RecoveryText.GambleEntries）：
 /// 选项 = GAMBLE_OPTIONS + 事件×2 + 选项，确认说明 = GAMBLE_CONFIRM + 事件×2 + 选项（事件：0 骰子、1 盲盒、2 重铸）
 pub const GAMBLE_OPTIONS:i32=9500130;
@@ -67,6 +67,7 @@ impl EventMenu {
     fn confirmation(self,choice:i32)->Option<i32> {
         use erdtree_tower::regional_events::Trial;
         match self.request(choice)? {
+            EventRequest::Dance(_)=>Some(9500222),
             EventRequest::Gamble(_) if self.gamble==Some(erdtree_tower::events::FURNACE as u8)=>Some(FURNACE_CONFIRM),
             EventRequest::Gamble(option)=>Some(GAMBLE_CONFIRM+i32::from(self.gamble?)*2+option as i32),
             EventRequest::Trial(Trial::Descent)|EventRequest::Descent=>Some(9500118),
@@ -85,6 +86,7 @@ impl EventMenu {
         let choice=choice?;self.confirmation(choice)?;self.request(choice)
     }
     fn request(self,choice:i32)->Option<EventRequest> {
+        if self.dance {return (!self.used&&!self.busy&&(1..=2).contains(&choice)).then_some(EventRequest::Dance(choice.wrapping_sub(1) as usize));}
         if self.mausoleum_offer {
             if self.used||self.busy{return None;}
             return match choice {1=>Some(EventRequest::Trial(erdtree_tower::regional_events::Trial::Mausoleum)),2=>Some(EventRequest::Trial(erdtree_tower::regional_events::Trial::Skip)),_=>None};
@@ -212,6 +214,13 @@ impl NativeTalk {
                     if !self.event_menu.ready||self.event_menu.busy {return self.dialog(9500082);}
                     self.event(110,&[])?;self.event(20,&[])?;
                     self.event(19,&[1,9500080,-1])?;self.event(19,&[2,9500081,-1])?;self.event(19,&[99,9500003,-1])?;
+                    self.event(10,&[1])?;self.state=1;return Ok(());
+                }
+                if self.service==6&&self.event_menu.dance {
+                    if self.event_menu.used{return self.dialog(9500223);}
+                    if self.event_menu.busy{return Ok(());}
+                    self.event(110,&[])?;self.event(20,&[])?;
+                    self.event(19,&[1,9500220,-1])?;self.event(19,&[2,9500221,-1])?;self.event(19,&[99,9500003,-1])?;
                     self.event(10,&[1])?;self.state=1;return Ok(());
                 }
                 // 赌运事件：原版对话菜单，两个选项各带确认说明
@@ -478,6 +487,16 @@ pub fn flag(id: u32) -> Result<bool, String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]fn dance_menu_requires_confirmation_and_is_single_use(){
+        let menu=super::EventMenu{dance:true,..Default::default()};
+        for choice in 1..=2 {
+            assert_eq!(menu.confirmed(Some(choice),1),Some(super::EventRequest::Dance((choice-1) as usize)));
+            assert_eq!(menu.confirmed(Some(choice),0),None);
+            assert_eq!(super::EventMenu{used:true,..menu}.request(choice),None);
+            assert_eq!(super::EventMenu{busy:true,..menu}.request(choice),None);
+        }
+        assert_eq!(menu.request(99),None);
+    }
     #[test]fn mausoleum_offer_has_only_go_or_800_and_requires_confirmation(){
         use erdtree_tower::regional_events::Trial;
         let menu=super::EventMenu{mausoleum_offer:true,trial:true,..Default::default()};

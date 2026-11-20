@@ -20,6 +20,10 @@ struct Steam {
 }
 #[derive(Default)]
 pub struct EventSync {
+    pub dance:Option<erdtree_tower::dance_party::Report>,
+    pub dance_prepare:Option<(u8,Vec<u64>)>,
+    pub dance_preparing:bool,
+    pub dance_complete:bool,
     pub pause:super::suspension::LinkState,
     pub frost_shackles:Vec<(u8,Instant)>,
     frost_sent:Option<Instant>,
@@ -438,6 +442,21 @@ impl Link {
     }
     pub fn accept(&mut self,order:&Order)->Result<bool,String> {
         match order {
+            Order::Dance{epoch,command} if *epoch==self.epoch=>{
+                use erdtree_tower::dance_party::Command;
+                match command {
+                    Command::Prepare{song,players} if *song<2&&!players.is_empty()&&players.len()<=8=>{
+                        if !self.event.dance_preparing{self.event.dance_prepare=Some((*song,players.clone()));self.event.dance_preparing=true;}
+                    },
+                    Command::Start if self.event.dance_preparing=>{
+                        let half_ping=if self.host(){0}else{self.latencies().iter().find(|r|r.player==self.config.player).and_then(|r|match r.status{erdtree_tower::party_latency::Status::Measured(ms)=>Some(u64::from(ms)/2),_=>None}).unwrap_or(0).min(1000)};
+                        super::dance_ui::start_prepared(Duration::from_millis(3000-half_ping));
+                    },
+                    Command::Complete=>self.event.dance_complete=true,
+                    Command::Cancel=>{self.event.dance_complete=true;self.event.dance_prepare=None;super::dance_ui::cancel();},
+                    _=>return Err("舞会同步指令无效".into()),
+                }
+            },
             Order::PausePrepare{epoch,ticket} if *epoch==self.epoch&&*ticket!=0=>{
                 if self.event.pause.ticket.is_none(){self.event.pause.ticket=Some(*ticket);self.event.pause.started=Some(Instant::now());self.selected=None;self.ballots.clear();}
                 return Ok(false);
@@ -668,6 +687,7 @@ impl Link {
             self.last_report=Instant::now();
             if let Some(run)=run {
                 let mut report=Report::new(run,self.epoch,self.arrived,self.bound,alive);
+                report.dance=self.event.dance;
                 report.pause_saved=self.event.pause.ticket.filter(|_|self.event.pause.saved);
                 if report.pause_saved.is_some(){report.resume=erdtree_tower::suspension::Point::of(run);}
                 report.leaving=self.event.pause.leaving;
@@ -786,7 +806,9 @@ impl Link {
                     let since=self.encounter.map_or(0.0,|t|t.elapsed().as_secs_f32());
                     super::log(format!("PARTY_ENGAGE epoch={} all replicas ready {since:.1} s after spawn",self.epoch));
                 }
-                for order in [self.gate.defeat(),self.gate.trial_order(),self.gate.stormveil_order(),self.gate.descent_order(),self.gate.mausoleum_order(),self.gate.spawn(),engage].into_iter().flatten() {
+                static DANCE_CLOCK:std::sync::LazyLock<Instant>=std::sync::LazyLock::new(Instant::now);
+                let dance=self.gate.dance_order(self.config.host,DANCE_CLOCK.elapsed().as_millis() as u64);
+                for order in [dance,self.gate.defeat(),self.gate.trial_order(),self.gate.stormveil_order(),self.gate.descent_order(),self.gate.mausoleum_order(),self.gate.spawn(),engage].into_iter().flatten() {
                     if let Err(e)=self.send(Send::Broadcast(order.clone())){self.stop(e);}else{orders.push(order);}
                 }
             }

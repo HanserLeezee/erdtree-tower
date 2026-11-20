@@ -40,6 +40,15 @@ impl Arena {
 pub fn for_act(act: u8) -> Arena {
     LEGACY[usize::from(act.clamp(1,3)-1)]
 }
+pub fn combat_arrival(block:i32)->Option<[f32;3]> {
+    include_str!("../../scene-assets/combat-arrivals.txt").lines().find_map(|line|{
+        let p:Vec<_>=line.split('|').collect();if p.len()!=4{return None;}
+        let map=p[0].strip_prefix('m')?.split('_').map(str::parse::<u8>).collect::<Result<Vec<_>,_>>().ok()?;
+        let bytes:[u8;4]=map.try_into().ok()?;if i32::from_be_bytes(bytes)!=block{return None;}
+        let pos=[p[1].parse().ok()?,p[2].parse().ok()?,p[3].parse().ok()?];
+        pos.iter().all(|v:&f32|v.is_finite()).then_some(pos)
+    })
+}
 pub fn for_block(block: i32) -> Option<Arena> { ARENAS.iter().chain(LEGACY.iter()).chain(BUILT.iter().map(|(_,a)|a)).copied().find(|a| a.block == block) }
 
 /// 主题幕的战斗场地：scene-builder arena-build（Windows）把原版地图改造成战场后写出 scene-assets/arenas-built.txt，每行

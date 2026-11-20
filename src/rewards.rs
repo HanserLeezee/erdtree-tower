@@ -132,12 +132,12 @@ pub fn spirit_cap(run:&Run)->u32 {
         // 骨灰规则 1（新旅程）：上限就是当前骨灰等级，取持有过的骨灰最高等级与武器等价强化等级中较大的，不再 +1
         Some(_) if run.spirit_rules>=1=>u32::from(spirit_level_now(run)),
         Some(peak)=>(u32::from(peak)+1).min(10),
-        None=>run.weapon_peak.map_or(10,|peak|(u32::from(crate::contracts::reinforcement_level(peak,10))+1).min(10)),
+        None=>run.weapon_peak.map_or(10,|peak|(u32::from(peak)/5+1).min(10)),
     }
 }
-/// 当前骨灰等级：持有过的骨灰最高等级与武器的失色等效强化等级中较大的，最高 +39。
+/// 骨灰沿用每级 5 点共享进度，独立于普通/失色武器的换算比例。
 pub fn spirit_level_now(run:&Run)->u8 {
-    crate::contracts::reinforcement_level(shared_upgrade_peak(run),10).min(SPIRIT_MAX)
+    (shared_upgrade_peak(run)/5).min(SPIRIT_MAX)
 }
 pub fn shared_upgrade_peak(run:&Run)->u8 {
     run.weapon_peak.unwrap_or(0).max(run.spirit_peak.unwrap_or(0).min(SPIRIT_MAX).saturating_mul(5)).min(crate::contracts::MAX_PEAK)
@@ -163,10 +163,18 @@ pub fn spirit_tune_target(id:u32,peak:u8)->Option<u32> {
     let level=spirit_level(id)?;
     (level<SPIRIT_MAX).then(||spirit_base(id)+u32::from(level.max(peak.min(SPIRIT_MAX))+1).min(u32::from(SPIRIT_MAX)))
 }
-/// 随机骨灰等级 +0～+cap（cap 为 10 时与原来的 +0～+10 相同）
-pub fn random_spirit_level(id:u32,entropy:u64,cap:u32)->u32 {
+/// 新骨灰固定取当前进度上限，最多 +39；非骨灰原样返回。
+pub fn capped_spirit_level(id:u32,cap:u32)->u32 {
     let base=spirit_base(id);
     if !CATALOG.iter().any(|i|i.id==base&&i.kind==ItemKind::Spirit){return id;}
+    base+cap.min(u32::from(SPIRIT_MAX))
+}
+
+// 仅用于校验迁移前的奖励存档。
+fn reward_spirit_level(run:&Run,id:u32,entropy:u64,cap:u32)->u32 {
+    if run.spirit_fixed_levels {return capped_spirit_level(id,cap);}
+    let base=spirit_base(id);
+    if spirit_level(id).is_none(){return id;}
     base+(crate::mix(entropy^u64::from(base)^0xa541_e7e1)%u64::from(cap.min(u32::from(SPIRIT_MAX))+1)) as u32
 }
 
@@ -180,8 +188,9 @@ pub(crate) fn ensure_summoner_spirit(run:&Run,node:usize,offers:&mut [Reward]) {
     let cap=spirit_cap(run);
     let entropy=run.reward_seed()^(node as u64).wrapping_mul(7919);
     let pool:Vec<_>=CATALOG.iter().filter(|i|i.kind==ItemKind::Spirit&&i.random_eligible()).filter_map(|i| {
-        let start=random_spirit_level(i.id,entropy,cap)-i.id;
-        (0..=cap).map(|offset|i.id+(start+offset)%(cap+1)).find(|id|!run.claimed_items.contains(id))
+        let id=reward_spirit_level(run,i.id,entropy,cap);
+        if run.spirit_fixed_levels {return (!run.claimed_items.contains(&id)).then_some(id);}
+        (0..=cap).map(|offset|i.id+(id-i.id+offset)%(cap+1)).find(|id|!run.claimed_items.contains(id))
     }).collect();
     if pool.is_empty(){return;}
     let slot=if offers.len()>2||run.nodes[node].kind==crate::NodeKind::Boss {1.min(offers.len()-1)}else{0};
@@ -206,11 +215,13 @@ pub(crate) fn before_claimed_bases(run:&Run,node:usize)->Vec<Reward> {
 fn casting_replaced(run:&Run,node:usize,spread:bool)->Vec<Reward> {
     let mut result=before_spirit_levels(run,node);let cap=spirit_cap(run);
     for reward in &mut result {if let Reward::Item(id)=reward {
-        *id=random_spirit_level(*id,run.reward_seed()^(node as u64).wrapping_mul(7919),cap);
+        *id=reward_spirit_level(run,*id,run.reward_seed()^(node as u64).wrapping_mul(7919),cap);
         if lookup(*id).is_some_and(|i|i.kind==ItemKind::Spirit)&&run.claimed_items.contains(id) {
-            let base=spirit_base(*id);let level=*id-base;
-            *reward=(1..=cap).map(|offset|base+(level+offset)%(cap+1)).find(|id|!run.claimed_items.contains(id))
-                .map_or(Reward::Gold(1500),Reward::Item);
+            if run.spirit_fixed_levels {*reward=Reward::Gold(1500);}else{
+                let base=spirit_base(*id);let level=*id-base;
+                *reward=(1..=cap).map(|offset|base+(level+offset)%(cap+1)).find(|id|!run.claimed_items.contains(id))
+                    .map_or(Reward::Gold(1500),Reward::Item);
+            }
         }
     }}
     if let Some(tools)=run.casting_tools {
@@ -383,6 +394,8 @@ mod tests {
         assert!(cards.iter().any(|r|matches!(r,Reward::Item(id) if spirit_level(*id)==Some(3)&&!run.claimed_items.contains(id))));
         run.claimed_items.extend(CATALOG.iter().filter(|i|i.kind==ItemKind::Spirit).map(|i|i.id+3));
         cards=vec![Reward::Gold(1500);3];ensure_summoner_spirit(&run,node,&mut cards);assert!(cards.iter().all(|r|*r==Reward::Gold(1500)));
+        run.claimed_items.retain(|id|spirit_level(*id)==Some(3));
+        cards=vec![Reward::Gold(1500);3];ensure_summoner_spirit(&run,node,&mut cards);assert!(cards.iter().all(|r|*r==Reward::Gold(1500)),"do not substitute lower levels when the cap is owned");
         run.claimed_items.clear();run.law=crate::law::Law(1<<14);
         ensure_summoner_spirit(&run,node,&mut cards);assert!(cards.iter().all(|r|*r==Reward::Gold(1500)));
         run.law=Default::default();run.class=Class::Hero;
@@ -473,12 +486,12 @@ mod tests {
             let cap=spirit_cap(&run);
             for node in 0..run.nodes.len().min(12) {for reward in offers(&run,node) {
                 if let Reward::Item(id)=reward {if lookup(id).is_some_and(|i|i.kind==ItemKind::Spirit) {
-                    let level=id-spirit_base(id);assert!(level<=cap,"+{level} over +{cap}");
+                    let level=id-spirit_base(id);assert_eq!(level,cap,"new ashes must match the current cap");
                     if peak.is_none(){seen[level as usize]=true;}
                 }}
             }}
         }}
-        assert!(seen.iter().all(|s|*s),"without any record every level still appears");
+        assert!(seen[10]);assert!(!seen[..10].iter().any(|s|*s));
     }
     #[test]
     fn upgrade_stones_appear_in_combat_rewards_of_new_runs_only() {

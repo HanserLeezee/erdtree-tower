@@ -10,7 +10,8 @@ $files=@{}
 foreach($name in 'ersc.dll','Tower.SeamlessGate.dll'){$files[$name]=(Get-FileHash (Join-Path $folder $name)).Hash}
 @{protocol=1;files=$files}|ConvertTo-Json -Depth 4|Set-Content (Join-Path $folder 'gate-manifest.json') -Encoding UTF8
 Assert-TowerSessionGate $fixture 'ME3'
-try {Assert-TowerSessionGate $fixture 'YAFSML';throw 'accepted unsupported loader'}catch{if($_.Exception.Message -notlike '*require ME3*'){throw}}
+Assert-TowerSessionGate $fixture 'YAFSML'
+try {Assert-TowerSessionGate $fixture 'unknown';throw 'accepted unsupported loader'}catch{if($_.Exception.Message -notlike '*Unsupported session loader*'){throw}}
 $profile="profileVersion = 'v1'`n[[natives]]`npath = 'SeamlessCoop/ersc.dll'`n[[packages]]`npath = 'scene-assets'`n"
 $once=Add-TowerSessionGate $profile
 $twice=Add-TowerSessionGate $once

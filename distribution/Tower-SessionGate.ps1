@@ -1,5 +1,5 @@
 function Assert-TowerSessionGate([string]$Root,[string]$Loader) {
-    if($Loader -ne 'ME3'){throw 'Private sessions require ME3. Select ME3 in launcher settings.'}
+    if($Loader -notin @('ME3','YAFSML')){throw 'Unsupported session loader. Select ME3 or YAFSML in launcher settings.'}
     $folder=Join-Path $Root 'SeamlessCoop'
     $file=Join-Path $folder 'gate-manifest.json'
     if(!(Test-Path -LiteralPath $file -PathType Leaf)){throw 'Session component manifest missing. Verify and repair the launcher package.'}

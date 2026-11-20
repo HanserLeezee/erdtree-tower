@@ -56,7 +56,6 @@ namespace Tower.Launcher
             this.form = form;
             settings = HostSettings.Load(paths.SettingsFile);
             settings.Network = NetworkProfile.Detect(GameDir());
-            if (settings.Loader != HostSettings.Me3) { settings.Loader = HostSettings.Me3; settings.Save(paths.SettingsFile); }
             // 跳转由 HttpReleaseSource 自己跟，保证每一跳都带 Range
             http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(5) };
             http.DefaultRequestHeaders.UserAgent.ParseAdd($"ErdtreeTowerLauncher/{typeof(TowerHost).Assembly.GetName().Version}");
@@ -186,7 +185,7 @@ namespace Tower.Launcher
                     PushStatus();
                     return;
                 case "loader":
-                    settings.Loader = HostSettings.Me3;
+                    settings.Loader = value.ValueKind == JsonValueKind.String && value.GetString() == HostSettings.Yafsml ? HostSettings.Yafsml : HostSettings.Me3;
                     settings.Save(paths.SettingsFile);
                     PushStatus();
                     return;
@@ -374,6 +373,7 @@ namespace Tower.Launcher
                     break;
                 case "checkUpdate": _ = CheckAsync(true); break;
                 case "verify": _ = UpdateAsync(true); break;
+                case "repairMapSave": RepairMapSave(); break;
                 case "chooseGameDir": ChooseGameDir(); break;
                 case "openGuide": OpenDocument(PackageDocument("安装教程.md", "安装教程.txt"), Repo + "#readme"); break;
                 case "openWiki": OpenWiki(); break;
@@ -923,6 +923,10 @@ namespace Tower.Launcher
                 catch (Win32Exception) { workerRunning = true; }
                 if (!workerRunning) launchWorker = null;
             }
+            if(LocalAssetPreparationBusy()) {
+                Toast("已有本地资源生成任务正在运行，请等待完成后再启动", "info", 6000);
+                return false;
+            }
             var reason = LobbyLaunch.BlockReason(GameRunning(), launching, workerRunning, running != null);
             if (reason == null) return true;
             Toast(reason, "warn", 6000);
@@ -1166,6 +1170,23 @@ namespace Tower.Launcher
         }
 
         static void OpenFolder(string dir) => Process.Start("explorer.exe", Quote(dir))?.Dispose();
+
+        void RepairMapSave()
+        {
+            if (GameRunning() || launching || running != null || LocalAssetPreparationBusy())
+            { Toast("请先退出游戏，并等待启动或更新任务结束后再修复。", "warn"); return; }
+            using var dialog = new OpenFileDialog { Title = "选择卡在地图界面的角色记录（tower-槽位-角色编号.json）",
+                Filter = "爬塔角色记录|tower-*.json", CheckFileExists = true,
+                InitialDirectory = SaveRecovery.Folders(paths.InstallDir).Skip(1).FirstOrDefault(Directory.Exists) ?? paths.InstallDir };
+            if (dialog.ShowDialog(form) != DialogResult.OK) return;
+            if (MessageBox.Show(form, "将备份所选角色的爬塔记录，并将地图阶段的旅程转为暂存。\n下次请先单独读档，返回大赐福后选择继续旅程。\n\n不会清空角色或改写装备，也不会跳过房间。联机恢复需队友的旅程进度一致。\n此功能不能修复游戏线程卡死或资源加载故障。\n\n记录：" + dialog.FileName,
+                "修复地图卡档", MessageBoxButtons.OKCancel, MessageBoxIcon.Information, MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
+            var backup = SaveRecovery.Prepare(paths.InstallDir, dialog.FileName, GameRunning);
+            Log.Write("地图卡档修复暂存已创建，备份：" + backup);
+            MessageBox.Show(form, "已创建恢复暂存。请启动游戏，先单独读入对应角色，在大赐福继续旅程。\n\n备份位置：" + backup,
+                "恢复暂存已准备", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            OpenFolder(backup);
+        }
 
         void OpenLogs()
         {

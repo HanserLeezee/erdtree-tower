@@ -37,13 +37,13 @@ pub fn reinforcement_target(id:i32,cap:i32,max:i32)->Option<i32> {
 pub fn target_with_peak(id:i32,cap:i32,max:i32,peak:i32)->Option<i32> {
     if id<0||!matches!(cap,10|25)||id%100>=max {return None;}
     let step=if cap==25 {3}else{1};
-    Some(id-id%100+(id%100).max(peak.clamp(0,MAX_PEAK)*cap/50).saturating_add(step).min(max))
+    Some(id-id%100+(id%100).max(i32::from(erdtree_tower::contracts::reinforcement_level(peak.clamp(0,MAX_PEAK) as u8,cap as u8))).saturating_add(step).min(max))
 }
 /// 获得武器时追平等效等级：cap 为 (原版满级, 实际最高等级)
 pub fn received_with_peak(id:u32,cap:Option<(i32,i32)>,peak:i32)->u32 {
     if id>>28!=0 {return id;}
     let Some((cap,max))=cap.filter(|(cap,_)|matches!(cap,10|25)) else{return id;};
-    id-id%100+(id%100).max((peak.clamp(0,MAX_PEAK)*cap/50) as u32).min(max.max(0) as u32)
+    id-id%100+(id%100).max(u32::from(erdtree_tower::contracts::reinforcement_level(peak.clamp(0,MAX_PEAK) as u8,cap as u8))).min(max.max(0) as u32)
 }
 pub fn acquisition_id(id:u32,peak:i32,params:&SoloParamRepository)->Result<u32,String> {
     use eldenring::cs::{EquipParamWeapon,ReinforceParamWeapon};
@@ -77,7 +77,7 @@ pub fn inventory_peak(data:&PlayerGameData,params:&SoloParamRepository)->i32 {
             let id=e.item_id.param_id();
             let base=params.get::<eldenring::cs::EquipParamWeapon>(id/100*100)?;
             let cap=if base.origin_equip_wep16()<0 {10}else{25};
-            (base.origin_equip_wep1()>=0).then_some(((id%100*50/cap) as i32).min(MAX_PEAK))
+            (base.origin_equip_wep1()>=0).then_some(i32::from(erdtree_tower::contracts::reinforcement_peak((id%100) as u8,cap)))
         }).max().unwrap_or(0)
 }
 /// 原版强化菜单只认到原版满级（普通 +25、失色 +10）：到了满级就不再生成“强化”这一项，武器从强化列表里消失。
@@ -327,30 +327,44 @@ mod tests {
     fn catch_up_converts_caps_without_rounding_up_or_losing_affinity() {
         use super::target_with_peak;
         assert_eq!(target_with_peak(901200,25,99,40),Some(901223));
-        assert_eq!(target_with_peak(901200,10,39,40),Some(901209));
+        assert_eq!(target_with_peak(901200,10,39,40),Some(901207));
         assert_eq!(target_with_peak(901200,25,99,35),Some(901220));
-        assert_eq!(target_with_peak(901200,10,39,38),Some(901208));
+        assert_eq!(target_with_peak(901200,10,39,38),Some(901207));
         assert_eq!(target_with_peak(901220,25,99,40),Some(901223));
         assert_eq!(target_with_peak(901208,10,39,40),Some(901209));
         assert_eq!(target_with_peak(901224,25,99,50),Some(901228),"+25 is no longer the cap");
         assert_eq!(target_with_peak(901210,10,39,50),Some(901211));
         assert_eq!(target_with_peak(901200,25,99,100),Some(901253),"peak 100 = normal +50");
-        assert_eq!(target_with_peak(901200,10,39,100),Some(901221),"= somber +20");
+        assert_eq!(target_with_peak(901200,10,39,100),Some(901217),"peak 100 catches up to somber +16, then +1");
         assert_eq!(target_with_peak(901224,25,25,50),Some(901225),"vanilla parameters keep the vanilla cap");
         assert_eq!(target_with_peak(901210,10,10,50),None);
         assert_eq!(target_with_peak(-1,25,99,50),None);
     }
     #[test]
+    fn normal_six_then_two_somber_upgrades_returns_normal_twelve() {
+        use erdtree_tower::contracts::reinforcement_peak;
+        let mut peak=i32::from(reinforcement_peak(6,25));
+        let mut somber=super::received_with_peak(160001200,Some((10,39)),peak) as i32;
+        assert_eq!(somber,160001202);
+        for expected in [3,4] {
+            somber=super::target_with_peak(somber,10,39,peak).unwrap();
+            assert_eq!(somber%100,expected);
+            peak=i32::from(reinforcement_peak((somber%100) as u8,10));
+        }
+        assert_eq!(super::received_with_peak(160001206,Some((25,99)),peak),160001212);
+        assert_eq!(super::target_with_peak(160001206,25,99,peak),Some(160001215));
+    }
+    #[test]
     fn camp_offer_catches_normal_weapon_up_to_somber_six() {
-        let peak=6*50/10;
+        let peak=i32::from(erdtree_tower::contracts::reinforcement_peak(6,10));
         for level in [0,1,2,6,10,12] {
             let old=901200+level;
             let next=super::target_with_peak(old,25,99,peak).unwrap();
-            assert_eq!(next,901218);
+            assert_eq!(next,901221);
             let mut offer=super::Offer{weapon:old+1,material:700001,flags:1};
-            super::update_offer(&mut offer,old,next,700018);
-            assert_eq!(offer.weapon,901218);
-            assert_eq!(offer.material,700018);
+            super::update_offer(&mut offer,old,next,700021);
+            assert_eq!(offer.weapon,901221);
+            assert_eq!(offer.material,700021);
         }
     }
     #[test]
@@ -358,16 +372,16 @@ mod tests {
         use super::received_with_peak as receive;
         let (normal,somber)=(Some((25,99)),Some((10,39)));
         assert_eq!(receive(160001200,normal,30),160001215);
-        assert_eq!(receive(160001200,somber,30),160001206);
+        assert_eq!(receive(160001200,somber,30),160001205);
         assert_eq!(receive(160001215,normal,30),160001215);
         assert_eq!(receive(160001218,normal,30),160001218);
-        assert_eq!(receive(160001200,somber,36),160001207);
+        assert_eq!(receive(160001200,somber,36),160001206);
         assert_eq!(receive(160001200,normal,50),160001225);
-        assert_eq!(receive(160001200,somber,50),160001210);
+        assert_eq!(receive(160001200,somber,50),160001208);
         assert_eq!(receive(160001200,normal,0),160001200);
         // 超过原版满级：等效等级继续换算，普通 +99、失色 +39 封顶；参数只到原版满级时停在原版满级
         assert_eq!(receive(160001200,normal,120),160001260);
-        assert_eq!(receive(160001200,somber,120),160001224);
+        assert_eq!(receive(160001200,somber,120),160001220);
         assert_eq!(receive(160001200,normal,250),160001299);
         assert_eq!(receive(160001200,somber,250),160001239);
         assert_eq!(receive(160001200,Some((25,25)),120),160001225);

@@ -3,7 +3,7 @@
 //!   debug=1              打开调试菜单（和放一个 tower-debug.enable 文件效果相同）
 //!   dlc=full             DLC 内容：full 有 DLC；none 没有 DLC；weapons 没有 DLC 但保留 DLC 武器（实验）。只对单人生效，见 dlc.rs
 //!   key.settle=Home      快速结算（暂离结束本局）
-//!   key.overlay=Insert   显示/隐藏爬塔界面
+//!   key.map=F3           开关爬塔地图
 //!   key.archive=J        旅程档案
 //!   key.build=C          构筑面板（地图界面）
 //!   key.debug=Delete     调试菜单；None 表示未绑定
@@ -24,37 +24,37 @@ impl Renderer {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Hotkey {
     Settle,
-    Overlay,
     Archive,
     Build,
     Debug,
     /// 跳过本关：视为本场战斗胜利，直接到三选一（联机只有房主能用）
     Skip,
     Recover,
+    Map,
 }
 
 impl Hotkey {
-    pub const ALL: [Hotkey; 7] = [Hotkey::Settle, Hotkey::Overlay, Hotkey::Archive, Hotkey::Build, Hotkey::Debug, Hotkey::Skip, Hotkey::Recover];
+    pub const ALL: [Hotkey; 7] = [Hotkey::Settle, Hotkey::Archive, Hotkey::Build, Hotkey::Debug, Hotkey::Skip, Hotkey::Recover, Hotkey::Map];
     pub fn id(self) -> &'static str {
         match self {
             Hotkey::Settle => "settle",
-            Hotkey::Overlay => "overlay",
             Hotkey::Archive => "archive",
             Hotkey::Build => "build",
             Hotkey::Debug => "debug",
             Hotkey::Skip => "skip",
             Hotkey::Recover => "recover",
+            Hotkey::Map => "map",
         }
     }
     pub fn default_key(self) -> &'static str {
         match self {
             Hotkey::Settle => "Home",
-            Hotkey::Overlay => "Insert",
             Hotkey::Archive => "J",
             Hotkey::Build => "C",
             Hotkey::Debug => "Delete",
             Hotkey::Skip => "End",
             Hotkey::Recover => "F7",
+            Hotkey::Map => "F3",
         }
     }
 }
@@ -166,6 +166,9 @@ mod tests {
         assert_eq!(parse("renderer=unknown").renderer, Renderer::Game);
         assert_eq!(parse("").key(Hotkey::Recover), "F7");
         assert_eq!(parse("key.recover=F8").key(Hotkey::Recover), "F8");
+        assert_eq!(parse("").key(Hotkey::Map), "F3");
+        assert_eq!(parse("key.map=F9").key(Hotkey::Map), "F9");
+        assert_eq!(parse("key.map=None").key(Hotkey::Map), "None");
     }
 
     #[test]
@@ -180,7 +183,7 @@ mod tests {
     fn missing_or_empty_file_keeps_the_original_keys() {
         let options = parse("");
         assert!(!options.debug);
-        assert_eq!(Hotkey::ALL.map(|h| options.key(h)), ["Home", "Insert", "J", "C", "Delete", "End", "F7"]);
+        assert_eq!(Hotkey::ALL.map(|h| options.key(h)), ["Home", "J", "C", "Delete", "End", "F7", "F3"]);
     }
 
     #[test]
@@ -190,7 +193,7 @@ mod tests {
         assert!(options.debug);
         assert_eq!(options.dlc, crate::dlc::Mode::Weapons);
         assert_eq!(options.key(Hotkey::Settle), "End");
-        assert_eq!(options.key(Hotkey::Overlay), "F9");
+        assert_eq!(options.key(Hotkey::Map), "F3", "retired overlay binding is ignored");
         assert_eq!(options.key(Hotkey::Archive), "Num5");
         assert_eq!(options.key(Hotkey::Build), "C");
         assert_eq!(options.prompts, Prompts::Keyboard, "keyboard prompts unless chosen otherwise");

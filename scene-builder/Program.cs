@@ -1,5 +1,23 @@
 using SoulsFormats;
 using System.Numerics;
+if(args.Length==4&&args[3]=="scene-reuse-patch") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    SceneReuseAssets.Patch(args[2],args[1]);return;
+}
+if(args.Length==6&&args[3]=="custom-spirit-localized-text") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    CustomSpiritAssets.PatchLocalizedText(args[2],args[1],args[4],args[5]);return;
+}
+if(args.Length==1&&args[0]=="spirit-placement-test"){SpiritPlacementAssets.Test();return;}
+if(args.Length==4&&args[3] is "spirit-placement-patch" or "spirit-placement-verify"){SpiritPlacementAssets.Patch(args[2],args[1],args[3]=="spirit-placement-verify");return;}
+if(args.Length==4&&args[3]=="silver-sphere-patch") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    SilverSphereAssets.Patch(args[2],args[1]);return;
+}
+if(args.Length==4&&args[3]=="ember-icon-sync") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    EmberPickupAssets.SyncLocalized(args[2],args[1]);return;
+}
 if(args.Length==4&&args[3]=="adaptation-text-patch") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     AffixTextFix.PatchAdaptive(args[2],args[1]);return;
@@ -230,6 +248,7 @@ modes=modes.Append("event-host-entity-patch").ToArray();
 modes=modes.Append("event-host-name-patch").ToArray();
 modes=modes.Append("portal-persist-patch").ToArray();
 modes=modes.Append("slim-assets").ToArray();
+modes=modes.Append("dance-stage").ToArray();
 modes=modes.Append("mausoleum-patch").ToArray();
 modes=modes.Append("mausoleum-startup-fix").ToArray();
 modes=modes.Concat(new[]{"mausoleum-display-test","mausoleum-display-patch"}).ToArray();
@@ -355,6 +374,7 @@ if(args.Contains("melina-inspect")) {
     return;
 }
 if(args.Contains("comet-inspect")){CometInspect.Run(game,output);return;}
+if(args.Contains("dance-stage")){DanceStageAssets.Patch(cache,output);return;}
 if(args.Contains("recovery-text")){RecoveryText.Patch(cache,output);return;}
 if(args.Contains("talisman-menu-text")){RecoveryText.PatchTalismans(cache,output);return;}
 if(args.Contains("chest-text")){RecoveryText.Patch(cache,output,true);return;}

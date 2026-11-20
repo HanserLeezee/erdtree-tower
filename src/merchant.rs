@@ -2,8 +2,9 @@ use serde::{Deserialize,Serialize};
 use crate::{Run,NodeKind,RuleResult};
 
 pub const MAX_BELLS:usize=64;
-pub const BASE_STOCK:usize=43;
-pub const MAX_STOCK:usize=BASE_STOCK+MAX_BELLS*5;
+pub const BASE_STOCK:usize=38;
+// Preserve the capacity used by older saved shops and native parameter rows.
+pub const MAX_STOCK:usize=43+MAX_BELLS*5;
 pub const NAMES:[&str;3]=["武器铃珠","防具铃珠","护符铃珠"];
 pub const HUNTER_CHANCE:u64=30;
 pub fn hunter_appears(seed:u64,act:u8,node:usize)->bool {
@@ -70,7 +71,7 @@ mod tests {
         assert!(r.challenge_merchant().is_err());assert!(r.leave_shop().is_err());
         let mut restored=Run::decode(&r.encode().unwrap()).unwrap();
         let kind=r.defeat_hunter().unwrap().unwrap();assert_eq!(restored.defeat_hunter().unwrap(),Some(kind));
-        assert_eq!(r.bells.counts[kind],1);assert_eq!(r.bells.stock_count(),48);
+        assert_eq!(r.bells.counts[kind],1);assert_eq!(r.bells.stock_count(),43);
         assert_eq!(r.defeat_hunter().unwrap(),None);assert!(r.challenge_merchant().is_err());
         assert!(r.bells.valid());r.leave_shop().unwrap();assert_eq!(Run::decode(&r.encode().unwrap()).unwrap().bells,r.bells);
         assert_eq!(Run::new(44,crate::Class::Samurai).bells.counts,[0;3]);

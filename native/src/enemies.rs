@@ -88,6 +88,7 @@ const ORDINARY_STRONG_MODELS:[i32;19]=[
 ];
 fn ordinary_strong(e:&Enemy)->bool {ORDINARY_STRONG_MODELS.contains(&e.model)}
 pub fn elite_combatant(e:&Enemy)->bool {e.kind==NodeKind::Elite&&!ordinary_strong(e)}
+pub fn paced_combatant(e:&Enemy)->bool {e.kind==NodeKind::Elite}
 #[test]
 fn revenant_stays_in_act_three_elites_and_act_one_bosses_exclude_cleanrot_and_revenant() {
     assert!(POOLS.iter().any(|e|e.act==3&&e.model==4020&&e.kind==NodeKind::Elite&&!e.retired));
@@ -242,15 +243,24 @@ fn elite_room_composition_matches_progress_in_solo_and_party() {
 }
 
 #[test]
-fn middle_elite_support_spawns_together_and_late_elites_obey_law_pacing() {
+fn elite_support_and_late_elites_obey_law_pacing() {
     use erdtree_tower::encounter::{Outcome,Pacing,may_spawn_paced};
     for party in [false,true] {for act in 1..=3 {for layer in [3,9] {
         let group=roster_in(NodeKind::Elite,17,3,layer,act,party);
         let roles:Vec<_>=group.iter().map(role).collect();
         for pacing in [Pacing::Apart,Pacing::HalfHealth,Pacing::Together] {
-            let earlier:Vec<_>=group[..1].iter().filter(|e|elite_combatant(e)).map(|_|(Outcome::Waiting,Some((100,100)))).collect();
-            let held=elite_combatant(&group[1])&&pacing.waits(&earlier);
-            assert_eq!(may_spawn_paced(party,false,held,&roles,1,&[Outcome::Waiting]),layer==3||pacing==Pacing::Together);
+            for (outcome,health,expected) in [
+                (Outcome::Waiting,None,pacing==Pacing::Together),
+                (Outcome::Waiting,Some((100,100)),pacing==Pacing::Together),
+                (Outcome::Waiting,Some((51,100)),pacing==Pacing::Together),
+                (Outcome::Waiting,Some((50,100)),pacing!=Pacing::Apart),
+                (Outcome::Victory,None,true),
+            ] {
+                let earlier:Vec<_>=group[..1].iter().filter(|e|paced_combatant(e)).map(|_|(outcome,health)).collect();
+                let held=paced_combatant(&group[1])&&pacing.waits(&earlier);
+                assert_eq!(may_spawn_paced(party,false,held,&roles,1,&[outcome]),expected,
+                    "party={party} act={act} layer={layer} pacing={pacing:?} health={health:?}");
+            }
         }
     }}}
 }

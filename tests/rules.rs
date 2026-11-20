@@ -434,8 +434,8 @@ fn purchasing_capped_blessing_does_not_charge_or_consume_stock() {
 #[test]
 fn weapon_levels_keep_converting_past_the_vanilla_cap() {
     use erdtree_tower::contracts::{reinforcement_level,MAX_PEAK,NORMAL_MAX,SOMBER_MAX};
-    assert_eq!((reinforcement_level(50,25),reinforcement_level(50,10)),(25,10),"vanilla full level");
-    assert_eq!((reinforcement_level(120,25),reinforcement_level(120,10)),(60,24));
+    assert_eq!((reinforcement_level(50,25),reinforcement_level(50,10)),(25,8),"normal +25 converts down to somber +8");
+    assert_eq!((reinforcement_level(120,25),reinforcement_level(120,10)),(60,20));
     assert_eq!((reinforcement_level(MAX_PEAK,25),reinforcement_level(MAX_PEAK,10)),(NORMAL_MAX,SOMBER_MAX));
     assert_eq!(reinforcement_level(255,25),NORMAL_MAX,"clamped at the top peak");
     // 骨灰与失色武器保持等效上限。

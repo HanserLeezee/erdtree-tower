@@ -9,7 +9,7 @@ pub static HOSTS:std::sync::LazyLock<Vec<Host>>=std::sync::LazyLock::new(||inclu
 /// 重练炉借用重铸台守炉人；灵庙使用祭坛引导者，包括死亡重试清空事件进度后。
 pub fn index(draw:Draw)->usize {
     let draw=match draw {
-        Draw::Furnace=>Draw::Reforge,Draw::Mausoleum=>Draw::Altar,
+        Draw::Furnace=>Draw::Reforge,Draw::Mausoleum=>Draw::Altar,Draw::Dance=>Draw::Spring,
         Draw::Trial|Draw::Chests|Draw::Altar|Draw::Locked|Draw::Scarabs|Draw::Spring|Draw::Dice|Draw::Mystery|Draw::Reforge=>draw,
     };
     HOSTS.iter().position(|h|h.draw==draw).expect("Event host catalog incomplete")

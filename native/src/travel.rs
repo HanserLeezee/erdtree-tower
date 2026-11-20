@@ -1,8 +1,18 @@
 use std::time::Duration;
 
 pub const PREPARATION: Duration = Duration::from_secs(3);
+pub const RESET_REQUEST:u32=45007890;
+pub const RESET_CLEARED:u32=45007892;
 const TIMEOUT: Duration = Duration::from_secs(60);
 const SETTLE: Duration = Duration::from_millis(500);
+
+#[derive(Debug)]
+pub struct ReuseCheck {
+    pub same_scene:bool,pub route_ready:bool,pub players_ready:bool,pub clear:bool,pub recovering:bool,
+}
+impl ReuseCheck {
+    pub fn allowed(&self)->bool {self.same_scene&&self.route_ready&&self.players_ready&&self.clear&&!self.recovering}
+}
 
 fn arrival_hp(current:i32,maximum:i32,saved:i32,dead:bool)->i32 {
     if dead||current<=0||maximum<=0||saved<=0 {return current;}
@@ -35,6 +45,8 @@ pub enum Progress {
 
 pub struct Travel {
     pub node: usize,
+    pub reused_scene:bool,
+    pub reuse_ready:bool,
     pub resources_restored: bool,
     stable_since: Option<Duration>,
     ready_since: Option<Duration>,
@@ -45,6 +57,8 @@ impl Travel {
     pub fn new(node: usize) -> Self {
         Self {
             node,
+            reused_scene:false,
+            reuse_ready:false,
             resources_restored: false,
             stable_since: None,
             ready_since: None,
@@ -53,6 +67,12 @@ impl Travel {
     }
     pub fn is_preparing(&self) -> bool {
         self.ready_since.is_some()
+    }
+    pub fn poll_entry(&mut self,elapsed:Duration,arrived:bool,grounded:bool,placed:bool,crossed:bool,circle:bool)->Progress {
+        if self.reused_scene&&!self.reuse_ready{return Progress::Loading;}
+        if circle {self.poll_circle(elapsed,arrived&&(placed||self.reused_scene),grounded,crossed)}
+        else if self.reused_scene {self.poll(elapsed,arrived,grounded)}
+        else {self.poll_fog(elapsed,arrived&&placed,grounded,crossed)}
     }
     pub fn poll_circle(&mut self,elapsed:Duration,arrived:bool,grounded:bool,crossed:bool)->Progress {
         if !arrived||!crossed {
@@ -100,6 +120,44 @@ impl Travel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reuse_requires_loaded_scene_ready_players_and_clean_completed_route() {
+        let safe=||ReuseCheck{same_scene:true,route_ready:true,players_ready:true,clear:true,recovering:false};
+        assert!(safe().allowed());
+        for bad in [ReuseCheck{same_scene:false,..safe()},ReuseCheck{route_ready:false,..safe()},
+            ReuseCheck{players_ready:false,..safe()},ReuseCheck{clear:false,..safe()},ReuseCheck{recovering:true,..safe()}] {
+            assert!(!bad.allowed());
+        }
+    }
+    #[test]
+    fn retained_arena_still_prepares_and_waits_for_ground_before_party_spawn() {
+        let mut travel=Travel::new(4);travel.reused_scene=true;travel.reuse_ready=true;
+        assert_eq!(travel.poll_entry(ms(1000),true,true,false,false,false),Progress::Loading);
+        assert_eq!(travel.poll_entry(ms(1500),true,true,false,false,false),Progress::Countdown(3));
+        assert_eq!(travel.poll_entry(ms(4500),true,false,false,false,false),Progress::Loading);
+        assert_eq!(travel.poll_entry(ms(4600),true,true,false,false,false),Progress::Spawn);
+        travel.reused_scene=false;
+        assert_eq!(travel.poll_entry(ms(4700),true,true,true,false,false),Progress::Fog);
+    }
+    #[test]
+    fn retained_dragonlord_scene_waits_for_center_instead_of_loading_region() {
+        let mut travel=Travel::new(5);travel.reused_scene=true;travel.reuse_ready=true;
+        assert_eq!(travel.poll_entry(ms(120000),true,true,false,false,true),Progress::Fog);
+        assert_eq!(travel.poll_entry(ms(121000),true,true,false,true,true),Progress::Loading);
+        assert_eq!(travel.poll_entry(ms(121500),true,true,false,true,true),Progress::Countdown(3));
+        assert_eq!(travel.poll_entry(ms(124500),true,true,false,true,true),Progress::Spawn);
+    }
+    #[test]
+    fn reuse_cannot_count_down_at_old_reward_portal_before_reset_confirmation() {
+        let mut travel=Travel::new(4);travel.reused_scene=true;
+        assert_eq!(travel.poll_entry(ms(1000),true,true,true,true,true),Progress::Loading);
+        assert_eq!(travel.poll_entry(ms(6000),true,true,true,true,true),Progress::Loading);
+        assert!(!travel.is_preparing());
+        travel.reuse_ready=true;
+        assert_eq!(travel.poll_entry(ms(6100),true,true,true,false,true),Progress::Fog);
+        assert_eq!(travel.poll_entry(ms(7000),true,true,true,true,true),Progress::Loading);
+        assert_eq!(travel.poll_entry(ms(7500),true,true,true,true,true),Progress::Countdown(3));
+    }
     #[test]
     fn arrival_restores_hp_clamped_while_godslayer_or_crimson_amber_reloads() {
         assert_eq!(arrival_hp(1000,1440,1440,false),1440);

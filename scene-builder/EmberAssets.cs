@@ -8,8 +8,8 @@ static class EmberAssets {
     // 圣杯余响：喝圣杯瓶后造成的伤害 ×1.15、受到的伤害 ×0.85（与 src/embers.rs 的 ECHO_* 一致；持续时间由运行时控制）
     const float EchoAttack=1.15f,EchoCut=0.85f;
     // 法师余烬（与 src/embers.rs 的 BARRIER_* / GLINTSTONE_* / MOON_* 一致）：施法时受到的伤害 ×0.5、施法时韧性伤害 ×0（霸体）、
-    // 法术与祷告的专注消耗 ×0.75（常驻）、专注不低于 70% 时造成的伤害 ×1.5；何时挂上由运行时控制
-    const float BarrierCut=0.5f,MeditationToughness=0f,GlintstoneCost=0.75f,MoonAttack=1.5f;
+    // 法术与祷告的专注消耗 ×0.75（常驻）、专注不低于 70% 时造成的伤害 ×1.3；何时挂上由运行时控制
+    const float BarrierCut=0.5f,MeditationToughness=0f,GlintstoneCost=0.75f,MoonAttack=1.3f;
     // 灵唤师的共鸣：召唤物在场时玩家造成的伤害 ×1.4（与 src/embers.rs 的 SPIRIT_RESONANCE_PERCENT 一致；何时挂上由运行时控制）
     const float ResonanceAttack=1.4f;
     // 战技的精粹（与 src/embers.rs 的 ARTS_* 一致）：战技造成的伤害 ×1.25（复制原版只对战技生效的增伤 312310，与战技伤害词条同一模板）、战技专注消耗 ×0.5；持有即常驻

@@ -75,7 +75,7 @@ impl Pending {
     pub fn restored(roster:Roster,transport:Transport,handshake:erdtree_tower::party_handshake::Handshake,packets:Vec<(u64,erdtree_tower::party_handshake::Payload)>)->Self {
         Self{roster,transport,handshake,packets,hello:std::time::Instant::now(),started:std::time::Instant::now(),failure:None}
     }
-    pub fn waiting_reason(&self)->String {self.failure.clone().unwrap_or_else(||self.handshake.waiting_reason())}
+    pub fn waiting_reason(&self)->String {super::seamless::display_player_names(&self.failure.clone().unwrap_or_else(||self.handshake.waiting_reason()))}
     pub fn new(roster:Roster,nonce:u64,seed:u64,dlc:bool,profile:erdtree_tower::party_compat::Compatibility)->Result<Self,String> {
         let handshake=erdtree_tower::party_handshake::Handshake::new(roster.clone(),nonce,seed)?.with_dlc(dlc).with_compatibility(profile)?;
         Ok(Self{transport:Transport::load(roster.clone())?,roster,handshake,hello:std::time::Instant::now()-std::time::Duration::from_secs(1),started:std::time::Instant::now(),packets:vec![],failure:None})
@@ -245,10 +245,10 @@ mod tests {
         let mut host=make(1,profile.clone());let mut late=make(3,profile.clone());let mut bad=profile;bad.rules[4]=35;
         let bad=make(2,bad);let mut failure=None;
         let first=handshake_responses(&mut host,&mut failure,2,bad.hello().unwrap().1);assert_eq!(first.len(),1);
-        assert!(failure.as_ref().unwrap().contains("队员 2"));
+        assert!(failure.as_ref().unwrap().contains("队友 2"));
         let responses=handshake_responses(&mut host,&mut failure,3,late.hello().unwrap().1);assert_eq!(responses.len(),1);
         assert!(matches!(&responses[0].1,HandshakeMessage::Reject{nonce:103,..}));
-        assert!(late.receive_lobby(1,responses[0].1.clone()).unwrap_err().contains("队员 2"));
+        assert!(late.receive_lobby(1,responses[0].1.clone()).unwrap_err().contains("队友 2"));
         assert!(host.ready().is_none());assert!(late.ready().is_none());
     }
     #[test]

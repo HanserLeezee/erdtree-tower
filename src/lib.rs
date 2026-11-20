@@ -52,6 +52,8 @@ pub mod lobby;
 pub mod dlc;
 pub mod stat_summary;
 pub mod dance;
+pub mod dance_party;
+pub mod dance_stage;
 
 pub type RuleResult<T> = Result<T, String>;
 
@@ -315,6 +317,8 @@ pub struct Run {
     /// 骨灰规则：1 起刷出的骨灰最高为当前骨灰等级（不再 +1，并计入武器等价强化等级）；更早的存档为 0
     #[serde(default)]
     pub spirit_rules: u8,
+    #[serde(default)]
+    pub spirit_fixed_levels: bool,
     pub class: Class,
     pub nodes: Vec<Node>,
     pub phase: Phase,
@@ -735,7 +739,7 @@ impl Run {
             boss_test: None,
             mausoleum_test: None,
             event_test: None,
-            event_rules: 5,
+            event_rules: 6,
             act:1,
             seed,
             initial_seed: Some(seed),
@@ -747,6 +751,7 @@ impl Run {
             weapon_peak: None,
             spirit_peak: Some(0),
             spirit_rules: 1,
+            spirit_fixed_levels: true,
             class,
             nodes: route_graph(seed),
             phase: Phase::Map,
@@ -1275,6 +1280,10 @@ impl Run {
             run.flask_limit=run.full_flask_limit();
         }
         run.validate()?;
+        if !run.spirit_fixed_levels {
+            run.spirit_fixed_levels=true;
+            if let Phase::Reward{id,..}=run.phase {run.phase=Phase::Reward{id,offers:run.offers(id)};}
+        }
         if let Some(contract)=&mut run.contract {contract.retire_ranged_offers();}
         if run.boss_reward_rules==0 {
             run.boss_reward_rules=1;
@@ -1316,7 +1325,7 @@ impl Run {
             || !self.valid_start_talisman()
             || self.weapon_preference.is_some_and(|p|!p.valid())
             || !weapon_training::valid_preferences(&self.weapon_preferences)
-            || self.event_rules>5
+            || self.event_rules>6
             || (!self.ember_rewards&&!self.embers.is_empty())
             || self.embers.iter().enumerate().any(|(i,e)|self.embers[..i].contains(e))
             || self.flask_limit != self.full_flask_limit()

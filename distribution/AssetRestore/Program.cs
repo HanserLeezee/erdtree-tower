@@ -36,7 +36,8 @@ namespace Tower.Assets
             string folder = Path.Combine(package, "asset-patches"), manifestPath = Path.Combine(folder, "manifest.json");
             if (!File.Exists(manifestPath)) return;
             NoLinks(manifestPath);
-            using (var guard = new FileStream(Path.Combine(folder, ".restore.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            using (var guard = AssetLock.Acquire(Path.Combine(folder, ".restore.lock"), TimeSpan.FromMinutes(30),
+                () => Progress.Report("checking",0,0,"正在等待已有资源生成任务","完成后将重新校验资源，请勿重复启动")))
             {
                 AssetManifest manifest;
                 using (var stream = File.OpenRead(manifestPath)) manifest = (AssetManifest)new DataContractJsonSerializer(typeof(AssetManifest)).ReadObject(stream);

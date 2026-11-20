@@ -6,9 +6,10 @@ $parseCommand='$tokens=$null;$errors=$null;[System.Management.Automation.Languag
 & powershell.exe -NoProfile -NonInteractive -Command $parseCommand
 if($LASTEXITCODE -ne 0){throw 'Loader failed Windows PowerShell 5.1 parsing'}
 . "$PSScriptRoot/../distribution/Tower-Loader.ps1"
+. "$PSScriptRoot/../distribution/Tower-SessionGate.ps1"
 $root=Join-Path ([IO.Path]::GetTempPath()) ('tower-loader-test-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path "$root/assets","$root/SeamlessCoop" -Force | Out-Null
-foreach($name in 'tower.dll','extra.dll','SeamlessCoop/ersc.dll'){[IO.File]::WriteAllText((Join-Path $root $name),'test')}
+foreach($name in 'tower.dll','extra.dll','SeamlessCoop/ersc.dll','SeamlessCoop/Tower.SeamlessGate.dll'){[IO.File]::WriteAllText((Join-Path $root $name),'test')}
 function Assert($condition,[string]$message){if(!$condition){throw $message}}
 try {
     $profile=@'
@@ -31,6 +32,10 @@ path = 'assets'
     $ini=ConvertTo-TowerYafsmlConfig $profile $root
     Assert ($ini.Contains('replace_save_filename=ER_TOWER_PREVIEW.sl2')) 'Solo save was changed'
     Assert ($ini.IndexOf('ersc.dll') -lt $ini.IndexOf('tower.dll')) 'Seamless must load first'
+    $gated=ConvertTo-TowerYafsmlConfig (Add-TowerSessionGate $profile) $root
+    Assert ($gated -match '(?m)^native0=.*Tower\.SeamlessGate\.dll\r?$') 'Gate must initialize synchronously first'
+    Assert ($gated -match '(?m)^native1=.*ersc\.dll\|after,native0\r?$') 'ERSC must follow gate initialization'
+    Assert ($gated -match '(?m)^native2=.*tower\.dll\|after,native1\r?$') 'Tower must follow ERSC'
     Assert (!$ini.Contains('extra.dll')) 'Disabled plugin was loaded'
     Assert ($ini.Contains('tower='+[IO.Path]::GetFullPath("$root/assets").Replace('\','/'))) 'Assets must use an absolute root'
     New-Item -ItemType Directory -Path "$root/scene-assets/locales/en-US/menu" -Force | Out-Null
@@ -67,11 +72,11 @@ path = 'assets'
     Assert ($optional.Contains('tower.dll')) 'Missing optional dependency blocked launch'
     Copy-Item -LiteralPath "$PSScriptRoot/../distribution/Start-Tower.ps1" -Destination "$root/Start-Tower.ps1"
     [IO.File]::WriteAllText("$root/eldenring.exe",'fixture')
-    $entry='param($GameDir,$Loader,[switch]$CheckOnly,$PartyConfig); if(!$CheckOnly){throw "Must not launch"}; Write-Output $Loader'
+    $entry='param($GameDir,$Loader,$Network,[switch]$CheckOnly,$PartyConfig); if(!$CheckOnly){throw "Must not launch"}; Write-Output $Loader'
     [IO.File]::WriteAllText("$root/Launch-Preview.ps1",$entry)
     [IO.File]::WriteAllText("$root/Launch-Seamless-Tower.ps1",$entry)
     foreach($mode in 'Solo','Seamless'){foreach($loader in 'ME3','YAFSML'){
-        $result=& "$root/Start-Tower.ps1" -GameDir $root -Mode $mode -Loader $loader -CheckOnly
+        $result=& "$root/Start-Tower.ps1" -GameDir $root -Mode $mode -Network Steam -Loader $loader -CheckOnly
         Assert ($result -eq $loader) "Loader selection lost for $mode"
     }}
     Assert (!(Test-Path -LiteralPath "$root/GamePath.txt")) 'CheckOnly unexpectedly changed settings'

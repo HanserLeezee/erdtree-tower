@@ -90,5 +90,36 @@ static class EmberPickupAssets {
         for(int i=0;i<keys.Length;i++)if(tables["GoodsName"].Entries.Single(e=>e.ID==GoodsBase+Index(i)).Text!="余烬："+names[keys[i]])throw new Exception("Ember name missing");
         Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(output,msgPath))!);msg.Write(Path.Combine(output,msgPath));
         Console.WriteLine($"{keys.Length} display-only goods and names generated; no inventory grant configured");
+        SyncLocalized(input,output,output);
+    }
+
+    public static void SyncLocalized(string input,string output,string? atlasSource=null) {
+        var locales=Path.Combine(input,"locales");if(!Directory.Exists(locales))return;
+        foreach(var locale in Directory.GetDirectories(locales))foreach(var quality in new[]{"hi","low"}) {
+            var relative=Path.Combine("locales",Path.GetFileName(locale),"menu",quality);
+            var dir=Path.Combine(input,relative);if(!Directory.Exists(dir))continue;
+            var shared=Path.Combine(atlasSource??input,"menu",quality);
+            var sourceTexture=TPF.Read(Path.Combine(shared,"01_common.tpf.dcx")).Textures.Single(t=>t.Name==Atlas);
+            var sourceLayout=BND4.Read(Path.Combine(shared,"01_common.sblytbnd.dcx")).Files.Single(f=>f.Name.EndsWith(Atlas+".layout"));
+            var xml=XElement.Parse(Encoding.UTF8.GetString(sourceLayout.Bytes));
+            foreach(var id in new[]{65037,65038,65039,65040,65041})
+                if(!xml.Elements().Any(e=>(string?)e.Attribute("name")==$"MENU_ItemIcon_{id}.png"))throw new Exception("Missing new ember icon: "+id);
+            var tpf=TPF.Read(Path.Combine(dir,"01_common.tpf.dcx"));var layout=BND4.Read(Path.Combine(dir,"01_common.sblytbnd.dcx"));
+            var oldTextures=tpf.Textures.Where(t=>t.Name!=Atlas).ToArray();
+            var oldLayouts=layout.Files.Where(f=>!f.Name.EndsWith(Atlas+".layout")).ToArray();
+            tpf.Textures.RemoveAll(t=>t.Name==Atlas);tpf.Textures.Add(sourceTexture);
+            var existing=layout.Files.SingleOrDefault(f=>f.Name.EndsWith(Atlas+".layout"));
+            if(existing!=null)existing.Bytes=sourceLayout.Bytes;
+            else layout.Files.Add(new BinderFile(sourceLayout.Flags,layout.Files.Max(f=>f.ID)+1,sourceLayout.Name,sourceLayout.Bytes){CompressionInfo=sourceLayout.CompressionInfo});
+            var dest=Path.Combine(output,relative);Directory.CreateDirectory(dest);
+            var texturePath=Path.Combine(dest,"01_common.tpf.dcx");var layoutPath=Path.Combine(dest,"01_common.sblytbnd.dcx");
+            tpf.Write(texturePath);layout.Write(layoutPath);
+            var check=TPF.Read(texturePath);var checkLayout=BND4.Read(layoutPath);
+            if(!check.Textures.Single(t=>t.Name==Atlas).Bytes.SequenceEqual(sourceTexture.Bytes)||
+                !checkLayout.Files.Single(f=>f.Name.EndsWith(Atlas+".layout")).Bytes.SequenceEqual(sourceLayout.Bytes))throw new Exception("Localized ember icons differ");
+            foreach(var t in oldTextures)if(!check.Textures.Single(x=>x.Name==t.Name).Bytes.SequenceEqual(t.Bytes))throw new Exception("Unrelated localized texture changed");
+            foreach(var f in oldLayouts)if(!checkLayout.Files.Single(x=>x.ID==f.ID).Bytes.SequenceEqual(f.Bytes))throw new Exception("Unrelated localized layout changed");
+            Console.WriteLine($"{relative}: synchronized ember icons; localized content preserved");
+        }
     }
 }

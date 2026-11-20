@@ -28,9 +28,9 @@ static class CatalogAssets {
                     kind=I("goodsType") switch {5=>"sorcery",16 or 18=>"incantation",7 or 8 when row.ID%1000==0=>"spirit",_=>""};
                     if(row.ID is 8590 or >=8970 and <=8974)kind="tool";
                     if(I("isConsume")==1&&I("enable_live")==1) {
-                        if(name.Contains("肝脏干")||name.EndsWith("苔药"))extras.Add($"resistance|3|{row.ID}|300|10|{name}");
+                        if(name.Contains("肝脏干")||row.ID is 900 or 940)extras.Add($"resistance|3|{row.ID}|300|10|{name}");
                         else if(name.StartsWith("腌制")||name.EndsWith("肉块")||name is "煮熟虾子" or "煮熟螃蟹")extras.Add($"food|3|{row.ID}|300|5|{name}");
-                        else if(name.EndsWith("壶")&&I("potGroupId")==potGroup)extras.Add($"pot|3|{row.ID}|350|3|{name}");
+                        else if(name.EndsWith("壶")&&I("potGroupId")==potGroup)extras.Add($"pot|3|{row.ID}|350|10|{name}");
                         else if(name.Contains("飞刀")||name=="扇形暗器")extras.Add($"knife|3|{row.ID}|60|20|{name}");
                     }
                 }

@@ -67,10 +67,11 @@ pub fn furnace_target(data: &PlayerGameData, run: &erdtree_tower::Run, node: usi
     let target = erdtree_tower::affixes::furnace(run, node, variant, uses).ok_or("没有可以换的同品质武器，未扣除卢恩")?;
     let params = unsafe { SoloParamRepository::instance() }.map_err(|_| "武器参数未就绪")?;
     let row = params.get::<EquipParamWeapon>(target).ok_or("重练后的武器参数不存在")?;
-    // 普通与失色武器的满级不同：按等效等级换算（普通 +25 ≈ 失色 +10）
+    // 与强化、奖励使用相同的普通/失色 3:1 换算。
     let somber_old = params.get::<EquipParamWeapon>(variant).is_some_and(|p| p.origin_equip_wep16() < 0);
     let somber_new = row.origin_equip_wep16() < 0;
-    let level = match (somber_old, somber_new) {(false, true) => level * 2 / 5, (true, false) => level * 5 / 2, _ => level};
+    let peak=erdtree_tower::contracts::reinforcement_peak(level as u8,if somber_old {10}else{25});
+    let level=u32::from(erdtree_tower::contracts::reinforcement_level(peak,if somber_new {10}else{25}));
     let next = target + level.min(super::smith::level_max(params, row.reinforce_type_id()) as u32);
     let reinforcement = i32::from(row.reinforce_type_id()) + (next % 100) as i32;
     if reinforcement < 0 || params.get::<ReinforceParamWeapon>(reinforcement as u32).is_none() {
