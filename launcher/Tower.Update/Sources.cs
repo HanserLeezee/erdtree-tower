@@ -45,7 +45,7 @@ namespace Tower.Update
         {
             using var response = await SendAsync($"{baseUrl}/latest/download/{ReleaseManifest.FileName}", null, cancel).ConfigureAwait(false);
             EnsureSuccess(response, "发布页上的更新清单");
-            return ReleaseManifest.Parse(await response.Content.ReadAsStringAsync().ConfigureAwait(false));
+            return ReleaseManifest.Parse(await ReadBodyAsync(response, c => c.ReadAsStringAsync(), cancel).ConfigureAwait(false));
         }
 
         public async Task<byte[]> RangeAsync(string tag, string asset, long offset, long length, CancellationToken cancel)
@@ -56,7 +56,7 @@ namespace Tower.Update
             EnsureSuccess(response, $"更新数据 {tag}/{asset}");
             // 服务器不支持分段时会回 200 和整个文件：拒绝，避免把整包当成一段数据
             if (response.StatusCode != System.Net.HttpStatusCode.PartialContent) throw new IOException("下载服务器不支持分段下载");
-            var data = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            var data = await ReadBodyAsync(response, c => c.ReadAsByteArrayAsync(), cancel).ConfigureAwait(false);
             if (data.LongLength != length) throw new IOException($"下载的数据长度不对：{data.LongLength}/{length}");
             return data;
         }
@@ -66,7 +66,14 @@ namespace Tower.Update
             VersionSwitch.Build(tag);
             using var response = await SendAsync($"{baseUrl}/download/{tag}/{ReleaseManifest.FileName}", null, cancel).ConfigureAwait(false);
             EnsureSuccess(response, "所选版本的更新清单");
-            return VersionSwitch.Check(tag, ReleaseManifest.Parse(await response.Content.ReadAsStringAsync().ConfigureAwait(false)));
+            return VersionSwitch.Check(tag, ReleaseManifest.Parse(await ReadBodyAsync(response, c => c.ReadAsStringAsync(), cancel).ConfigureAwait(false)));
+        }
+
+        static async Task<T> ReadBodyAsync<T>(HttpResponseMessage response, Func<HttpContent, Task<T>> read, CancellationToken cancel)
+        {
+            using var abort = cancel.Register(response.Dispose);
+            try { return await read(response.Content).ConfigureAwait(false); }
+            catch (Exception) when (cancel.IsCancellationRequested) { throw new OperationCanceledException(cancel); }
         }
 
         static void EnsureSuccess(HttpResponseMessage response, string what)
@@ -146,6 +153,9 @@ namespace Tower.Update
         List<int> order;
 
         public TimeSpan Grace { get; set; } = TimeSpan.FromSeconds(3);
+        public bool PreferFastest { get; set; }
+        public TimeSpan ProbeTimeout { get; set; } = TimeSpan.FromSeconds(12);
+        public TimeSpan RangeTimeout { get; set; } = TimeSpan.FromSeconds(20);
         /// <summary>上一次最新清单来自哪条线路</summary>
         public string? Chosen { get; private set; }
 
@@ -156,10 +166,19 @@ namespace Tower.Update
             order = Enumerable.Range(0, this.lines.Count).ToList();
         }
 
-        public async Task<ReleaseManifest> LatestAsync(CancellationToken cancel)
+        public Task<ReleaseManifest> LatestAsync(CancellationToken cancel) => SelectAsync((source, token) => source.LatestAsync(token), cancel);
+
+        async Task<ReleaseManifest> SelectAsync(Func<IReleaseSource, CancellationToken, Task<ReleaseManifest>> fetch, CancellationToken cancel)
         {
             using var stragglers = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-            var tasks = lines.Select(l => l.Value.LatestAsync(stragglers.Token)).ToList();
+            stragglers.CancelAfter(ProbeTimeout);
+            var elapsed = new long[lines.Count];
+            var tasks = lines.Select(async (l, i) => {
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                var result = await fetch(l.Value, stragglers.Token).ConfigureAwait(false);
+                elapsed[i] = clock.ElapsedTicks;
+                return result;
+            }).ToList();
             var pending = new List<Task>(tasks);
             Task? deadline = null;
             while (pending.Count > 0)
@@ -181,6 +200,7 @@ namespace Tower.Update
             }
             var best = answered.Max(i => tasks[i].Result.Version);
             var same = answered.Where(i => tasks[i].Result.Version == best).ToList();
+            if (PreferFastest) same = same.OrderBy(i => elapsed[i]).ThenBy(i => i).ToList();
             // 分段下载的顺序：有这个版本的线路（偏好顺序）在前，没来得及回答的线路兜底；版本落后的线路没有新数据包，不用
             var unknown = Enumerable.Range(0, lines.Count).Where(i => !tasks[i].IsCompleted || tasks[i].IsCanceled).ToList();
             lock (gate) order = same.Concat(unknown).ToList();
@@ -193,6 +213,9 @@ namespace Tower.Update
         public async Task<ReleaseManifest> VersionAsync(string tag, CancellationToken cancel)
         {
             VersionSwitch.Build(tag);
+            if (PreferFastest) return await SelectAsync((source, token) => source is IVersionedReleaseSource versioned
+                ? versioned.VersionAsync(tag, token)
+                : Task.FromException<ReleaseManifest>(new IOException("线路不支持历史版本")), cancel).ConfigureAwait(false);
             Exception? last = null;
             foreach (var i in Enumerable.Range(0, lines.Count))
             {
@@ -217,13 +240,20 @@ namespace Tower.Update
             Exception? last = null;
             foreach (var i in attempt)
             {
-                try { return await lines[i].Value.RangeAsync(tag, asset, offset, length, cancel).ConfigureAwait(false); }
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+                timeout.CancelAfter(RangeTimeout);
+                try {
+                    var data = await lines[i].Value.RangeAsync(tag, asset, offset, length, timeout.Token).ConfigureAwait(false);
+                    Chosen = lines[i].Key;
+                    return data;
+                }
                 catch (Exception e) when (!cancel.IsCancellationRequested && (e is IOException || e is HttpRequestException || e is OperationCanceledException))
                 {
                     last = e;
                     lock (gate) { if (order.Remove(i)) order.Add(i); }
                 }
             }
+            cancel.ThrowIfCancellationRequested();
             throw last ?? new IOException("没有可用的下载线路");
         }
     }

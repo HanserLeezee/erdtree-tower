@@ -1,5 +1,5 @@
 // 癫火舞会：跳舞画面（规则在 erdtree_tower::dance）。像跳舞机：角色在场上真的跳，界面只在脚下留一条箭头条与节拍光标。
-// 曲中不插入评分反馈手势；结算时只播放一次收尾动作。
+// 曲中和结算都不插入评分反馈手势。
 // 时间以舞曲的实际播放位置为准（sfx::Music），开头的预备拍里显示倒数与操作说明；结束后弹出结算卡片。
 // 操作：方向键 / WASD / 手柄十字键按箭头，空格 / 手柄 A 在判定点确认；Esc / 手柄 B 放弃（按当前分数结算）。
 use std::{cell::RefCell,sync::atomic::{AtomicBool,AtomicI32,Ordering},time::Instant};
@@ -124,7 +124,7 @@ pub fn draw(ui:&Ui)->bool {
                 if session.quit&&!session.begun{FAILED.store(true,Ordering::Release);}
                 if let Some(key)=session.event.take()&&let Ok(mut result)=EVENT_RESULT.lock(){*result=Some((key,(!session.quit).then(||session.play.grade())));}
                 session.result=Some(ui.time());session.music=None;DANCING.store(false,Ordering::Relaxed);
-                perform(erdtree_tower::dance::finale(session.play.grade()));
+                PENDING_MOVE.store(0,Ordering::Release);
                 let p=&session.play;
                 crate::log(format!("DANCE end song={} difficulty={:?} quit={} arrows_pressed={} score={:.0}/{:.0} grade={} max_combo={} counts={:?}",
                     p.song.id,session.difficulty,session.quit,session.keys,p.score,p.max_score(),p.grade().name(),p.max_combo,p.counts));

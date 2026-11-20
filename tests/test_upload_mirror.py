@@ -41,10 +41,12 @@ class UploadMirror(unittest.TestCase):
         ])
         self.assertTrue(all(c[0] == 'ossutil' and c[1] == 'cp' and c[-1] == '-f' for c in calls))
 
-    def test_the_shipped_mirror_url_maps_to_a_bucket(self):
+    def test_the_shipped_mirror_url_is_https(self):
         url = upload_mirror.mirror_url()
         if url:
-            self.assertTrue(upload_mirror.target_from_url(url).startswith('oss://'))
+            from urllib.parse import urlparse
+            self.assertEqual(urlparse(url).scheme, 'https')
+            self.assertEqual(urlparse(url).path, '/releases')
 
 
 if __name__ == '__main__':

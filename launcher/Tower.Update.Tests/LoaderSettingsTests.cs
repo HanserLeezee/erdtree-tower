@@ -5,6 +5,19 @@ namespace Tower.Launcher {
 }
 namespace Tower.Update.Tests {
     public sealed class LoaderSettingsTests {
+        [Theory]
+        [InlineData("auto", "auto")]
+        [InlineData("mirror", "mirror")]
+        [InlineData("github", "github")]
+        [InlineData("invalid", "auto")]
+        public void RouteSelectionSurvivesRestart(string route,string expected) {
+            var path=Path.GetTempFileName();
+            try {
+                Assert.Equal("auto",new Tower.Launcher.HostSettings().Route);
+                new Tower.Launcher.HostSettings {Route=route}.Save(path);
+                Assert.Equal(expected,Tower.Launcher.HostSettings.Load(path).Route);
+            } finally {File.Delete(path);}
+        }
         [Fact]
         public void LegacySoloSettingsUseUnifiedEntryWithoutChangingLoader() {
             var path=Path.GetTempFileName();

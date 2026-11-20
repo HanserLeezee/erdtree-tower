@@ -81,8 +81,8 @@ namespace Tower.Launcher
             }
             var lines = new List<KeyValuePair<string, IReleaseSource>> { new KeyValuePair<string, IReleaseSource>("GitHub", HttpReleaseSource.GitHub(http, "tamikip", "erdtree-tower")) };
             if (mirror != null)
-                lines.Insert(settings.Route == HostSettings.GitHubFirst ? 1 : 0, new KeyValuePair<string, IReleaseSource>("国内镜像", new HttpReleaseSource(http, mirror)));
-            return new MultiSource(lines);
+                lines.Insert(settings.Route == HostSettings.GitHubFirst ? 1 : 0, new KeyValuePair<string, IReleaseSource>("Cloudflare", new HttpReleaseSource(http, mirror)));
+            return new MultiSource(lines) { PreferFastest = settings.Route == HostSettings.Auto };
         }
 
         /// <summary>sources.json 里的国内镜像地址，只接受 https；没配或写错返回 null（只用 GitHub）</summary>
@@ -201,7 +201,8 @@ namespace Tower.Launcher
                 case "autoCheck": settings.AutoCheck = value.ValueKind == JsonValueKind.True; break;
                 case "closeExit": settings.CloseExit = value.ValueKind == JsonValueKind.True; break;
                 case "route":
-                    settings.Route = value.ValueKind == JsonValueKind.String && value.GetString() == "GitHub" ? HostSettings.GitHubFirst : HostSettings.MirrorFirst;
+                    var route = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+                    settings.Route = route == "GitHub" ? HostSettings.GitHubFirst : route == "Cloudflare" || route == "国内镜像" ? HostSettings.MirrorFirst : HostSettings.Auto;
                     source = CreateSource();
                     break;
                 default: return;
@@ -436,7 +437,7 @@ namespace Tower.Launcher
                 ["mode"] = settings.Mode == HostSettings.Seamless ? "无缝联机" : "单人",
                 ["network"] = NetworkProfile.Label(settings.Network),
                 ["loader"] = settings.Loader,
-                ["route"] = settings.Route == HostSettings.GitHubFirst ? "GitHub" : "国内镜像",
+                ["route"] = settings.Route == HostSettings.GitHubFirst ? "GitHub" : settings.Route == HostSettings.MirrorFirst ? "Cloudflare" : "自动",
                 ["mirrorInfo"] = mirror == null ? "未配置（只从 GitHub 更新）" : new Uri(mirror).Host,
                 ["autoCheck"] = settings.AutoCheck,
                 ["closeExit"] = settings.CloseExit,

@@ -25,6 +25,11 @@ fn restore(active:bool,elapsed:f32,actual:i32,requested:i32)->bool {
 fn restore_ready(active:bool,elapsed:f32,locked:bool,actual:i32,requested:i32)->bool {
     !locked&&(restore(active,elapsed,actual,requested)||(!active&&actual>=0&&family(actual)==family(HIP_HOP)))
 }
+fn exit_target(previous:i32,idle:i32,requested:i32,retries:u8)->Option<i32>{
+    let candidates=if retries%2==0{[previous,idle]}else{[idle,previous]};
+    candidates.into_iter().find(|&id|id>=0&&family(id)!=family(requested)&&family(id)!=family(HIP_HOP))
+}
+fn retry_delay(retries:u8)->u128 {if retries<8{250}else{1000}}
 pub fn tick(){
     let requested=crate::dance_ui::take_move();
     let Ok(mut playback)=PLAYBACK.try_lock() else{return;};
@@ -54,17 +59,27 @@ pub fn tick(){
                 crate::log(format!("DANCE animation exit confirmed actual={actual} retries={}",p.retries));*playback=None;return;
             }
             let locked=chr.debug_flags.disabled_movement()||chr.debug_flags.disabled_secondary_actions();
-            if restore_ready(active,elapsed,locked,actual,p.requested)&&p.last_restore.is_none_or(|at|at.elapsed().as_millis()>=250){
-                if p.retries>=8{crate::log(format!("DANCE animation exit unconfirmed actual={actual}; retries exhausted"));*playback=None;return;}
+            if restore_ready(active,elapsed,locked,actual,p.requested)&&p.last_restore.is_none_or(|at|at.elapsed().as_millis()>=retry_delay(p.retries)){
                 let idle=chr.modules.event.idle_anim_id;
-                let target=if idle>=0&&family(idle)!=family(p.requested)&&family(idle)!=family(HIP_HOP){idle}else{p.previous};
-                chr.modules.event.request_animation_id=target;p.retries+=1;p.last_restore=Some(Instant::now());
-                crate::log(format!("DANCE animation exit requested from={actual} to={target} attempt={}",p.retries));
+                p.last_restore=Some(Instant::now());
+                let Some(target)=exit_target(p.previous,idle,p.requested,p.retries) else{return;};
+                chr.modules.event.request_animation_id=target;
+                if p.retries<8||p.retries%30==0 {crate::log(format!("DANCE animation exit requested from={actual} to={target} previous={} idle={idle} attempt={}",p.previous,u16::from(p.retries)+1));}
+                p.retries=if p.retries==u8::MAX{8}else{p.retries+1};
             }
         }
     }
 }
 #[cfg(test)]mod tests {
+    #[test]fn exit_prefers_observed_animation_and_keeps_retrying(){
+        assert_eq!(super::exit_target(3000,2000000,80720,0),Some(3000));
+        assert_eq!(super::exit_target(3000,2000000,80720,1),Some(2000000));
+        assert_eq!(super::exit_target(80720,0,80720,0),Some(0));
+        assert_eq!(super::exit_target(-1,80720,80720,8),None);
+        assert_eq!(super::exit_target(3000,2000000,80720,8),Some(3000));
+        assert_eq!(super::retry_delay(7),250);
+        assert_eq!(super::retry_delay(8),1000);
+    }
     #[test]fn exit_waits_for_menu_lock_release_and_handles_pending_finale(){
         assert!(!super::restore_ready(false,2.4,true,80800,80800));
         assert!(super::restore_ready(false,2.8,false,80800,80800));

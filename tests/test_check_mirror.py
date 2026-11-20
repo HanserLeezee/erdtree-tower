@@ -93,6 +93,15 @@ class CheckMirror(unittest.TestCase):
         self.assertIsNone(manifest)
         self.assertIn('HTTP 404', problems[0])
 
+    def test_candidate_can_be_checked_before_latest_is_published(self):
+        import json
+        latest = self.root / 'site/releases/latest/download/tower-release.json'
+        candidate = json.loads(latest.read_text())
+        latest.unlink()
+        manifest, problems = mirror.check(self.serve(RangeHandler), expect=3, manifest=candidate)
+        self.assertEqual(manifest, candidate)
+        self.assertEqual(problems, [])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -404,7 +404,52 @@ public sealed class UpdateTests : IDisposable
     static KeyValuePair<string, IReleaseSource> Line(string name, IReleaseSource source) => new(name, source);
 
     [Fact]
-    public async Task StaleMirrorDoesNotHideANewRelease()
+    public async Task AutoRouteChoosesFasterSameVersionAndFallsBackOnRangeTimeout()
+    {
+        Release(1, V1, null);
+        var inner = new DirectoryReleaseSource(Path.Combine(root, "releases"));
+        var lines = new MultiSource(new[] { Line("Cloudflare", new DelayedSource(inner, 100, false)), Line("GitHub", new DelayedSource(inner, 1, true)) })
+        { PreferFastest = true, RangeTimeout = TimeSpan.FromMilliseconds(50) };
+        var manifest = await lines.LatestAsync(CancellationToken.None);
+        Assert.Equal("GitHub", lines.Chosen);
+        var blob = manifest.Blobs.Values.First(b => b.Length > 0);
+        await lines.RangeAsync(blob.Tag, blob.Asset, blob.Offset, blob.Length, CancellationToken.None);
+        Assert.Equal("Cloudflare", lines.Chosen);
+        await lines.VersionAsync("v1", CancellationToken.None);
+        Assert.Equal("GitHub", lines.Chosen);
+    }
+
+    [Fact]
+    public async Task AllHangingRoutesHaveABoundedProbe()
+    {
+        var lines = new MultiSource(new[] { Line("Cloudflare", new HangingLatest()), Line("GitHub", new HangingLatest()) })
+        { PreferFastest = true, ProbeTimeout = TimeSpan.FromMilliseconds(50) };
+        await Assert.ThrowsAsync<IOException>(() => lines.LatestAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    sealed class DelayedSource(IVersionedReleaseSource inner, int delay, bool hangRange) : IVersionedReleaseSource
+    {
+        public async Task<ReleaseManifest> LatestAsync(CancellationToken cancel)
+        {
+            await Task.Delay(delay, cancel);
+            return await inner.LatestAsync(cancel);
+        }
+        public async Task<byte[]> RangeAsync(string tag, string asset, long offset, long length, CancellationToken cancel)
+        {
+            if (hangRange) await Task.Delay(Timeout.Infinite, cancel);
+            return await inner.RangeAsync(tag, asset, offset, length, cancel);
+        }
+        public async Task<ReleaseManifest> VersionAsync(string tag, CancellationToken cancel)
+        {
+            await Task.Delay(delay, cancel);
+            return await inner.VersionAsync(tag, cancel);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StaleMirrorDoesNotHideANewRelease(bool automatic)
     {
         var install = Path.Combine(root, "install");
         Directory.CreateDirectory(install);
@@ -414,7 +459,7 @@ public sealed class UpdateTests : IDisposable
         Release(2, V2, v1);
         // 镜像还停在 v1（忘了上传），GitHub 已经有 v2：要拿到 v2，而且数据只从有 v2 的线路下
         var mirror = new CountingSource(new DirectoryReleaseSource(Path.Combine(root, "mirror")));
-        var lines = new MultiSource(new[] { Line("国内镜像", mirror), Line("GitHub", new DirectoryReleaseSource(Path.Combine(root, "releases"))) });
+        var lines = new MultiSource(new[] { Line("国内镜像", mirror), Line("GitHub", new DirectoryReleaseSource(Path.Combine(root, "releases"))) }) { PreferFastest = automatic };
         await Update(install, lines);
         Assert.Equal("GitHub", lines.Chosen);
         Assert.Equal(0, mirror.Requests);

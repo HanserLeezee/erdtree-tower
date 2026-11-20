@@ -1,7 +1,7 @@
-"""Check that a download line (the Aliyun OSS mirror, or GitHub) serves the launcher's update data correctly.
+"""Check that a download line (Cloudflare R2 or GitHub) serves the launcher's update data correctly.
 
 Usage: python distribution/check_mirror.py <base URL> [--expect <version>]
-  e.g. python distribution/check_mirror.py https://eldenring-mods-hz.oss-cn-hangzhou.aliyuncs.com/releases --expect 96
+  e.g. python distribution/check_mirror.py https://erdtree.paper2gal.com/releases --expect 127
 
 Reads <base>/latest/download/tower-release.json, then for every data pack the manifest references fetches its smallest
 blob with an HTTP Range request (the launcher only ever downloads ranges) and checks the 206 answer and the SHA-256.
@@ -26,12 +26,13 @@ def fetch(url, first=None, last=None):
         return response.status, response.read()
 
 
-def check(base, expect=None):
+def check(base, expect=None, manifest=None):
     """Returns (manifest or None, list of problems in Chinese)."""
     base = base.rstrip('/')
     try:
-        _, body = fetch(f'{base}/latest/download/{MANIFEST}')
-        manifest = json.loads(body.decode('utf-8'))
+        if manifest is None:
+            _, body = fetch(f'{base}/latest/download/{MANIFEST}')
+            manifest = json.loads(body.decode('utf-8'))
     except urllib.error.HTTPError as error:
         error.close()
         return None, [f'读不到最新清单 latest/download/{MANIFEST}：HTTP {error.code}（文件没传、路径不对，或存储桶不是公有读）']

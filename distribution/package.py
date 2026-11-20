@@ -4,8 +4,8 @@ Upload to a GitHub release tagged v<N> (marked latest; never delete older releas
   ErdtreeTower-v<N>.zip                 full package for new players
   release-v<N>/tower-release.json       the launcher reads this from releases/latest
   release-v<N>/tower-pack-v<N>.bin      only file contents that no earlier release has
-and the folder mirror-v<N>/releases to the domestic mirror bucket (same layout as GitHub's download URLs): --upload does
-that with ossutil and checks the line (distribution/upload_mirror.py, which can also be re-run on its own).
+and the folder mirror-v<N>/releases to Cloudflare R2 (same layout as GitHub's download URLs): --upload does
+that with Wrangler and checks the line (distribution/upload_r2.py).
 
 Usage: python distribution/package.py [--previous <tower-release.json path or URL>] [--first-release] [--notes <file>] [--upload]
 By default the previous manifest is taken from the latest GitHub release so unchanged files keep pointing at older packs.
@@ -36,7 +36,8 @@ parser.add_argument('--first-release', action='store_true', help='no earlier lau
 parser.add_argument('--notes', type=Path, help='release notes shown by the launcher')
 parser.add_argument('--display-version', required=True, help='package version shown to players, e.g. 1.0.0; internal build number stays independent')
 parser.add_argument('--build-number', type=int, help='explicit monotonically increasing release build')
-parser.add_argument('--upload', action='store_true', help='upload the mirror folder with ossutil afterwards (see upload_mirror.py)')
+parser.add_argument('--upload', action='store_true', help='upload the mirror folder to Cloudflare R2 afterwards')
+parser.add_argument('--wrangler', default='wrangler', help='Wrangler executable or bin/wrangler.js, for --upload')
 parser.add_argument('--local-test', action='store_true', help='build a private test ZIP from local changes; never upload')
 parser.add_argument('--signing-thumbprint', help='trusted code-signing certificate in the Windows personal store; absent means unsigned')
 parser.add_argument('--signing-store', choices=['CurrentUser', 'LocalMachine'], default='CurrentUser')
@@ -47,9 +48,10 @@ if args.local_test and args.upload:
 if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', args.display_version):
     parser.error('--display-version must be major.minor.patch')
 if args.upload:
-    import upload_mirror
-    upload_tool = upload_mirror.find_ossutil()  # fail before the long build, not after it
-    upload_mirror.target_from_url(upload_mirror.mirror_url())
+    import upload_r2
+    upload_r2.validate_base(json.loads((Path(__file__).resolve().parents[1] / 'launcher/sources.json').read_text(encoding='utf-8'))['mirror'])
+    if not shutil.which(args.wrangler) and not Path(args.wrangler).is_file():
+        parser.error('Wrangler not found; install it or pass --wrangler <bin/wrangler.js>')
 
 project = Path(__file__).resolve().parents[1]
 os.environ['TOWER_PRODUCT_VERSION'] = args.display_version
@@ -219,10 +221,12 @@ if not args.local_test:
     print(f'Upload to GitHub release {release["tag"]} (latest): {archive.name}, {release_dir / "tower-release.json"}, '
           f'{release_dir / release["pack"]["asset"]}')
 if args.upload:
-    if upload_mirror.main([str(mirror_dir.parent), '--ossutil', upload_tool]) != 0:
-        raise SystemExit(f'Mirror upload check failed; fix it and re-run: python distribution/upload_mirror.py {mirror_dir.parent}')
+    import sys
+    for phase in ['files', 'latest']:
+        subprocess.run([sys.executable, str(project / 'distribution/upload_r2.py'), str(mirror_dir.parent),
+                        '--phase', phase, '--wrangler', args.wrangler, '--apply'], check=True)
 elif args.local_test:
-    print('Local test ZIP only; no GitHub or OSS publication performed.')
+    print('Local test ZIP only; no GitHub or R2 publication performed.')
 elif mirror_url:
-    print(f'Mirror: python distribution/upload_mirror.py {mirror_dir.parent}  (or upload {mirror_dir} by hand, '
+    print(f'Mirror: python distribution/upload_r2.py {mirror_dir.parent}  (or upload {mirror_dir} by hand, '
           f'download/ first, then latest/, and run check_mirror.py {mirror_url} --expect {version})')
