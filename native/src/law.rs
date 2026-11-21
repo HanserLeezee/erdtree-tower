@@ -6,12 +6,14 @@ use erdtree_tower::{Class,Phase,Run,law::Law};
 /// 苦难律法效果：scene-builder law-patch 写入的 9660000 段
 pub const FIRST:i32=9660000;
 const OVERTIME:i32=FIRST+50;
-const PLAYER:[i32;10]=[FIRST+11,FIRST+12,FIRST+13,FIRST+21,FIRST+22,FIRST+31,FIRST+32,FIRST+41,FIRST+42,OVERTIME];
+const BURDEN:i32=FIRST+80;
+const PLAYER:[i32;11]=[FIRST+11,FIRST+12,FIRST+13,FIRST+21,FIRST+22,FIRST+31,FIRST+32,FIRST+41,FIRST+42,OVERTIME,BURDEN];
 fn ready(ids:&[i32])->bool {unsafe {SoloParamRepository::instance()}.is_ok_and(|p|ids.iter().all(|id|p.get::<SpEffectParam>(*id as u32).is_some()))}
 fn player_effects(law:Law,overtime:bool)->Vec<i32> {
     let mut ids=Vec::new();
     for (level,base) in [(law.fragile(),10),(law.fatigue(),20),(law.focus(),30),(law.poverty(),40)] {if level>0 {ids.push(FIRST+base+i32::from(level));}}
     if overtime {ids.push(OVERTIME);}
+    if law.burden(){ids.push(BURDEN);}
     ids
 }
 fn enemy_effects(law:Law)->Vec<i32> {
@@ -100,6 +102,7 @@ mod tests {
     #[test]
     fn effects_match_the_patched_rows() {
         assert!(player_effects(Law::default(),false).is_empty()&&enemy_effects(Law::default()).is_empty());
+        assert_eq!(player_effects(law(&[36]),false),vec![BURDEN]);
         assert_eq!(player_effects(law(&[11,12,13,15,17,18,19]),true),vec![FIRST+13,FIRST+21,FIRST+32,FIRST+41,OVERTIME]);
         assert_eq!(enemy_effects(law(&[0,1,2,6])),vec![FIRST+3,FIRST+6]);
         assert_eq!(enemy_effects(law(&[27,29])),vec![FIRST+61,FIRST+71]);

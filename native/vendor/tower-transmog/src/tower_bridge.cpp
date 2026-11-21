@@ -27,3 +27,8 @@ extern "C" __declspec(dllexport) bool tower_transmog_init(const char *log_path) 
         status=2;SPDLOG_INFO("Tower armor transmog initialized (integrated engine 1)");return true;
     }catch(const std::exception &e){SPDLOG_ERROR("Transmog unavailable: {}",e.what());status=-1;return false;}
 }
+
+extern "C" __declspec(dllexport) void tower_play_chr_sfx(er::CS::ChrIns *chr, int sfx) {
+    if (chr && sfx > 0 && status.load() == 2 && players::spawn_one_shot_sfx_on_chr)
+        players::spawn_one_shot_sfx_on_chr(chr, -1, sfx, nullptr);
+}

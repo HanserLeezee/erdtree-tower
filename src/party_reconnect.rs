@@ -25,6 +25,7 @@ pub enum Message {
     Offer{nonce:u64,checkpoint:Checkpoint,dlc:bool,members:Vec<u64>,block:i32},
     Ack{nonce:u64,epoch:u64},
     Ready{nonce:u64,epoch:u64},
+    FreshLobby{nonce:u64},
     Reject{nonce:u64,reason:String},
 }
 

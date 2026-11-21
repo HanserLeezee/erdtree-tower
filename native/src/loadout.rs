@@ -165,6 +165,7 @@ fn clear_inventory(inventory: &mut EquipInventoryData, function: usize) -> Resul
 fn starting_weapons(class:erdtree_tower::Class,gear:&mut [i32;16]) {
     match class {
         erdtree_tower::Class::Hero=>{gear[3]=gear[1];gear[1]=15000000;},
+        erdtree_tower::Class::Samurai=>gear[1]=1_030_000,
         erdtree_tower::Class::Confessor=>{gear[1]=2010000;},
         _=>{},
     }

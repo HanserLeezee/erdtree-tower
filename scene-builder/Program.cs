@@ -1,5 +1,29 @@
 using SoulsFormats;
 using System.Numerics;
+if(args.Length==4&&args[3]=="enemy-name-fix") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    EnemyNameFix.Build(args[2],args[1]);return;
+}
+if(args.Length==4&&args[3]=="ember-item-text") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    EmberPickupAssets.WriteItemText(args[2],args[1]);return;
+}
+if(args.Length==5&&args[3]=="somber-ashes") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    SomberAshAssets.Build(args[0],args[2],args[1],args[4]);return;
+}
+if(args.Length==5&&args[3]=="weapon-traits") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    WeaponTraitAssets.Build(args[2],args[1],args[4]);return;
+}
+if(args.Length==4&&args[3]=="wolf-skeleton-patch") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    EnemyExpansionAssets.WolfAndSkeleton(args[0],args[2],args[1]);return;
+}
+if(args.Length==4&&args[3]=="act-roster-build") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    ActRosterAssets.Build(args[0],args[2],args[1]);return;
+}
 if(args.Length==4&&args[3]=="spirit-resource-verify") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     SpiritResourceAudit.Verify(args[2]);return;

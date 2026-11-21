@@ -2,11 +2,11 @@ use serde::{Deserialize,Serialize};
 use crate::{Run,NodeKind,RuleResult};
 
 pub const MAX_BELLS:usize=64;
-pub const BASE_STOCK:usize=38;
+pub const BASE_STOCK:usize=43;
 // Preserve the capacity used by older saved shops and native parameter rows.
 pub const MAX_STOCK:usize=43+MAX_BELLS*5;
 pub const NAMES:[&str;3]=["武器铃珠","防具铃珠","护符铃珠"];
-pub const HUNTER_CHANCE:u64=30;
+pub const HUNTER_CHANCE:u64=20;
 pub fn hunter_appears(seed:u64,act:u8,node:usize)->bool {
     crate::mix(seed^(u64::from(act)<<40)^node as u64^0x68756e746572)%100<HUNTER_CHANCE
 }
@@ -46,8 +46,8 @@ impl Run {
 mod tests {
     use super::*;
     #[test]
-    fn hunter_chance_is_thirty_percent_and_shared_across_personal_saves() {
-        assert_eq!((0..100).filter(|roll|*roll<HUNTER_CHANCE).count(),30);
+    fn hunter_chance_is_twenty_percent_and_shared_across_personal_saves() {
+        assert_eq!((0..100).filter(|roll|*roll<HUNTER_CHANCE).count(),20);
         let mut appeared=0;
         for seed in 0..1000 {
             let a=Run::new_personal(seed,crate::Class::Samurai,1);
@@ -58,7 +58,7 @@ mod tests {
             assert_eq!(result,hunter_appears(restored.seed,1,5));
             appeared+=usize::from(result);
         }
-        assert!((230..370).contains(&appeared));
+        assert!((150..250).contains(&appeared));
     }
     fn shop()->Run {
         let mut r=Run::new(44,crate::Class::Samurai);
@@ -71,7 +71,7 @@ mod tests {
         assert!(r.challenge_merchant().is_err());assert!(r.leave_shop().is_err());
         let mut restored=Run::decode(&r.encode().unwrap()).unwrap();
         let kind=r.defeat_hunter().unwrap().unwrap();assert_eq!(restored.defeat_hunter().unwrap(),Some(kind));
-        assert_eq!(r.bells.counts[kind],1);assert_eq!(r.bells.stock_count(),43);
+        assert_eq!(r.bells.counts[kind],1);assert_eq!(r.bells.stock_count(),48);
         assert_eq!(r.defeat_hunter().unwrap(),None);assert!(r.challenge_merchant().is_err());
         assert!(r.bells.valid());r.leave_shop().unwrap();assert_eq!(Run::decode(&r.encode().unwrap()).unwrap().bells,r.bells);
         assert_eq!(Run::new(44,crate::Class::Samurai).bells.counts,[0;3]);

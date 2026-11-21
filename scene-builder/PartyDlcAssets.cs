@@ -3,7 +3,7 @@ using System.Numerics;
 
 static class PartyDlcAssets {
     record Enemy(int Act,int Model,int Npc,int Think);
-    static Dictionary<int,MSBE.Part.Enemy> Templates(string game,HashSet<int> models) {
+    internal static Dictionary<int,MSBE.Part.Enemy> Templates(string game,HashSet<int> models) {
         var found=new Dictionary<int,MSBE.Part.Enemy>();
         var related=new Dictionary<int,MSBE.Part.Enemy>();
         foreach(var path in Directory.EnumerateFiles("work/boss-report/maps","*.msb.dcx").Order())

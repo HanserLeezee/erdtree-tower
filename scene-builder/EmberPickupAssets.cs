@@ -91,6 +91,38 @@ static class EmberPickupAssets {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(output,msgPath))!);msg.Write(Path.Combine(output,msgPath));
         Console.WriteLine($"{keys.Length} display-only goods and names generated; no inventory grant configured");
         SyncLocalized(input,output,output);
+        WriteItemText(input,output);
+    }
+
+    public static void WriteItemText(string input,string output) {
+        var start=new System.Diagnostics.ProcessStartInfo("cargo","run --quiet --example ember_item_text"){
+            RedirectStandardOutput=true,UseShellExecute=false,StandardOutputEncoding=Encoding.UTF8
+        };
+        using var exporter=System.Diagnostics.Process.Start(start)??throw new Exception("Unable to start ember text export");
+        var json=exporter.StandardOutput.ReadToEnd();exporter.WaitForExit();
+        if(exporter.ExitCode!=0)throw new Exception("Ember text export failed");
+        var rows=System.Text.Json.JsonSerializer.Deserialize<Dictionary<int,string[]>>(json)!;
+        foreach(var (lang,index) in new[]{("zhocn",0),("zhotw",1),("engus",2)}){
+            var relative=Path.Combine("msg",lang,"item_dlc02.msgbnd.dcx");var dest=Path.Combine(output,relative);
+            var binder=BND4.Read(File.Exists(dest)?dest:Path.Combine(input,relative));
+            var files=binder.Files.Where(f=>Path.GetFileNameWithoutExtension(f.Name).Split("_dlc")[0] is "GoodsInfo" or "GoodsCaption").ToArray();
+            if(files.Length!=6)throw new Exception($"Missing ember text tables: {lang}");
+            foreach(var file in files){
+                var table=FMG.Read(file.Bytes);
+                foreach(var (id,labels) in rows){
+                    var value=labels[index];
+                    if(string.IsNullOrWhiteSpace(value)||index==2&&Regex.IsMatch(value,@"[\u3400-\u9fff]"))throw new Exception($"Missing {lang} translation for {id}: {value}");
+                    table[id]=value;
+                }
+                table.Entries.Sort((a,b)=>a.ID.CompareTo(b.ID));file.Bytes=table.Write();
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);binder.Write(dest);
+            foreach(var file in BND4.Read(dest).Files.Where(f=>files.Any(old=>old.ID==f.ID))){
+                var table=FMG.Read(file.Bytes);
+                if(rows.Any(pair=>table[pair.Key]!=pair.Value[index]))throw new Exception($"Ember text roundtrip failed: {lang}/{file.ID}");
+            }
+            Console.WriteLine($"{lang}: verified {rows.Count} ember descriptions");
+        }
     }
 
     public static void SyncLocalized(string input,string output,string? atlasSource=null) {

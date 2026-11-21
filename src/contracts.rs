@@ -1,5 +1,6 @@
 use serde::{Deserialize,Serialize};
 use crate::{Class,RuleResult};
+use crate::rewards::ItemKind;
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
 pub enum Kind {Steel,Breaker,Combo,Guard,Mystic,Hunter,Execution,Feather,Blood,Ascetic}
@@ -25,7 +26,7 @@ impl Kind {
         Self::Breaker=>"以跳跃攻击接近敌人并打出爆发。",
         Self::Combo=>"完整打出连段才获得增益；普通连击中途没有加成。",
         Self::Guard=>"格挡后重击反击，注意为后续闪避保留精力。",
-        Self::Mystic=>"适配装备附送基础攻击法术；自行装备并记忆。",
+        Self::Mystic=>"星辉术士选魔法，祷誓者选祷告；其他职业选择施法装备。",
         Self::Hunter=>"适配装备附送 30 支对应箭矢或弩箭。",
         Self::Execution=>"以背刺和弹反处决敌人。",
         Self::Feather=>"装备重量低于最大负重的 30% 时获得增益。",
@@ -165,12 +166,27 @@ impl State {
             },
             Card::Oath(kind)=>kind,
         };
-        self.chosen=Some(kind);self.gear=gear(kind,class,seed,self.rules==1);
-        if self.rules==1 {
-            for (slot,id) in self.gear.iter_mut().enumerate() {
+        let spell_kind=match (self.rules,kind,class) {
+            (1,Kind::Mystic,Class::Astrologer)=>Some(ItemKind::Sorcery),
+            (1,Kind::Mystic,Class::Prophet)=>Some(ItemKind::Incantation),
+            _=>None,
+        };
+        let mut gifts=if let Some(category)=spell_kind {
+            let mut pool:Vec<_>=crate::rewards::CATALOG.iter()
+                .filter(|item|item.kind==category && crate::dlc::item_allowed(item.id)
+                    && !crate::rewards::RETIRED_SPELLS.contains(&item.id))
+                .map(|item|item.id).collect();
+            pool.sort_unstable_by_key(|&id|(crate::mix(seed^u64::from(id)^0x9ea7),id));
+            pool.dedup();
+            let first=pool.get(..3).ok_or("秘法之誓的法术候选不足")?;
+            [first[0],first[1],first[2]]
+        } else {gear(kind,class,seed,self.rules==1)};
+        if self.rules==1 && spell_kind.is_none() {
+            for (slot,id) in gifts.iter_mut().enumerate() {
                 *id=crate::affixes::common_weapon(*id,seed^u64::from(self.act)<<48^slot as u64^u64::from(*id)).ok_or("誓约武器缺少普通词条参数")?;
             }
         }
+        self.chosen=Some(kind);self.gear=gifts;
         if self.rules==1 {self.held.push(Oath{kind,level:1});}
         Ok(())
     }
@@ -203,7 +219,11 @@ impl State {
         self.act==act&&self.peak<=MAX_PEAK&&count_ok&&self.offers.iter().enumerate().all(|(i,k)|!self.offers[..i].contains(k))&&held_ok
             &&self.chosen.is_none_or(|k|self.offers.contains(&k)||self.deepened)
             &&if self.chosen.is_none()||self.deepened{self.gift.is_none()&&self.gear==[0;3]}else{
-                self.gear.iter().enumerate().all(|(i,id)|!self.gear[..i].contains(id)&&crate::rewards::lookup(*id).is_some_and(|r|r.kind==crate::rewards::ItemKind::Weapon))
+                let category=crate::rewards::lookup(self.gear[0]).map(|item|item.kind);
+                (category==Some(ItemKind::Weapon) || (self.rules==1 && self.chosen==Some(Kind::Mystic)
+                    && matches!(category,Some(ItemKind::Sorcery|ItemKind::Incantation))))
+                    && self.gear.iter().enumerate().all(|(i,id)|!self.gear[..i].contains(id)
+                        && crate::rewards::lookup(*id).is_some_and(|item|Some(item.kind)==category))
                     &&self.gift.as_ref().is_none_or(|g|g.index<3&&(!self.gear_done||g.delivered==[true;2]))
             }
     }

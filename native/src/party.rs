@@ -20,6 +20,9 @@ struct Steam {
 }
 #[derive(Default)]
 pub struct EventSync {
+    pub star_requests:std::collections::VecDeque<erdtree_tower::party_game::StarBurst>,
+    pub star_seen:std::collections::HashMap<u64,u32>,
+    pub shop_departure:Option<super::runtime::ShopDeparture>,
     pub dance:Option<erdtree_tower::dance_party::Report>,
     pub dance_prepare:Option<(u8,Vec<u64>)>,
     pub dance_preparing:bool,
@@ -699,6 +702,9 @@ impl Link {
             if let Some(run)=run {
                 let mut report=Report::new(run,self.epoch,self.arrived,self.bound,alive);
                 report.dance=self.event.dance;
+                if !self.host() && run.class==erdtree_tower::Class::Astrologer && matches!(run.phase,erdtree_tower::Phase::Combat{..}) {
+                    report.star_bursts=self.event.star_requests.iter().copied().collect();
+                }
                 report.pause_saved=self.event.pause.ticket.filter(|_|self.event.pause.saved);
                 if report.pause_saved.is_some(){report.resume=erdtree_tower::suspension::Point::of(run);}
                 report.leaving=self.event.pause.leaving;
@@ -716,7 +722,7 @@ impl Link {
                 report.trial_choice=self.event.trial_choice;report.storm_choice=self.event.storm_choice;report.storm_finish=self.event.storm_finish;
                 report.chariot_ready=self.event.chariot_ready;
                 if !self.host()&&self.strike_epoch==self.epoch {report.strikes=self.strikes.iter().copied().collect();}
-                if super::run_screen::trial_rewards_active(){report.map_ready=false;}
+                if self.event.shop_departure.is_some()||super::run_screen::trial_rewards_active(){report.map_ready=false;}
                 if self.event.job.is_some_and(|job|self.event.applied!=Some(job.wave)){report.map_ready=false;}
                 if report.map_ready&&alive {report.selected=self.selected;} else {self.selected=None;}
                 if self.host(){let _=self.gate.report(self.config.player,report);}else if let Err(e)=self.send(Send::Report(report)){self.stop(e);}

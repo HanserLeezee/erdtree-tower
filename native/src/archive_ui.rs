@@ -112,7 +112,7 @@ pub fn draw(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<Texture
     } else if archive.tab==2 {
         legacy_keys(archive,&pressed,ui.time());
     } else if archive.tab==3 {
-        let count=erdtree_tower::titles::TITLES.len();
+        let count=erdtree_tower::titles::listed(&archive.titles).count();
         if pressed(&[Key::UpArrow,Key::W,Key::GamepadDpadUp]) {archive.title_row=archive.title_row.saturating_sub(1);}
         if pressed(&[Key::DownArrow,Key::S,Key::GamepadDpadDown]) {archive.title_row=(archive.title_row+1).min(count-1);}
         if pressed(&[Key::Enter,Key::GamepadFaceDown]) {wear(archive,archive.title_row,ui.time());}
@@ -226,7 +226,7 @@ fn history(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<TextureI
             text([min[0]+104.0*s,min[1]+44.0*s],&format!("{law}  ·  种子 {}",record.seed),MUTED,0.82,0.0);
             // 誓约名与余烬徽记
             let oaths:Vec<_>=record.oaths.iter().map(|o|format!("{} {}",o.kind.name(),ROMAN[usize::from(o.level.min(3))]).trim().to_owned()).collect();
-            let mut line=if oaths.is_empty(){"没有誓约".to_string()}else{oaths.join(" · ")};
+            let mut line=crate::i18n::t(if oaths.is_empty(){"没有誓约".to_string()}else{oaths.join(" · ")});
             ui.set_window_font_scale(0.84*s);
             while ui.calc_text_size(crate::i18n::t(&line))[0]>380.0*s&&line.chars().count()>4 {let keep=line.chars().count()-2;line=line.chars().take(keep).collect::<String>();line.push('…');line=line.replace("……","…");}
             text([min[0]+520.0*s,min[1]+12.0*s],&line,if oaths.is_empty(){DIM}else{BOON},0.84,0.0);
@@ -343,7 +343,7 @@ fn codex(ui:&Ui,archive:&mut Archive,layout:&Layout,icon:&mut dyn FnMut(u32)->Op
             if !lit {hint(ui,300.0,"在幕间立下这条誓约后解锁");return;}
             text(p(1202.0,300.0),kind.name(),GOLD,1.2,0.0);
             text(p(1202.0,334.0),&format!("最高等级 {} · 立誓 {taken} 次",ROMAN[usize::from(best.min(3))]),MUTED,0.84,0.0);
-            wrapped(ui,p(1130.0,380.0),right,&kind.boon_at(best.max(1)).replace('\n',"，"),BOON,0.92*s);
+            wrapped(ui,p(1130.0,380.0),right,&erdtree_tower::localization::inline(&kind.boon_at(best.max(1))),BOON,0.92*s);
         },
         Item::Ember(i)=>{
             let (ember,taken)=c.embers[i];
@@ -354,7 +354,7 @@ fn codex(ui:&Ui,archive:&mut Archive,layout:&Layout,icon:&mut dyn FnMut(u32)->Op
             if !lit {hint(ui,410.0,"在普通战或精英战的奖励里选择这枚余烬后解锁");return;}
             text(p(1244.0,312.0),ember.name(),GOLD,1.15,0.0);
             text(p(1244.0,348.0),&format!("获得 {taken} 次{}",crate::reward_ui::ember_class_label(ember).map_or(String::new(),|l|format!(" · {l}"))),MUTED,0.84,0.0);
-            wrapped(ui,p(1130.0,410.0),right,&ember.effect().replace('\n',"，"),BOON,0.92*s);
+            wrapped(ui,p(1130.0,410.0),right,&erdtree_tower::localization::inline(&ember.effect()),BOON,0.92*s);
         },
         Item::Boss(i)=>{
             let (act,name)=&archive.bosses[i];
@@ -425,7 +425,7 @@ pub fn title_style(style:erdtree_tower::titles::Style)->crate::fancy_text::Style
 }
 /// 戴上第 row 个称号；已经戴着时摘下
 fn wear(archive:&mut Archive,row:usize,now:f64) {
-    let title=&erdtree_tower::titles::TITLES[row];
+    let Some(title)=erdtree_tower::titles::listed(&archive.titles).nth(row) else{return;};
     let Some((owner,_))=archive.legacy else{archive.notice=Some(("载入角色后才能佩戴称号".into(),now));return;};
     if !archive.titles.contains(&title.id) {archive.notice=Some((format!("尚未解锁：{}",title.unlock),now));return;}
     let id=if crate::name_tags::worn()==title.id {0}else{title.id};
@@ -438,8 +438,9 @@ fn titles(ui:&Ui,archive:&mut Archive,moved:bool,ready:bool,s:f32,ox:f32,oy:f32)
         ui.set_window_font_scale(scale*s);ui.set_cursor_screen_pos([ox+x*s-ui.calc_text_size(crate::i18n::t(value))[0]*align,oy+y*s]);ui.text_colored(color,crate::i18n::t(value));
     };
     let worn=crate::name_tags::worn();
-    text(800.0,176.0,&format!("已解锁 {} / {}",archive.titles.len(),erdtree_tower::titles::TITLES.len()),MUTED,0.9,0.5);
-    for (row,title) in erdtree_tower::titles::TITLES.iter().enumerate() {
+    let listed=erdtree_tower::titles::listed(&archive.titles);
+    text(800.0,176.0,&format!("已解锁 {} / {}",archive.titles.len(),erdtree_tower::titles::listed(&archive.titles).count()),MUTED,0.9,0.5);
+    for (row,title) in listed.enumerate() {
         let (x,y)=(400.0,220.0+row as f32*78.0);let lit=archive.titles.contains(&title.id);
         ui.set_cursor_screen_pos(p(x,y));ui.set_window_font_scale(s);
         if ui.invisible_button(format!("title-{row}"),[800.0*s,68.0*s])&&ready {archive.title_row=row;wear(archive,row,ui.time());}

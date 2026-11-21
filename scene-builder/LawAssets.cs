@@ -29,6 +29,7 @@ static class LawAssets {
         (First+62,"Tower law elemental resistance 2",false,[..All(Elements,0.8f)]),
         (First+71,"Tower law status resistance 1",false,[..All(Status,1.15f)]),
         (First+72,"Tower law status resistance 2",false,[..All(Status,1.3f)]),
+        (First+80,"Tower law burden",true,[("equipWeightChangeRate",0.8f)]),
     ];
     static void Set(PARAM.Row r,string key,object value)=>r[key].Value=Convert.ChangeType(value,r[key].Value.GetType());
     static PARAM.Row Create(PARAM effects,(int id,string name,bool player,(string,object)[] fields) spec) {
@@ -58,7 +59,7 @@ static class LawAssets {
         if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging output required");
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
         var file=reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="SpEffectParam");
-        var def=PARAMDEF.XmlDeserialize("work/SoulsRandomizers/diste/Defs/SpEffect.xml");
+        var def=PARAMDEF.XmlDeserialize(Path.Combine(Environment.GetEnvironmentVariable("TOWER_PARAMDEFS")??"work/SoulsRandomizers/diste/Defs","SpEffect.xml"));
         var original=PARAM.Read(file.Bytes);original.ApplyParamdef(def);
         var effects=PARAM.Read(file.Bytes);effects.ApplyParamdef(def);
         var existing=effects.Rows.Where(r=>r.ID>=First&&r.ID<First+100).ToList();

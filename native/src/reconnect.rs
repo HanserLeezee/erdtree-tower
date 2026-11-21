@@ -39,12 +39,13 @@ pub struct Pending {
     offer:Option<(u64,Run,bool)>,members:Vec<u64>,packets:Vec<(u64,Payload)>,started:Instant,ready:bool,
     block:Option<i32>,landed:Option<Instant>,
 }
+pub enum Status {Waiting,Ready,FreshLobby}
 impl Pending {
     pub fn new(roster:Roster,ticket:Ticket,run:Run,profile:Compatibility)->Result<Self,String> {
         let transport=super::steam_messages::Transport::load(roster.clone())?;
         Ok(Self{roster,owner:ticket.owner,ticket,run,profile,transport,nonce:super::party::random_entropy()?.max(1),sent:Instant::now()-Duration::from_secs(1),offer:None,members:vec![],packets:vec![],started:Instant::now(),ready:false,block:None,landed:None})
     }
-    pub fn poll(&mut self)->Result<bool,String> {
+    pub fn poll(&mut self)->Result<Status,String> {
         if self.started.elapsed()>Duration::from_secs(180){return Err("重连等待超过 3 分钟，请退出房间后重新加入；本机进度已保留".into());}
         if self.sent.elapsed()>=Duration::from_secs(1) {
             self.sent=Instant::now();
@@ -57,6 +58,7 @@ impl Pending {
             match Payload::decode(&bytes)? {
                 Payload::Reconnect{message:Message::Reject{nonce,reason},..} if nonce==self.nonce=>return Err(reason),
                 Payload::Reconnect{session,message} if session==self.ticket.session=>match message {
+                    Message::FreshLobby{nonce} if nonce==self.nonce&&self.offer.is_none()=>return Ok(Status::FreshLobby),
                     Message::Offer{nonce,checkpoint,dlc,members,block} if nonce==self.nonce&&self.offer.is_none()=>{
                         if members.len()>erdtree_tower::party_roster::MAX_PLAYERS||members.contains(&0)||!members.contains(&self.roster.local)||!members.contains(&self.roster.host)
                             ||members.windows(2).any(|p|p[0]>=p[1]){return Err("原队伍名单无效".into());}
@@ -76,7 +78,7 @@ impl Pending {
                 _=>{},
             }
         }
-        Ok(self.ready)
+        Ok(if self.ready {Status::Ready}else{Status::Waiting})
     }
     pub fn landed(&mut self,block:i32,grounded:bool)->bool {
         if !self.ready||!grounded||self.block!=Some(block){self.landed=None;return false;}

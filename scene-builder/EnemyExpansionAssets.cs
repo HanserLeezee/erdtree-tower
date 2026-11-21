@@ -29,7 +29,7 @@ static class EnemyExpansionAssets {
         Console.WriteLine($"Verified {checkedActors} expansion actors, both events and placement regions across all maps");
     }
     public static void English(string input,string output,string rules) {
-        var names=new Dictionary<string,string>{{"死诞者","Revenant Follower"},{"小壶","Living Jar"},{"火焰战车","Flame Chariot"},{"战鹰","Warhawk"}};
+        var names=new Dictionary<string,string>{{"幽魂随从","Revenant Follower"},{"小壶","Living Jar"},{"火焰战车","Flame Chariot"},{"战鹰","Warhawk"}};
         var translations=System.Text.Json.JsonSerializer.Deserialize<Dictionary<string,string>>(File.ReadAllText(rules))!;
         var pool=AffixTextFix.PoolNames(input);var previews=MelinaAssets.PreviewNames(input);
         foreach(var pack in new[]{"item","menu"}) {
@@ -60,6 +60,45 @@ static class EnemyExpansionAssets {
         var sources=Enumerable.Range(1,3).ToDictionary(a=>a,a=>MSBE.Read(Path.Combine(input,"map/mapstudio",$"m45_0{3-a}_00_00.msb.dcx")));
         var actors=Added.SelectMany(p=>sources[p.act].Parts.Enemies.Where(e=>ArenaPartyAssets.Combat(e.EntityID)&&e.NPCParamID==900000000+p.model*10000).Select(e=>(p.act,part:e))).ToArray();
         if(actors.Length!=12)throw new Exception("Expected 12 new source slots");
+        PatchActors(input,output,actors);
+    }
+    public static void WolfAndSkeleton(string game,string input,string output) {
+        var rows=File.ReadLines(Path.Combine(input,"party-extra-slots.tsv")).Select(l=>l.Split('|').Select(int.Parse).ToArray())
+            .Where(p=>p[0]==1&&p[2] is 3510 or 4070).ToArray();
+        if(rows.Length!=8||rows.Select(p=>p[5]).Distinct().Count()!=8)throw new Exception("Invalid wolf/skeleton slots");
+        var templates=PartyDlcAssets.Templates(game,[3510,4070]);
+        var actors=rows.Select(p=>{
+            var e=(MSBE.Part.Enemy)templates[p[2]].DeepCopy();
+            e.EntityID=(uint)p[5];e.NPCParamID=p[1];e.ThinkParamID=p[3];e.EntityGroupIDs=new uint[8];
+            e.TalkID=-1;e.ChrActivateCondParamID=0;e.BackupEventAnimID=-1;Array.Clear(e.SpEffectSetParamID);
+            return (p[0],e);
+        }).ToArray();
+        PatchActors(input,output,actors);
+        EnemyPoolAssets.Patch(input,output);
+        var names=AffixTextFix.PoolNames(input);var preview=MelinaAssets.PreviewNames(input);
+        var combos=File.ReadLines(Path.Combine(input,"boss-affix-combos.txt")).Select(l=>int.Parse(l.Split('|')[0])).ToArray();
+        foreach(var lang in new[]{"engus","zhocn","zhotw"})foreach(var pack in new[]{"menu","item"}){
+            var rel=$"msg/{lang}/{pack}_dlc02.msgbnd.dcx";var binder=BND4.Read(Path.Combine(input,rel));
+            var target=pack=="menu"?binder.Files.Single(f=>f.ID==MelinaAssets.PreviewMenu):binder.Files.First(f=>f.Name.Contains("NpcName"));
+            var fmg=FMG.Read(target.Bytes);var entries=fmg.Entries.ToDictionary(e=>e.ID,e=>e.Text);
+            foreach(var (name,en) in new[]{("狼","Wolf"),("骷髅","Skeleton")}) {
+                string text=lang=="engus"?en:lang=="zhotw"&&name=="骷髅"?"骷髏":name;
+                int index=names.IndexOf(name),pos=Array.IndexOf(preview,name);
+                if(index<0||pos<0)throw new Exception("Missing new enemy name");
+                if(pack=="menu"){for(int n=1;n<=15;n++)entries[MelinaAssets.PreviewFirst+pos*16+n]=$"{text} ×{n}";continue;}
+                entries[9610000+index]=text;
+                foreach(int combo in combos){
+                    int basis=AffixTextFix.PoolBarNameFirst+combo*AffixTextFix.PoolBarNameStride;
+                    var old=entries[9610000];var reference=entries[basis];
+                    if(string.IsNullOrEmpty(old)||!reference.EndsWith(old))throw new Exception($"Missing localized prefix: {lang}/{combo}");
+                    entries[basis+index]=reference[..^old.Length]+text;
+                }
+            }
+            fmg.Entries.Clear();foreach(var x in entries.OrderBy(x=>x.Key))fmg.Entries.Add(new(x.Key,x.Value));target.Bytes=fmg.Write();
+            var dest=Path.Combine(output,rel);Directory.CreateDirectory(Path.GetDirectoryName(dest)!);binder.Write(dest);
+        }
+    }
+    public static void PatchActors(string input,string output,(int act,MSBE.Part.Enemy part)[] actors) {
         int maps=0,total=0;
         foreach(var path in Directory.EnumerateFiles(Path.Combine(input,"map/mapstudio"),"*.msb.dcx")) {
             var map=MSBE.Read(path);var name=Path.GetFileName(path).Replace(".msb.dcx","");
@@ -69,7 +108,7 @@ static class EnemyExpansionAssets {
             var init=events.Events.Single(e=>e.ID==0);
             foreach(var (act,source) in actors)foreach(bool guard in new[]{false,true}) {
                 uint id=source.EntityID+(guard?3000000u:0u),first=(uint)((guard?51000000:48000000)+act*10000);
-                var anchor=map.Parts.Enemies.FirstOrDefault(e=>e.EntityID>=first&&e.EntityID<first+300);
+                var anchor=map.Parts.Enemies.FirstOrDefault(e=>e.EntityID==first);
                 if(anchor==null)continue;
                 var present=map.Parts.Enemies.SingleOrDefault(e=>e.EntityID==id);
                 if(present!=null){if(present.NPCParamID!=source.NPCParamID||present.ThinkParamID!=source.ThinkParamID||present.ModelName!=source.ModelName)throw new Exception("Existing enemy mismatch");continue;}
@@ -82,7 +121,7 @@ static class EnemyExpansionAssets {
                 part.InstanceID=map.Parts.Enemies.Where(e=>e.ModelName==part.ModelName).Select(e=>e.InstanceID).DefaultIfEmpty(-1).Max()+1;
                 part.Position=anchor.Position;part.Rotation=anchor.Rotation;part.CollisionPartName=anchor.CollisionPartName;
                 part.WalkRouteName=null;part.PlatoonID=-1;PartyPlacement.Prepare(part);
-                if(!map.Models.Enemies.Any(m=>m.Name==part.ModelName)){map.Models.Enemies.Add((MSBE.Model.Enemy)sources[act].Models.Enemies.Single(m=>m.Name==part.ModelName).DeepCopy());modelNames.Add(part.ModelName);}
+                if(!map.Models.Enemies.Any(m=>m.Name==part.ModelName)){map.Models.Enemies.Add(new MSBE.Model.Enemy{Name=part.ModelName});modelNames.Add(part.ModelName);}
                 map.Parts.Enemies.Add(part);ids.Add(id);
                 init.Instructions.Insert(prefix++,new(2004,5,new object[]{id,(byte)0}));
                 uint request=guard?45003000+(source.EntityID/10000-4801)*300+source.EntityID%10000:PartyEnemyEvents.Request(id);
@@ -99,7 +138,7 @@ static class EnemyExpansionAssets {
             Directory.CreateDirectory(Path.GetDirectoryName(mapOut)!);Directory.CreateDirectory(Path.GetDirectoryName(eventOut)!);
             PartyModels.Prepare(map);PartyModels.Verify(map);map.Write(mapOut);events.Write(eventOut);
             var check=MSBE.Read(mapOut);var script=EMEVD.Read(eventOut);
-            foreach(var id in ids){var p=check.Parts.Enemies.Single(e=>e.EntityID==id);PartyPlacement.Verify(p);if(!check.Parts.Collisions.Any(c=>c.Name==p.CollisionPartName))throw new Exception("Enemy ground missing");}
+            foreach(var id in ids){var p=check.Parts.Enemies.Single(e=>e.EntityID==id);PartyPlacement.Verify(p);if(p.CollisionPartName!=null&&!check.Parts.Collisions.Any(c=>c.Name==p.CollisionPartName))throw new Exception($"Enemy ground missing: {name}/{id}");}
             if(!script.Write().SequenceEqual(events.Write()))throw new Exception("Enemy event roundtrip mismatch");
             check.Parts.Enemies.RemoveAll(e=>ids.Contains(e.EntityID));check.Models.Enemies.RemoveAll(m=>modelNames.Contains(m.Name));
             check.Regions.InvasionPoints.RemoveAll(r=>regionNames.Contains(r.Name));

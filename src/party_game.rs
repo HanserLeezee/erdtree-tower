@@ -68,9 +68,19 @@ pub struct Report {
     /// 成员带着的余烬：房主据此核对代为执行的敌人侧效果
     #[serde(default)] pub embers:Vec<crate::embers::Ember>,
     /// 成员算出的敌人侧余烬效果（最近 STRIKE_WINDOW 条，带序号），由房主执行没执行过的
+    #[serde(default,skip_serializing_if="Vec::is_empty")] pub star_bursts:Vec<StarBurst>,
     #[serde(default)] pub strikes:Vec<crate::embers::StrikeRequest>,
     pub epoch:u64,pub seed:u64,pub act:u8,pub visited:Vec<usize>,pub map_ready:bool,
     pub arrived:bool,pub bound:bool,pub alive:bool,
+}
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
+pub struct StarBurst {pub sequence:u32,pub slot:u8,pub amount:i32}
+impl StarBurst {
+    pub fn take_new(self,last:&mut u32)->bool {
+        if self.sequence<=*last || self.amount<=0 {return false;}
+        *last=self.sequence;
+        true
+    }
 }
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
 pub struct ScarabClaim {pub wave:u8,pub killed:u8,pub owned:u8,pub finished:bool}
@@ -79,10 +89,10 @@ impl ScarabClaim {
 }
 impl Report {
     pub fn new(run:&Run,epoch:u64,arrived:bool,bound:bool,alive:bool)->Self {
-        Self{dance:None,leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,embers:run.embers.clone(),strikes:vec![],epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
+        Self{dance:None,leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,embers:run.embers.clone(),star_bursts:vec![],strikes:vec![],epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
     }
     pub fn unavailable(epoch:u64)->Self {
-        Self{dance:None,leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,embers:vec![],strikes:vec![],epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
+        Self{dance:None,leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,embers:vec![],star_bursts:vec![],strikes:vec![],epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
     }
     pub fn at_hub(epoch:u64)->Self {Self{present:true,at_hub:true,alive:true,..Self::unavailable(epoch)}}
 }
@@ -308,6 +318,7 @@ impl Gate {
         if report.visited.len()>64||report.act==0||report.act>3||report.epoch!=self.epoch||!report.law.valid(){return Err("队员旅程进度或律法不匹配".into());}
         if report.event_request.is_some_and(|k|!k.valid()){return Err("队员事件请求无效".into());}
         if report.scarab_claim.is_some_and(|c|!c.valid()){return Err("粪金龟击杀汇报无效".into());}
+        if report.star_bursts.len()>crate::embers::STRIKE_WINDOW || report.star_bursts.iter().any(|b|b.sequence==0||b.amount<=0) || report.star_bursts.windows(2).any(|b|b[0].sequence>=b[1].sequence){return Err("星涌同步记录无效".into());}
         if report.embers.len()>crate::embers::Ember::ALL.len()||report.strikes.len()>crate::embers::STRIKE_WINDOW{return Err("队员余烬汇报过长".into());}
         self.peers.iter_mut().find(|p|p.0==id).ok_or("未知队员")?.1=Some(report);Ok(())
     }
@@ -359,6 +370,9 @@ impl Gate {
     pub fn leaving(&self)->Vec<u64> {self.peers.iter().filter_map(|(id,r)|r.as_ref().filter(|r|r.epoch==self.epoch&&r.present&&r.alive&&r.leaving).map(|_|*id)).collect()}
     pub fn resume_ready(&self,point:&crate::suspension::Point)->bool {self.all(|r|r.epoch==self.epoch&&r.at_hub&&r.alive&&r.resume.as_ref()==Some(point))}
     pub fn restart_paused_ready(&self)->bool {self.peers.len()>1&&self.all(|r|r.epoch==self.epoch&&r.at_hub&&r.alive)}
+    pub fn mixed_hub_journeys(&self)->bool {
+        self.restart_paused_ready() && !self.all(|r|r.resume.is_some()) && !self.all(|r|r.resume.is_none())
+    }
     pub fn resume_waiting(&self,point:&crate::suspension::Point)->Vec<(u64,&'static str)> {
         self.peers.iter().filter_map(|(id,report)|{
             let reason=match report.as_ref() {
@@ -375,6 +389,12 @@ impl Gate {
     /// 本场在场队员持有的余烬（房主据此代为执行只作用在敌人身上、又不走汇报的余烬，如鲜血骑士的破势）
     pub fn held_embers(&self)->Vec<crate::embers::Ember> {
         self.peers.iter().filter_map(|(_,r)|r.as_ref().filter(|r|r.present&&r.epoch==self.epoch)).flat_map(|r|r.embers.iter().copied()).collect()
+    }
+    pub fn star_bursts<'a>(&'a self,seed:u64,visited:&'a [usize])->impl Iterator<Item=(u64,StarBurst)>+'a {
+        self.peers.iter().filter_map(move |(id,r)| {
+            r.as_ref().filter(|r|r.present&&r.bound&&r.epoch==self.epoch&&r.seed==seed&&r.visited==visited)
+                .map(|r|(*id,r))
+        }).flat_map(|(id,r)|r.star_bursts.iter().copied().map(move |burst|(id,burst)))
     }
     pub fn strikes(&self)->Vec<(u64,Vec<crate::embers::Ember>,Vec<crate::embers::StrikeRequest>)> {
         self.peers.iter().filter_map(|(id,r)|r.as_ref().filter(|r|r.present&&r.epoch==self.epoch&&!r.strikes.is_empty()).map(|r|(*id,r.embers.clone(),r.strikes.clone()))).collect()
@@ -530,6 +550,24 @@ mod tests {
         assert!(gate.boss_test(&run,test).is_err());assert_eq!(gate.epoch,1);
     }
     #[test]
+    fn star_bursts_require_current_route_and_apply_once_per_member() {
+        let run=Run::new(91,crate::Class::Astrologer);
+        let mut gate=Gate::new(vec![1,2]);
+        let mut report=Report::new(&run,0,true,true,true);
+        let b=StarBurst{sequence:1,slot:4,amount:80};
+        report.star_bursts.push(b);
+        gate.report(2,report.clone()).unwrap();
+        assert_eq!(gate.star_bursts(run.seed,&run.visited).collect::<Vec<_>>(),vec![(2,b)]);
+        assert_eq!(gate.star_bursts(run.seed,&[4]).count(),0);
+        assert_eq!(gate.star_bursts(run.seed+1,&run.visited).count(),0);
+        let mut last=0;
+        assert!(b.take_new(&mut last));assert!(!b.take_new(&mut last));
+        report.star_bursts.push(b);
+        assert!(gate.report(2,report).is_err());
+        gate.epoch=1;
+        assert_eq!(gate.star_bursts(run.seed,&run.visited).count(),0);
+    }
+    #[test]
     fn reconnect_cannot_treat_precombat_map_reports_as_a_safe_checkpoint() {
         let run=Run::new(42,crate::Class::Samurai);
         let node=run.available().into_iter().find(|&id|run.nodes[id].kind.combat()).unwrap();
@@ -572,10 +610,13 @@ mod tests {
         let run=Run::new(42,crate::Class::Samurai);let point=crate::suspension::Point::of(&run).unwrap();
         let mut gate=Gate::new(vec![1,2]);let mut report=Report::at_hub(0);
         report.resume=Some(point.clone());gate.report(1,report.clone()).unwrap();
+        assert!(!gate.mixed_hub_journeys());
         assert_eq!(gate.resume_waiting(&point),vec![(2,"尚未收到游戏状态")]);
         gate.report(2,Report::at_hub(0)).unwrap();
+        assert!(gate.mixed_hub_journeys());
         assert_eq!(gate.resume_waiting(&point),vec![(2,"没有可恢复的暂停旅程")]);
         let mut other=report.clone();other.resume.as_mut().unwrap().seed+=1;gate.report(2,other).unwrap();
+        assert!(!gate.mixed_hub_journeys());
         assert_eq!(gate.resume_waiting(&point),vec![(2,"暂停旅程进度不同，未覆盖存档")]);
         assert!(!gate.resume_ready(&point));
         gate.report(2,report).unwrap();assert!(gate.resume_waiting(&point).is_empty());assert!(gate.resume_ready(&point));

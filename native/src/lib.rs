@@ -30,6 +30,7 @@ mod frost_shackle;
 mod pad;
 mod retry_item;
 mod spell_affixes;
+mod starsurge;
 mod retry_rescue;
 mod options;
 mod gpu_engine;
@@ -141,6 +142,7 @@ mod scenery;
 mod spirit_tune;
 mod dual_bosses;
 mod affix_stack;
+mod weapon_traits;
 mod sfx;
 
 #[derive(Clone, Copy)]
@@ -319,9 +321,9 @@ impl ImguiRenderLoop for TowerPreview {
 
     fn message_filter(&self, _: &Io) -> MessageFilter {
         if input::dance_input_active(){return MessageFilter::InputAll;}
-        if input::controls_unlocked(){return MessageFilter::empty();}
         let player_present = SNAPSHOT.lock().is_ok_and(|snapshot| snapshot.is_some());
-        if runtime::with_view(|view| input::capture_route(self.visible, player_present, view)).unwrap_or(false)
+        if input::foreground()&&runtime::with_view(|view| input::capture_route(self.visible, player_present, view)
+            ||self.map_preview&&player_present&&map_preview_available(view)).unwrap_or(false)
         {
             MessageFilter::InputAll
         } else {
@@ -411,6 +413,7 @@ impl ImguiRenderLoop for TowerPreview {
     }
 
     fn render(&mut self, ui: &mut Ui) {
+        let mut menu_input=input::menu_frame();
         diagnostics::frame();
         if options::pressed(ui,Hotkey::Settle) {
             if runtime::PLAYER_READY.load(Ordering::Relaxed) {
@@ -492,12 +495,14 @@ impl ImguiRenderLoop for TowerPreview {
         }
         if run_screen {return;}
         if self.map_preview&&let Some(view)=view.as_ref().filter(|view|map_preview_available(view))&&let Some(run)=&view.run {
+            menu_input.show();
             map_ui::preview(ui,run,view);
             if build_panel::open() {let rewards=&mut self.rewards;build_panel::draw(ui,run,view,&mut |icon|rewards.icon(icon));}
             return;
         }
         if let Some(view) = &view {
             if let Some(dummy)=&view.dummy {dummy::draw_hud(ui,dummy);}
+            starsurge::draw_hud(ui,&mut |icon|rewards.icon(icon),view.ready&&!view.travelling);
             if view.room.is_some()||view.shared_event {
                 return;
             }
@@ -538,9 +543,15 @@ impl ImguiRenderLoop for TowerPreview {
                             format!("生命 {}/{}    专注 {}/{}", s.hp, s.max_hp, s.fp, s.max_fp)
                         })
                         .unwrap_or_default();
-                    if run.contract.as_ref().is_some_and(|c|c.selection_pending()) {self.rewards.draw_contract(ui,run,view);}
-                    else if run.contract_pending()||matches!(run.phase,Phase::Reward{..}) {self.rewards.draw(ui,run,view);}
+                    if run.contract.as_ref().is_some_and(|c|c.selection_pending()) {
+                        menu_input.show();
+                        self.rewards.draw_contract(ui,run,view);
+                    } else if run.contract_pending()||matches!(run.phase,Phase::Reward{..}) {
+                        menu_input.show();
+                        self.rewards.draw(ui,run,view);
+                    }
                     else {
+                        menu_input.show();
                         map_ui::draw(ui, run, view, &vitals);
                         if build_panel::open() {let rewards=&mut self.rewards;build_panel::draw(ui,run,view,&mut |icon|rewards.icon(icon));}
                     }

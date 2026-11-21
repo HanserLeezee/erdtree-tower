@@ -26,6 +26,14 @@ fn uv(index:u8)->([f32;2],[f32;2]) {
 }
 /// 画律法图标（简约线条版；线条版没加载时退回原来的插画图标）；都没加载时返回 false（调用方不画图标）
 pub fn draw_line(draw:&DrawListMut<'_>,index:u8,min:[f32;2],max:[f32;2],light:u8)->bool {
+    if index==20 {
+        let p=|x:f32,y:f32|[min[0]+(max[0]-min[0])*x,min[1]+(max[1]-min[1])*y];
+        let stroke=((max[0]-min[0])*0.06).max(1.0);
+        let color=ImColor32::from_rgba(light,light,light,255);
+        draw.add_circle(p(0.5,0.26),stroke*1.8,color).thickness(stroke).build();
+        draw.add_polyline(vec![p(0.32,0.38),p(0.68,0.38),p(0.82,0.83),p(0.18,0.83),p(0.32,0.38)],color).thickness(stroke).build();
+        return true;
+    }
     if index==19 {
         let w=max[0]-min[0];let h=max[1]-min[1];let color=ImColor32::from_rgba(light,light,light,255);
         for x in [0.12,0.48] {draw.add_polyline(vec![[min[0]+w*x,min[1]+h*0.2],[min[0]+w*(x+0.3),min[1]+h*0.5],[min[0]+w*x,min[1]+h*0.8]],color).thickness((w*0.08).max(1.0)).build();}
@@ -54,6 +62,6 @@ mod tests {
     fn cells_cover_the_grid_without_overlap() {
         assert_eq!(super::uv(0),([0.0,0.0],[0.2,0.25]));
         assert_eq!(super::uv(16),([0.2,0.75],[0.4,1.0]));
-        assert!(erdtree_tower::law::NODES.iter().all(|n|u32::from(n.art)<super::COLUMNS*super::ROWS));
+        assert!(erdtree_tower::law::NODES.iter().all(|n|n.art==20||u32::from(n.art)<super::COLUMNS*super::ROWS));
     }
 }

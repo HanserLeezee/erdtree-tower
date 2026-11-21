@@ -76,11 +76,13 @@ pub struct Room {
     pub arrival_block_position:Option<super::party_death::Position>,
     pub copy_requested:bool,
     merchant_hit_logged:bool,
+    merchant_hidden_after:Option<Instant>,
     pub merchant_down:bool,
     pub shop_refresh_pending:bool,
     /// 上次读到的商品售出计数（诊断：联机客机商品无故变空）
     pub shop_counters:Option<(std::time::Instant,Vec<u8>)>,
     pub hunter:Option<super::map_guards::Guards>,
+    pub hunter_defeated_at:Option<Instant>,
     hub: bool,
     event_host:usize,
     dance_host:Option<(FieldInsHandle,usize,f32,f32)>,
@@ -227,7 +229,7 @@ impl Room {
         super::log(format!("Native room {node}: {title}, block={block:x}"));
         Ok(Self {
             mausoleum:false,arrival_block_position:None,copy_requested:false,
-            merchant_down:false,shop_refresh_pending:false,shop_counters:None,hunter:None,merchant_hit_logged:false,
+            merchant_down:false,shop_refresh_pending:false,shop_counters:None,hunter:None,hunter_defeated_at:None,merchant_hit_logged:false,merchant_hidden_after:None,
             scarabs:Default::default(),
             chest_attempt:None,
             hub,event_host:0,dance_host:None,event_hostless:false,patches_angry:false,patches_dead:false,patches_hp:None,
@@ -454,6 +456,11 @@ impl Room {
                 .filter(|c| std::ptr::from_ref(*c) as usize == address)
                 .ok_or("服务 NPC 已卸载")?;
             let merchant=self.kind==NodeKind::Shop&&index==0;
+            if merchant&&(chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag()) {
+                chr.debug_flags.set_disabled_movement(false);
+                chr.debug_flags.set_disabled_secondary_actions(false);
+                continue;
+            }
             if self.kind==NodeKind::Event&&index==0&&super::dance_ui::active() {
                 self.dance_host.get_or_insert((handle,address,chr.base_transparency,chr.base_transparency_modifier));
                 chr.base_transparency=0.0;chr.base_transparency_modifier=0.0;
@@ -463,7 +470,13 @@ impl Room {
             chr.team_type = if patches&&!self.patches_angry {26}else if vulnerable {6}else{0};
             chr.chr_flags1c5.set_is_invincible(!vulnerable);
             chr.debug_flags.set_disabled_hit(!vulnerable||self.merchant_down);
-            if merchant&&self.merchant_down {chr.debug_flags.set_character_disabled(true);}
+            if merchant&&self.merchant_down {
+                // A peer can receive the challenge state before Seamless delivers the fatal hit.
+                let grace=if self.merchant_hit_logged {Duration::from_secs(8)} else {Duration::ZERO};
+                if Instant::now()>=*self.merchant_hidden_after.get_or_insert_with(||Instant::now()+grace) {
+                    chr.debug_flags.set_character_disabled(true);
+                }
+            }
             chr.debug_flags.set_disabled_movement(!(patches&&self.patches_angry));
             chr.debug_flags.set_disabled_secondary_actions(!(patches&&self.patches_angry));
             if patches {merchant_collision(&mut chr.chr_ctrl.flags,false);}

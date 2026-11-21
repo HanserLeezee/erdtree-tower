@@ -102,14 +102,14 @@ static class BossAssets {
         if(name.StartsWith("spEffectID")&&(TowerScalingAssets.AreaScaling(Convert.ToInt32(c.Value))||TowerScalingAssets.AreaScaling(Convert.ToInt32(value))))return false;
         return !System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(c.Value,value);
     });
-    public static void Append(string input,string output,int? onlyIndex=null) {
+    public static void Append(string input,string output,int? onlyIndex=null,int? firstIndex=null) {
         if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging output required");
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
         BinderFile File_(string name)=>reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))==name);
         PARAM Read(string name) {var p=PARAM.Read(File_(name).Bytes);p.ApplyParamdef(PARAMDEF.XmlDeserialize($"work/SoulsRandomizers/diste/Defs/{name}.xml"));return p;}
         var npcs=Read("NpcParam");var ai=Read("NpcThinkParam");var before=npcs.Rows.Count;var original=npcs.Rows.ToDictionary(r=>r.ID,r=>new PARAM.Row(r));
         var parts=Parts(input);var added=new List<int>();var rebuilt=new List<int>();
-        foreach(var p in parts.Where(p=>!onlyIndex.HasValue||p.Index==onlyIndex.Value)) {
+        foreach(var p in parts.Where(p=>(!onlyIndex.HasValue||p.Index==onlyIndex.Value)&&(!firstIndex.HasValue||p.Index>=firstIndex.Value))) {
             if(!ai.Rows.Any(r=>r.ID==p.Think))throw new Exception($"Missing boss AI: {p.Name}");
             var source=npcs.Rows.SingleOrDefault(r=>r.ID==p.Source)??throw new Exception($"Missing boss source parameters: {p.Name}");
             if(p.Model==2031) {
@@ -147,7 +147,7 @@ static class BossAssets {
     }
     public static void Verify(string output,Func<string,PARAM> read) {
         var parts=Parts(output);var barNames=BarNames(output);var npcs=read("NpcParam");var ai=read("NpcThinkParam");
-        if(parts.Select(p=>p.Encounter).Distinct().Count()!=129||parts.Length!=164||parts.Select(p=>p.Index).Distinct().Count()!=parts.Length)throw new Exception("Boss table coverage mismatch");
+        if(parts.Select(p=>p.Encounter).Distinct().Count()!=137||parts.Length!=172||parts.Select(p=>p.Index).Distinct().Count()!=parts.Length)throw new Exception("Boss table coverage mismatch");
         var names=BND4.Read(Path.Combine(output,"msg/zhocn/item_dlc02.msgbnd.dcx")).Files.Where(f=>f.Name.Contains("NpcName")).SelectMany(f=>FMG.Read(f.Bytes).Entries).ToList();
         foreach(var p in parts) {
             if(!ai.Rows.Any(r=>r.ID==p.Think)||!names.Any(e=>e.ID==9600000+p.Index&&e.Text==barNames[e.ID]))throw new Exception("Boss AI/name missing");

@@ -28,7 +28,9 @@ static class TowerScalingAssets {
         foreach(var p in File.ReadAllLines(Path.Combine(input,"enemy-pools.txt")).Select(l=>l.Split('|')))
             targets.Add(new(900000000+int.Parse(p[2])*10000,int.Parse(p[0]),p[1] switch {"weak"=>"weak","elite"=>"elite",_=>"boss"},p[4]));
         foreach(var p in BossAssets.Parts(input)) {targets.Add(new(BossAssets.Npc(p,false),p.Act,"boss",p.Name,true));targets.Add(new(BossAssets.Npc(p,true),p.Index==54||p.Name=="坠星成兽"||p.Name=="英雄石像鬼双人组"?3:p.Act,"elite",p.Name));}
-        return targets;
+        var overrides=File.ReadLines(Path.Combine(input,"party-extra-slots.tsv")).Select(l=>l.Split('|').Select(int.Parse).ToArray())
+            .Where(p=>p[5] is >=48030228 and <=48030252).ToDictionary(p=>p[1],p=>p[0]);
+        return targets.Select(t=>overrides.TryGetValue(t.Id,out int act)?t with {Act=act}:t).ToList();
     }
     static int Tier(Dictionary<int,int[]> tiers,Target t)=>tiers[t.Act][t.Role switch {"weak"=>0,"elite"=>1,_=>2}];
     static string[] Slots(PARAM.Row row)=>row.Cells.Select(c=>c.Def.InternalName).Where(n=>n.StartsWith("spEffectID")&&int.TryParse(n[10..],out _)).ToArray();

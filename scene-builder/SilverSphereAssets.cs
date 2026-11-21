@@ -2,7 +2,7 @@ using SoulsFormats;
 
 static class SilverSphereAssets {
     const int Think=133308039,FirstBuddy=1601560000,FirstTrigger=611560000;
-    const string Old="召唤三只大型银色泪滴，以弹跳冲撞敌人。",Info="召唤一只大型银色泪滴，以弹跳冲撞敌人。";
+    const string Old="召唤三只大型银色泪滴，以弹跳冲撞敌人。",Info="召唤一个铁球，以弹跳冲撞敌人。";
     public static void ConfigureBuddy(PARAM.Row row) {row["x_offset"].Value=4.5f;row["z_offset"].Value=0f;}
     public static void ConfigureThink(PARAM.Row row) {
         foreach(var name in new[]{"disableLocalSteering","thinkAttr_doAdmirer"})row[name].Value=Convert.ChangeType(0,row[name].Value.GetType());
@@ -58,8 +58,8 @@ static class SilverSphereAssets {
                 if(!file.Name.EndsWith(".fmg",StringComparison.OrdinalIgnoreCase))continue;
                 var fmg=FMG.Read(file.Bytes);bool edit=false;
                 foreach(var entry in fmg.Entries.Where(e=>e.ID>=309000&&e.ID<=309039&&e.Text!=null)) {
-                    var text=entry.Text.Replace(Old,Info).Replace("Summons three Large Silver Tears that bounce into foes.","Summons a Large Silver Tear that bounces into foes.")
-                        .Replace("召喚三隻大型銀色淚滴", "召喚一隻大型銀色淚滴");
+                    var text=entry.Text.Replace(Old,Info).Replace("Summons three Large Silver Tears that bounce into foes.","Summons an Iron Ball that bounces into foes.")
+                        .Replace("召喚三隻大型銀色淚滴", "召喚一個鐵球");
                     if(text!=entry.Text){entry.Text=text;edit=true;}
                 }
                 if(edit){file.Bytes=fmg.Write();changed=true;}

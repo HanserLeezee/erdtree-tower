@@ -98,6 +98,7 @@ fn new_gifts_have_common_random_affixes_and_old_saves_keep_the_old_rules() {
         let mut s=State::start(seed,Class::Prophet,1,vec![],0);s.offers[0]=kind;s.offers[1]=*Kind::ALL.iter().find(|k|**k!=kind).unwrap();
         s.offers[2]=*Kind::ALL.iter().find(|k|!s.offers[..2].contains(k)).unwrap();
         s.choose(0,seed,Class::Prophet).unwrap();assert!(s.valid(1));
+        if kind==Kind::Mystic {continue;}
         assert!(s.gear.iter().all(|id|erdtree_tower::affixes::tier(*id)==Some(0)&&erdtree_tower::affixes::profile(*id).is_some()),"{kind:?} gift must have common affixes");
         profiles.extend(s.gear.iter().filter_map(|id|erdtree_tower::affixes::profile(*id)));
         if kind==Kind::Guard {assert!(matches!(erdtree_tower::affixes::base(s.gear[0])/1_000_000,31|32));}
@@ -116,6 +117,24 @@ fn new_gifts_have_common_random_affixes_and_old_saves_keep_the_old_rules() {
     legacy.contract.as_mut().unwrap().skip_gift().unwrap();finish_act(&mut legacy);
     let next=legacy.contract.as_ref().unwrap();
     assert_eq!(next.rules,0);assert!(next.chosen.is_none()&&next.active().is_empty()&&!next.offers.contains(&chosen.unwrap()));
+}
+
+#[test]
+fn mystic_gifts_match_the_two_casters_and_survive_save_reload() {
+    use erdtree_tower::rewards::{lookup,ItemKind};
+    for (class,expected) in [(Class::Astrologer,ItemKind::Sorcery),(Class::Prophet,ItemKind::Incantation),(Class::Confessor,ItemKind::Weapon)] {
+        for seed in 1..25 {
+            let mut run=Run::new(seed,class);run.enable_contracts();
+            let state=run.contract.as_mut().unwrap();
+            if !state.offers.contains(&Kind::Mystic){state.offers[0]=Kind::Mystic;}
+            state.choose(state.offers.iter().position(|k|*k==Kind::Mystic).unwrap(),seed,class).unwrap();
+            for (i,id) in state.gear.iter().enumerate(){
+                assert_eq!(lookup(*id).unwrap().kind,expected);
+                assert!(!state.gear[..i].contains(id));
+            }
+            assert_eq!(Run::decode(&run.encode().unwrap()).unwrap().contract,run.contract);
+        }
+    }
 }
 
 #[test]

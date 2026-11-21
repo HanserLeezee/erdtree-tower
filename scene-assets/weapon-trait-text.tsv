@@ -1,0 +1,36 @@
+对格挡的削精提高 10%	對格擋的削精提高 10%	+10% base stamina damage against guards
+对格挡的削精提高 15%	對格擋的削精提高 15%	+15% base stamina damage against guards
+对格挡的削精提高 20%	對格擋的削精提高 20%	+20% base stamina damage against guards
+对格挡的削精提高 25%	對格擋的削精提高 25%	+25% base stamina damage against guards
+射程修正 +12	射程修正 +12	+12 projectile range correction
+射程修正 +18	射程修正 +18	+18 projectile range correction
+射程修正 +24	射程修正 +24	+24 projectile range correction
+射程修正 +30	射程修正 +30	+30 projectile range correction
+满蓄力斩命中时释放冰风暴（冷却 6 秒）	滿蓄力斬命中時釋放冰風暴（冷卻 6 秒）	fully charged slashes unleash an ice storm on hit (cooldown: 6s)
+满蓄力斩命中时释放冰风暴（冷却 5 秒）	滿蓄力斬命中時釋放冰風暴（冷卻 5 秒）	fully charged slashes unleash an ice storm on hit (cooldown: 5s)
+满蓄力斩命中时释放冰风暴（冷却 4 秒）	滿蓄力斬命中時釋放冰風暴（冷卻 4 秒）	fully charged slashes unleash an ice storm on hit (cooldown: 4s)
+满蓄力斩命中时释放冰风暴（冷却 3 秒）	滿蓄力斬命中時釋放冰風暴（冷卻 3 秒）	fully charged slashes unleash an ice storm on hit (cooldown: 3s)
+施法速度等效灵巧 +6	施法速度等效靈巧 +6	+6 virtual Dexterity for casting speed
+施法速度等效灵巧 +9	施法速度等效靈巧 +9	+9 virtual Dexterity for casting speed
+施法速度等效灵巧 +12	施法速度等效靈巧 +12	+12 virtual Dexterity for casting speed
+施法速度等效灵巧 +15	施法速度等效靈巧 +15	+15 virtual Dexterity for casting speed
+重击蓄力期间减伤 6%	重擊蓄力期間減傷 6%	take 6% less damage while charging a heavy attack
+重击蓄力期间减伤 9%	重擊蓄力期間減傷 9%	take 9% less damage while charging a heavy attack
+重击蓄力期间减伤 12%	重擊蓄力期間減傷 12%	take 12% less damage while charging a heavy attack
+重击蓄力期间减伤 15%	重擊蓄力期間減傷 15%	take 15% less damage while charging a heavy attack
+成功格挡后 2 秒减伤 6%	成功格擋後 2 秒減傷 6%	take 6% less damage for 2s after guarding a hit
+成功格挡后 2 秒减伤 8%	成功格擋後 2 秒減傷 8%	take 8% less damage for 2s after guarding a hit
+成功格挡后 2 秒减伤 10%	成功格擋後 2 秒減傷 10%	take 10% less damage for 2s after guarding a hit
+成功格挡后 2 秒减伤 12%	成功格擋後 2 秒減傷 12%	take 12% less damage for 2s after guarding a hit
+满血时减伤 4%	滿血時減傷 4%	take 4% less damage at full HP
+满血时减伤 6%	滿血時減傷 6%	take 6% less damage at full HP
+满血时减伤 8%	滿血時減傷 8%	take 8% less damage at full HP
+满血时减伤 10%	滿血時減傷 10%	take 10% less damage at full HP
+生命不高于 30% 时减伤 6%	生命不高於 30% 時減傷 6%	take 6% less damage at or below 30% HP
+生命不高于 30% 时减伤 9%	生命不高於 30% 時減傷 9%	take 9% less damage at or below 30% HP
+生命不高于 30% 时减伤 12%	生命不高於 30% 時減傷 12%	take 12% less damage at or below 30% HP
+生命不高于 30% 时减伤 15%	生命不高於 30% 時減傷 15%	take 15% less damage at or below 30% HP
+受击失血后 2 秒减伤 4%	受擊失血後 2 秒減傷 4%	take 4% less damage for 2s after a damaging hit
+受击失血后 2 秒减伤 6%	受擊失血後 2 秒減傷 6%	take 6% less damage for 2s after a damaging hit
+受击失血后 2 秒减伤 8%	受擊失血後 2 秒減傷 8%	take 8% less damage for 2s after a damaging hit
+受击失血后 2 秒减伤 10%	受擊失血後 2 秒減傷 10%	take 10% less damage for 2s after a damaging hit

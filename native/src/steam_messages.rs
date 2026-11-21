@@ -91,7 +91,7 @@ impl Pending {
         let handshake=erdtree_tower::party_handshake::Handshake::new(roster.clone(),nonce,seed)?.with_dlc(dlc).with_compatibility(profile)?;
         Ok(Self{transport:Transport::load(roster.clone())?,roster,handshake,hello:std::time::Instant::now()-std::time::Duration::from_secs(1),started:std::time::Instant::now(),packets:vec![],failure:None})
     }
-    pub fn poll(&mut self)->Result<Option<(u64,u64)>,String> {
+    pub fn poll(&mut self,fresh_lobby:bool)->Result<Option<(u64,u64)>,String> {
         use erdtree_tower::party_handshake::Payload;
         if self.failure.is_none()&&self.hello.elapsed()>=std::time::Duration::from_secs(1) {
             self.hello=std::time::Instant::now();
@@ -103,6 +103,15 @@ impl Pending {
                 Err(error)=>{self.failure.get_or_insert_with(||format!("队友 {peer}：{error}"));continue;}
             };
             match packet {
+                  Payload::Reconnect{session,message:erdtree_tower::party_reconnect::Message::Request{nonce,profile,..}}
+                      if fresh_lobby && self.failure.is_none() && self.roster.local==self.roster.host && nonce!=0 => {
+                      let local=super::party_compat::profile().ok_or("等待本机兼容检查")?.as_ref().map_err(Clone::clone)?;
+                      let message=match local.check(&profile) {
+                          Ok(())=>erdtree_tower::party_reconnect::Message::FreshLobby{nonce},
+                          Err(reason)=>erdtree_tower::party_reconnect::Message::Reject{nonce,reason},
+                      };
+                      self.transport.send(peer,&Payload::Reconnect{session,message}.encode()?)?;
+                  },
                 Payload::Handshake(message)=>{
                     let responses=handshake_responses(&mut self.handshake,&mut self.failure,peer,message);
                     for (target,response) in responses {

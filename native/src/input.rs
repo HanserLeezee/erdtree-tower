@@ -7,6 +7,19 @@ use std::{
 };
 
 pub static CAPTURE: AtomicBool = AtomicBool::new(false);
+static MENU_VISIBLE_UNTIL: AtomicU64 = AtomicU64::new(0);
+pub struct MenuFrame<'a> { deadline:&'a AtomicU64, shown:bool }
+pub fn menu_frame()->MenuFrame<'static> {MenuFrame{deadline:&MENU_VISIBLE_UNTIL,shown:false}}
+impl MenuFrame<'_> {
+    pub fn show(&mut self) {
+        self.shown=true;
+        self.deadline.store(stamp().saturating_add(200),Ordering::Release);
+    }
+}
+impl Drop for MenuFrame<'_> {
+    fn drop(&mut self){if !self.shown {self.deadline.store(0,Ordering::Release);}}
+}
+pub fn menu_input_active()->bool {stamp()<MENU_VISIBLE_UNTIL.load(Ordering::Acquire)&&foreground()}
 pub fn controls_unlocked()->bool {true}
 fn dance_capture(dancing:bool,focused:bool)->bool {dancing&&focused}
 pub fn dance_input_active()->bool {dance_capture(crate::dance_ui::dancing(),foreground())}
@@ -51,20 +64,34 @@ impl ActionWindow {
 /// 正常情况下游戏输入已经被 PadCapture 停掉，这是第二道保险：即使输入漏到游戏（例如别的模组把轮询又打开），
 /// 在三选一等界面按左右也不会让角色走动或出招。关闭后 350 毫秒再还原成打开前的状态
 pub struct ActionGuard {
+    menu_click_held:bool,
     clock:std::time::Instant,
     window:ActionWindow,
     saved:Option<(usize,eldenring::cs::FieldInsHandle,bool,bool)>,
 }
 impl Default for ActionGuard {
-    fn default()->Self {Self{clock:std::time::Instant::now(),window:ActionWindow::default(),saved:None}}
+    fn default()->Self {Self{menu_click_held:false,clock:std::time::Instant::now(),window:ActionWindow::default(),saved:None}}
 }
 impl ActionGuard {
-    pub fn update(&mut self,chr:&mut eldenring::cs::ChrIns,active:bool,dancing:bool) {
+    pub fn update(&mut self,chr:&mut eldenring::cs::ChrIns,active:bool,dancing:bool,menu_visible:bool) {
         let at_hub=controls_unlocked();
         if at_hub {
-            self.window.clear();self.saved=None;
-            chr.debug_flags.set_disabled_secondary_actions(false);
-            chr.debug_flags.set_disabled_movement(false);
+            self.saved=None;
+            use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState,VK_LBUTTON,VK_RBUTTON};
+            self.menu_click_held=(menu_visible||self.menu_click_held)&&foreground()&&
+                [VK_LBUTTON,VK_RBUTTON].iter().any(|k|unsafe{GetAsyncKeyState(k.0 as i32)}<0);
+            let suppress_attack=self.window.blocked(self.clock.elapsed(),menu_visible||self.menu_click_held);
+            if suppress_attack {
+                let req=&mut *chr.modules.action_request;
+                for bits in [&mut req.action_requests,&mut req.previous_action_requests,&mut req.new_action_presses,
+                    &mut req.released_actions,&mut req.cancel_ready_actions,&mut req.queued_action_inputs] {
+                    bits.set_r1(false);bits.set_r2(false);bits.set_l1(false);bits.set_l2(false);
+                    bits.set_magic_r(false);bits.set_magic_r2(false);bits.set_magic_l(false);bits.set_magic_l2(false);
+                    if menu_visible {bits.set_movement(false);bits.set_movement_prev(false);}
+                }
+            }
+            chr.debug_flags.set_disabled_secondary_actions(suppress_attack);
+            chr.debug_flags.set_disabled_movement(menu_visible);
             return;
         }
         let owner=std::ptr::from_ref(chr) as usize;
@@ -96,15 +123,26 @@ pub fn capture_route(visible: bool, player_present: bool, view: &crate::runtime:
     if view.run.as_ref().is_some_and(|r|r.retry_node.is_some()){return false;}
     visible
         && player_present
+        && view.ready
         && !view.travelling
         && view
             .run
             .as_ref()
-            .is_none_or(|run| !matches!(run.phase, erdtree_tower::Phase::Combat { .. }))
+            .is_some_and(|run| !matches!(run.phase, erdtree_tower::Phase::Combat { .. }))
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn map_and_reward_capture_expires_and_releases_on_the_first_hidden_frame() {
+        let deadline=AtomicU64::new(0);
+        let start=stamp();
+        {let mut frame=MenuFrame{deadline:&deadline,shown:false};frame.show();}
+        let until=deadline.load(Ordering::Acquire);
+        assert!(until>=start+200&&until<=stamp()+200);
+        drop(MenuFrame{deadline:&deadline,shown:false});
+        assert_eq!(deadline.load(Ordering::Acquire),0);
+    }
     #[test]
     fn dance_input_returns_to_game_at_end_cancel_or_focus_loss() {
         assert!(dance_capture(true,true));
@@ -187,7 +225,7 @@ mod tests {
         assert!(!capture_route(true, true, &view));
     }
     #[test]
-    fn initialization_blocks_actions_but_keeps_cursor_available() {
+    fn menus_capture_inputs_but_initialization_and_travel_do_not() {
         let mut view = crate::runtime::View {
             shared_event:false,
             ballots:vec![],latencies:vec![],
@@ -209,7 +247,13 @@ mod tests {
             travelling: false,
             room: None,
         };
-        assert!(capture_route(true, true, &view));
+        assert!(!capture_route(true, true, &view));
+        let mut reward_run=erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai);
+        reward_run.phase=erdtree_tower::Phase::Reward{id:0,offers:vec![]};
+        view.run=Some(reward_run);view.ready=true;view.busy=false;
+        assert!(capture_route(true,true,&view));
+        assert!(!capture_route(false,true,&view));
+        view.ready=false;assert!(!capture_route(true,true,&view));view.ready=true;
         view.shared_event=true;
         assert!(!capture_route(true,true,&view));
         view.shared_event=false;
@@ -326,7 +370,7 @@ pub struct PadCapture {
 
 impl PadCapture {
     pub fn update(&mut self, capture: bool) {
-        let capture=background_capture(capture,controls_unlocked())||dance_input_active();
+        let capture=capture||dance_input_active();
         let Ok(manager) = (unsafe { FD4PadManager::instance_mut() }) else {
             return;
         };

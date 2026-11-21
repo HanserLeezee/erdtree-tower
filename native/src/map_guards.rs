@@ -48,6 +48,11 @@ impl Guards {
         if self.ready(){return Ok(());}
         if !self.reset {self.retire();self.reset=true;return Ok(());}
         if !self.requested {
+            if self.combat==enemies::MAP_COMBAT_FLAG {
+                use fromsoftware_shared::FromStatic;
+                let params=unsafe {eldenring::cs::SoloParamRepository::instance_mut()}.map_err(|_|"铃珠猎人参数未加载")?;
+                params.get_mut::<eldenring::cs::NpcParam>(self.specs[0].npc as u32).ok_or("缺少铃珠猎人掉落参数")?.set_get_soul(7500);
+            }
             for &id in &self.ids {if flag(controls(id)?.1)?{return Ok(());}}
             for (slot,&id) in self.ids.iter().enumerate() {
                 if self.combat==COMBAT {for (f,value) in positions(id,slot)?{set_flag(f,value)?;}}

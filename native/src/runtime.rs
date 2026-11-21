@@ -232,6 +232,7 @@ struct Pending {
     completed: bool,
     // [fix] Since when every remaining live foe has sat untouched at full HP after the others died.
     stall: Option<Instant>,
+    godskin_pace:GodskinPace,
 }
 struct PartyScene {run:Run,block:i32,wave:u8,started:Instant,guards:Option<super::map_guards::Guards>,hunt:Option<super::map_scarabs::Hunt>}
 impl PartyScene {
@@ -416,6 +417,7 @@ struct Runtime {
     twin_refund: Option<(u32,Instant)>,
     growth: super::scaling::Growth,
     law_fight: super::law::Fight,
+    weapon_traits: super::weapon_traits::State,
     ember_fight: super::embers::Fight,
     ember_practice: super::embers::Fight,
     bout: super::debug_menu::Bout,
@@ -503,6 +505,7 @@ fn fresh_runtime()->Runtime {
         twin_refund: None,
         growth: Default::default(),
         law_fight: Default::default(),
+        weapon_traits: Default::default(),
         ember_fight: Default::default(),
         ember_practice: Default::default(),
         bout: Default::default(),
@@ -654,7 +657,7 @@ fn record_fp(fp:i32) {
     if last.as_ref().is_some_and(|(p,v)|*p==path&&*v==fp){return;}
     if std::fs::write(&path,fp.to_string()).is_ok(){*last=Some((path,fp));}
 }
-fn record_checked(run: &Run)->Result<(),String> {
+pub(super) fn record_checked(run: &Run)->Result<(),String> {
     run.encode().and_then(|data| {
         let path = SESSION_PATH.lock().ok().and_then(|p|p.clone()).unwrap_or_else(||super::LOG_PATH.with_file_name("tower-session.json"));
         let temporary=path.with_extension("tmp");
@@ -694,6 +697,54 @@ fn stop_map_combat(state:&Runtime,world:&mut WorldChrMan) {
             for entity in ids {if let Err(error)=super::enemies::request_map_entity(entity,false){super::log(error);}}
         }
     }
+}
+pub struct ShopDeparture {
+    seed:u64,act:u8,visited:Vec<usize>,node:usize,last_reason:Option<&'static str>,
+}
+fn shop_departure_wait(warp:bool,player:Option<(bool,bool,bool)>)->Option<&'static str> {
+    match (warp,player) {
+        (true,_)=>Some("warp"),
+        (_,None)=>Some("loading"),
+        (_,Some((false,_,_)))=>Some("dead"),
+        (_,Some((_,false,_)))=>Some("airborne"),
+        (_,Some((_,_,true)))=>Some("invincible"),
+        _=>None,
+    }
+}
+#[test]
+fn shop_entry_waits_until_all_transient_checks_clear() {
+    assert_eq!(shop_departure_wait(true,None),Some("warp"));
+    assert_eq!(shop_departure_wait(false,None),Some("loading"));
+    assert_eq!(shop_departure_wait(false,Some((true,false,true))),Some("airborne"));
+    assert_eq!(shop_departure_wait(false,Some((true,true,true))),Some("invincible"));
+    assert_eq!(shop_departure_wait(false,Some((true,true,false))),None);
+}
+fn enter_party_node(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan,node:usize)->Result<(),String>{
+    super::native_talk::set_flag(super::enemies::MAP_COMBAT_FLAG,false)?;
+    if let Some(scene)=state.party_scene.take(){scene.retire(world);}
+    state.view.shared_event=false;
+    request_travel(state,world,game,node)
+}
+fn tick_shop_departure(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Result<(),String>{
+    let Some(link)=state.party.as_mut() else{return Ok(());};
+    if link.stopped.is_some()||link.defeated||state.skip_target.is_some(){link.event.shop_departure=None;return Ok(());}
+    let Some(pending)=link.event.shop_departure.as_mut() else{return Ok(());};
+    let player=world.main_player.as_ref().map(|p|(p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag(),
+        p.chr_ins.modules.physics.standing_on_solid_ground,p.chr_ins.chr_flags1c5.is_invincible()));
+    if let Some(reason)=shop_departure_wait(game.warp_requested,player){
+        if pending.last_reason!=Some(reason){
+            pending.last_reason=Some(reason);
+            super::log(format!("PARTY_SHOP_WAIT epoch={} node={} reason={reason}",link.epoch,pending.node));
+            report(state,"已确认前往商店，等待角色可传送后自动出发。");
+        }
+        return Ok(());
+    }
+    let pending=link.event.shop_departure.take().unwrap();
+    if !state.view.run.as_ref().is_some_and(|run|run.seed==pending.seed&&run.act==pending.act&&run.phase==Phase::Map
+        &&run.visited==pending.visited&&run.available().contains(&pending.node)){
+        return Err("队友路线与房主不同，未执行商店传送".into());
+    }
+    enter_party_node(state,world,game,pending.node)
 }
 fn apply_party_order(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan,order:erdtree_tower::party_game::Order)->Result<(),String> {
     use erdtree_tower::party_game::Order;
@@ -759,11 +810,14 @@ fn apply_party_order(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan
             state.view.busy=false;state.view.travelling=false;state.view.enemy_hp=None;
             report(state,"队伍已重置，可以开始新的旅程。");Ok(())
         },
-        Order::Enter{node,..}=>{
-            super::native_talk::set_flag(super::enemies::MAP_COMBAT_FLAG,false)?;
-            if let Some(scene)=state.party_scene.take(){scene.retire(world);}
-            state.view.shared_event=false;
-            request_travel(state,world,game,node)
+        Order::Enter{node,act,visited,..}=>{
+            let run=state.view.run.as_ref().unwrap();
+            if !state.party.as_ref().unwrap().host() && run.nodes[node].kind==erdtree_tower::NodeKind::Shop {
+                let seed=run.seed;
+                state.party.as_mut().unwrap().event.shop_departure=Some(ShopDeparture{seed,act,visited,node,last_reason:None});
+                return tick_shop_departure(state,world,game);
+            }
+            enter_party_node(state,world,game,node)
         },
         Order::Defeat{..}=>{
             stop_map_combat(state,world);
@@ -842,7 +896,9 @@ fn sync_action_guard(state:&mut Runtime,world:&mut WorldChrMan) {
         state.room.as_ref().is_some_and(|r|r.dialog_active())
         || state.attendant.as_ref().is_some_and(|r|r.dialog_active())
         || state.hub.as_ref().is_some_and(|h|h.dialog_active()));
-    if let Some(player)=world.main_player.as_mut() {state.action_guard.update(&mut player.chr_ins,menu_active,super::dance_ui::active());}
+    if let Some(player)=world.main_player.as_mut() {
+        state.action_guard.update(&mut player.chr_ins,menu_active,super::dance_ui::active(),super::input::menu_input_active());
+    }
 }
 fn poll_blocked_hub(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan) {
     sync_action_guard(state,world);
@@ -949,7 +1005,24 @@ fn tick_auto_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)-
             }
         }
         if let Some(pending)=state.reconnect.as_mut() {
-            if !pending.poll()?{return Ok(true);}
+            match pending.poll()? {
+                super::reconnect::Status::Waiting=>return Ok(true),
+                super::reconnect::Status::FreshLobby=>{
+                    let owner=pending.owner;
+                    if !world.main_player.as_ref().is_some_and(|p|(unsafe{p.player_game_data.as_ref()}.character_id,game.save_slot)==owner) {
+                        return Err("切换新旅程时角色已改变".into());
+                    }
+                    super::suspension::backup_restart(owner)?;
+                    let progress=super::hub::path(owner,"json");
+                    if progress.exists(){std::fs::remove_file(progress).map_err(|e|e.to_string())?;}
+                    super::reconnect::clear(owner)?;
+                    if let Some(hub)=state.hub.as_mut(){hub.finish();}
+                    state.reconnect=None;
+                    super::log("RECONNECT host confirmed fresh lobby; archived old journey and switching to new handshake");
+                    return Ok(true);
+                }
+                super::reconnect::Status::Ready=>{}
+            }
             let Some(player)=world.main_player.as_ref() else{return Ok(true);};
             if !pending.landed(i32::from(player.current_block_id),!game.warp_requested&&player.chr_ins.modules.data.hp>0&&player.chr_ins.modules.physics.standing_on_solid_ground){return Ok(true);}
             let owner=pending.owner;
@@ -986,7 +1059,9 @@ fn tick_auto_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)-
         let pending=state.party_pending.as_ref().unwrap();
         super::log(format!("Steam party handshake started: host={} members={}",pending.roster.local==pending.roster.host,pending.roster.members.len()));
     }
-    if let Some((session,seed))=state.party_pending.as_mut().unwrap().poll()? {
+    let fresh_lobby=state.view.run.is_none()&&state.hub.as_ref().is_some_and(|h|h.active&&!h.paused)
+        &&!game.warp_requested&&world.main_player.as_ref().is_some_and(|p|i32::from(p.current_block_id)==super::hub::BLOCK);
+    if let Some((session,seed))=state.party_pending.as_mut().unwrap().poll(fresh_lobby)? {
         let mut aligned=state.view.run.clone();
         if let Some(run)=&mut aligned {run.align_party_start(seed)?;record_checked(run)?;}
         let link=super::party::Link::from_steam(state.party_pending.take().unwrap(),session,seed)?;
@@ -1000,8 +1075,8 @@ fn tick_auto_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)-
 fn party_map_combat(fighting:bool,victory:bool,defeated:bool,merchant_active:bool)->bool {
     !defeated&&((fighting&&!victory)||merchant_active)
 }
-fn party_death_drain(host:bool,victory:bool,departing:bool,cleanup:Option<(u64,bool)>,epoch:u64)->bool {
-    !host&&victory&&!departing&&cleanup.is_some_and(|(e,swept)|e==epoch&&!swept)
+fn party_death_drain(victory:bool,departing:bool,cleanup:Option<(u64,bool)>,epoch:u64)->bool {
+    victory&&!departing&&cleanup.is_some_and(|(e,swept)|e==epoch&&!swept)
 }
 
 fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Result<(),String> {
@@ -1036,6 +1111,7 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
     if QUICK_END.load(std::sync::atomic::Ordering::Relaxed){return Ok(());}
     tick_revival(state,world,game)?;
     if state.party.as_ref().unwrap().defeated {return Ok(());}
+    tick_shop_departure(state,world,game)?;
     tick_party_scene(state,world,game)?;
     let ballots=state.party.as_ref().unwrap().ballots.clone();
     let prompt=remote_route_prompt(&state.view,&ballots,state.party.as_ref().unwrap().config.player);
@@ -1059,9 +1135,9 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
             }
         }
     }
-    let draining=party_death_drain(link.host(),link.victory,state.view.travelling||!present,
+    let draining=party_death_drain(link.victory,state.view.travelling||!present,
         state.victory_cleanup.as_ref().map(|c|(c.0,c.3)),link.epoch);
-    let merchant_active=link.event.merchant_phase==2&&state.room.as_ref().and_then(|r|r.hunter.as_ref())
+    let merchant_active=matches!(link.event.merchant_phase,2|3)&&state.room.as_ref().and_then(|r|r.hunter.as_ref())
         .is_some_and(|hunter|hunter.map_combat_active());
     super::native_talk::set_flag(super::enemies::MAP_COMBAT_FLAG,party_map_combat(link.fighting,link.victory&&!draining,link.defeated,merchant_active))?;
     if link.victory||link.defeated {super::native_talk::set_flag(45007990,false)?;}
@@ -1132,6 +1208,7 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
 /// 联机成员胜利后撤敌人：死掉的敌人留着尸体（死亡动画、倒地与卢恩照常），等开始传送时一起撤下；
 /// 收到胜利 8 秒后仍在本机活着的（与房主不同步），先单独撤下，免得在选奖励时打人
 fn finish_victory_cleanup(state:&mut Runtime,world:&mut WorldChrMan) {
+    let host=state.party.as_ref().is_some_and(|p|p.host());
     // 换了一场联机（队伍断开重连等）：过期的撤场作废，免得撤掉新一场的敌人
     let epoch=state.party.as_ref().map(|p|p.epoch);
     if state.victory_cleanup.as_ref().is_some_and(|c|Some(c.0)!=epoch) {state.victory_cleanup=None;return;}
@@ -1147,7 +1224,8 @@ fn finish_victory_cleanup(state:&mut Runtime,world:&mut WorldChrMan) {
     let replicas:Vec<_>=world.chr_sets.iter().flatten().flat_map(|set|set.characters()).filter(|chr|ids.contains(&chr.event_entity_id))
         .map(|chr|(chr.event_entity_id,chr.modules.data.hp,chr.chr_flags1c5.death_flag())).collect();
     let runes=world.main_player.as_ref().map(|p|unsafe {p.player_game_data.as_ref()}.rune_count);
-    super::log(format!("Party native death drain completed replicas={replicas:?} runes={runes:?}"));
+    super::log(format!("Party native death drain completed host={host} entities={replicas:?} runes={runes:?}"));
+    if host{return;} // Only members sweep desynchronized replicas.
     let stray:Vec<u32>=world.chr_sets.iter().flatten().flat_map(|set|set.characters()).filter(|chr|ids.contains(&chr.event_entity_id)
         &&chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag()&&!chr.debug_flags.character_disabled()&&enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status))
         .map(|chr|chr.event_entity_id).collect();
@@ -1289,21 +1367,20 @@ mod replica_tests {
 mod victory_cleanup_tests {
     #[test]
     fn victory_drain_keeps_native_death_processing_until_cleanup() {
-        assert!(super::party_death_drain(false,true,false,Some((7,false)),7));
-        assert!(!super::party_death_drain(false,true,false,Some((7,true)),7));
-        assert!(!super::party_death_drain(false,true,false,Some((6,false)),7));
-        assert!(!super::party_death_drain(false,true,true,Some((7,false)),7));
-        assert!(!super::party_death_drain(true,true,false,Some((7,false)),7));
-        assert!(!super::party_death_drain(false,false,false,Some((7,false)),7));
-        assert!(!super::party_death_drain(false,true,false,None,7));
+        assert!(super::party_death_drain(true,false,Some((7,false)),7));
+        assert!(!super::party_death_drain(true,false,Some((7,true)),7));
+        assert!(!super::party_death_drain(true,false,Some((6,false)),7));
+        assert!(!super::party_death_drain(true,true,Some((7,false)),7));
+        assert!(!super::party_death_drain(false,false,Some((7,false)),7));
+        assert!(!super::party_death_drain(true,false,None,7));
     }
     #[test]
     fn victory_packet_does_not_restore_invincibility_before_native_death() {
-        let draining=super::party_death_drain(false,true,false,Some((7,false)),7);
+        let draining=super::party_death_drain(true,false,Some((7,false)),7);
         assert!(super::party_map_combat(true,!draining,false,false));
         assert!(!super::party_map_combat(true,!draining,true,false));
         assert!(!super::party_map_combat(false,!draining,false,false));
-        let drained=super::party_death_drain(false,true,false,Some((7,true)),7);
+        let drained=super::party_death_drain(true,false,Some((7,true)),7);
         assert!(!super::party_map_combat(true,!drained,false,false));
     }
     #[test]
@@ -1628,7 +1705,13 @@ pub fn tick() {
     tick_locked();
     if let Ok(mut state)=STATE.try_lock() {
         if let Ok(world)=unsafe {WorldChrMan::instance_mut()}{
+            if let Some(player)=world.main_player.as_mut() {
+                state.weapon_traits.sync(player,super::weapon_glow::clock());
+            } else {
+                state.weapon_traits=Default::default();
+            }
             sync_action_guard(&mut state,world);
+            super::starsurge::debug_tick(world);
             super::frost_shackle::finish_frame(world,state.view.travelling||state.view.run.is_none());
         }
         sync_map(&mut state);
@@ -1734,6 +1817,12 @@ fn tick_locked() {
         &&world.main_player.as_ref().is_some_and(|p|i32::from(p.current_block_id)==super::hub::BLOCK&&p.chr_ins.modules.physics.standing_on_solid_ground)
         &&state.party.as_ref().is_some_and(|p|p.can_restart_paused());
     let restart_context=state.party.as_ref().filter(|_|restart_paused).map_or(0,|p|p.config.session);
+    if state.view.run.is_none() && !game.warp_requested && !state.suspension.returning
+        && state.suspension.prepared.is_none() && state.hub.as_ref().is_some_and(|h|h.ready_for_party_restart())
+        && state.party.as_ref().is_some_and(|p|p.event.pause.ticket.is_none()&&p.can_restart_paused()&&p.gate.mixed_hub_journeys()) {
+        super::log("PARTY_RESTART mixed fresh and paused journeys at hub; starting fresh together");
+        QUICK_END.store(true,std::sync::atomic::Ordering::Relaxed);
+    }
     super::suspension::RESTART_CONTEXT.store(restart_context,std::sync::atomic::Ordering::Release);
     let restart_request=super::suspension::RESTART_REQUEST.swap(0,std::sync::atomic::Ordering::AcqRel);
     if restart_request!=0 {
@@ -2048,6 +2137,7 @@ fn tick_locked() {
         let flasks=state.flasks.as_ref().map(|f|f.total());
         // Practice never forwards combat rewards or persistent stack gains.
         let _=state.ember_practice.tick(world,key,&held,&foes,true,false,flasks,keeper,false);
+        if state.party.is_none(){super::starsurge::fight(world,&foes,false,None);}
         super::frost_shackle::observe(world,key,&foes,held.contains(&erdtree_tower::embers::Ember::FrostShackle));
         super::embers::clear_practice_critical();
     } else {
@@ -2065,7 +2155,7 @@ fn tick_locked() {
     let contract_run=state.view.run.as_ref().filter(|_|state.hub.as_ref().is_some_and(|h|!h.active));
     let spirit_alive=super::embers::living_spirit(world);
     let ember_state=if practice {&state.ember_practice}else{&state.ember_fight};
-    if let Some(player)=world.main_player.as_mut(){let greatshield_guard=super::embers::bulwark_guard(player);let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);super::auras::sync(&mut player.chr_ins);super::law::sync(&mut player.chr_ins,contract_run,state.law_fight.overtime());super::embers::sync(&mut player.chr_ins,contract_run,ember_state,spirit_alive,greatshield_guard);let data=player.player_game_data.as_ptr();super::weapon_glow::sync(&mut player.chr_ins,unsafe {&*data},super::weapon_glow::clock());super::affix_stack::sync(&mut player.chr_ins,unsafe {&*data});}
+    if let Some(player)=world.main_player.as_mut(){let greatshield_guard=super::embers::bulwark_guard(player);let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);super::auras::sync(&mut player.chr_ins);super::law::sync(&mut player.chr_ins,contract_run,state.law_fight.overtime());super::embers::sync(&mut player.chr_ins,contract_run,ember_state,spirit_alive,greatshield_guard);let data=player.player_game_data.as_ptr();super::starsurge::sync(&mut player.chr_ins,contract_run);super::weapon_glow::sync(&mut player.chr_ins,unsafe {&*data},super::weapon_glow::clock());super::affix_stack::sync(&mut player.chr_ins,unsafe {&*data});}
     // 处决期间敌人不再无敌，我方照旧无敌（旅程进行中）
     super::throw_guard::sync(world,contract_run.is_some_and(|run|!matches!(run.phase,Phase::Dead|Phase::Won)));
     if let Some(player)=world.main_player.as_mut(){super::auras::countdown(&mut player.chr_ins,false);}
@@ -2873,10 +2963,23 @@ fn tick_locked() {
     }
     if outcome!=Outcome::Victory {state.skip_fight=None;}
     if outcome==Outcome::Victory {
+        let host_entities=if party_mode&&!skipped {
+            state.pending.as_ref().unwrap().foes.iter().filter_map(|foe|{
+                let chr=world.chr_ins_by_handle(&foe.fight.handle()?)?;
+                (foe.entity_address==Some(std::ptr::from_ref(chr) as usize)&&chr.event_entity_id!=0
+                    &&(chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag())).then_some(chr.event_entity_id)
+            }).collect::<Vec<_>>()
+        }else{Vec::new()};
         if let Some(link)=state.party.as_mut(){
             if let Err(error)=link.result(){
                 if link.encounter.is_some_and(|t|t.elapsed()>Duration::from_secs(90)){link.stop(error.clone());}
                 report(&mut state,error);return;
+            }
+            if link.host()&&!host_entities.is_empty(){
+                let epoch=link.epoch;
+                let runes=world.main_player.as_ref().map(|p|unsafe {p.player_game_data.as_ref()}.rune_count);
+                super::log(format!("Party native death drain started host=true epoch={epoch} entities={host_entities:?} runes={runes:?}"));
+                state.victory_cleanup=Some((epoch,host_entities,Instant::now(),false));
             }
         }
     }
@@ -3250,11 +3353,24 @@ fn host_embers(state:&mut Runtime,world:&mut WorldChrMan) {
     let foes:Vec<_>=pending.foes.iter().enumerate().filter_map(|(slot,f)|Some((f.fight.handle()?,super::enemies::bar_rank(&f.spec),slot as u8))).collect();
     let keeper=run.ember_stacks.level(erdtree_tower::embers::Ember::SpiritKeeper);
     let key=(run.seed,run.act,id);
-    let astro=run.class==erdtree_tower::Class::Astrologer;
     let thinks:Vec<u32>=pending.foes.iter().map(|f|f.spec.think).collect();
-    let events=state.ember_fight.tick(world,key,&embers,&foes,authority,state.party.is_some(),flasks,keeper,astro);
+    let events=state.ember_fight.tick(world,key,&embers,&foes,authority,state.party.is_some(),flasks,keeper,false);
+    if authority {
+        super::starsurge::fight(world,&foes,state.party.is_some(),None);
+        if let Some(link)=state.party.as_mut().filter(|p|p.fighting&&!p.victory&&!p.defeated) {
+            for (peer,b) in link.gate.star_bursts(run.seed,&run.visited) {
+                let seen=link.event.star_seen.entry(peer).or_default();
+                if !b.take_new(seen) {continue;}
+                if let Some((h,_,_))=foes.iter().find(|f|f.2==b.slot)
+                    && let Some(chr)=world.chr_ins_by_handle_mut(h)
+                    && chr.modules.data.hp>0 && !chr.chr_flags1c5.death_flag() && !chr.chr_flags1c5.is_invincible() {
+                    super::starsurge::burst_fx(chr);
+                    chr.modules.data.hp=chr.modules.data.hp.saturating_sub(b.amount.min(chr.modules.data.max_hp.saturating_mul(2))).max(0);
+                }
+            }
+        }
+    }
     if events.feast {grant_feast(state.flasks.as_mut(),world);}
-    if let Some(player)=world.main_player.as_mut() {super::passives::kill_fp(&mut player.chr_ins,Some(&pending.next_run),&events.gains);}
     grant_captures(state,world,&events.captures,&thinks);
     record_ember_gains(state,events.gains,key);
     // 鲜血骑士的破势：自己持有，或联机时任一在场队员持有，都由房主（单人即自己）执行
@@ -3352,11 +3468,19 @@ fn member_embers(state:&mut Runtime,world:&mut WorldChrMan) {
     if let Some(link)=state.party.as_ref(){super::frost_shackle::receive(world,key,&foes,&link.event.frost_shackles);}
     let keeper=run.ember_stacks.level(erdtree_tower::embers::Ember::SpiritKeeper);
     let flasks=state.flasks.as_ref().map(|f|f.total());
-    let astro=run.class==erdtree_tower::Class::Astrologer;
     let thinks:Vec<u32>=roster.iter().map(|spec|spec.think).collect();
-    let events=state.ember_fight.tick(world,key,&embers,&foes,false,true,flasks,keeper,astro);
+    let events=state.ember_fight.tick(world,key,&embers,&foes,false,true,flasks,keeper,false);
+    if let Some(link)=state.party.as_mut().filter(|p|p.fighting&&!p.victory&&!p.defeated) {
+        let requests=&mut link.event.star_requests;
+        super::starsurge::fight(world,&foes,true,Some(&mut |h,amount| {
+            if let Some((_,_,slot))=foes.iter().find(|f|f.0==h) {
+                let sequence=requests.back().map_or(1,|b|b.sequence.saturating_add(1));
+                if requests.len()==erdtree_tower::embers::STRIKE_WINDOW {requests.pop_front();}
+                requests.push_back(erdtree_tower::party_game::StarBurst{sequence,slot:*slot,amount});
+            }
+        }));
+    }
     if events.feast {grant_feast(state.flasks.as_mut(),world);}
-    if let Some(player)=world.main_player.as_mut() {super::passives::kill_fp(&mut player.chr_ins,state.view.run.as_ref(),&events.gains);}
     grant_captures(state,world,&events.captures,&thinks);
     record_ember_gains(state,events.gains,key);
     // 作用在敌人身上的余烬交给房主执行
@@ -3587,11 +3711,11 @@ fn sync_merchant_reward(state:&mut Runtime)->Result<(),String> {
 fn tick_merchant(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::rooms::Room)->Result<bool,String> {
     let Some(run)=state.view.run.as_ref() else{return Ok(false);};
     let host=state.party.as_ref().is_none_or(|p|p.host());
-    if !run.bells.down(run.act,room.node)&&room.merchant_dead(world)
+    if !room.merchant_down&&!run.bells.down(run.act,room.node)&&room.merchant_dead(world)
         &&!erdtree_tower::merchant::hunter_appears(run.seed,run.act,room.node) {
         room.merchant_down=true;room.suspend_dialogues()?;
         room.view.message="商人已倒下，本次未出现铃珠猎人，可通过传送门继续。".into();
-        super::log(format!("MERCHANT_HUNT skipped act={} node={} chance=30%",run.act,room.node));
+        super::log(format!("MERCHANT_HUNT skipped act={} node={} chance={}%",run.act,room.node,erdtree_tower::merchant::HUNTER_CHANCE));
         return Ok(false);
     }
     if !run.bells.down(run.act,room.node)&&room.merchant_dead(world)&&host {
@@ -3605,7 +3729,11 @@ fn tick_merchant(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::room
     }
     let run=state.view.run.as_ref().unwrap();
     room.merchant_down|=run.bells.down(run.act,room.node);
-    if run.bells.challenge.is_none(){if let Some(hunter)=room.hunter.take(){hunter.retire();}return Ok(false);}
+    if run.bells.challenge.is_none(){
+        if room.hunter.is_some()&&room.hunter_defeated_at.get_or_insert_with(Instant::now).elapsed()>=Duration::from_secs(8)
+            &&let Some(hunter)=room.hunter.take(){hunter.retire();}
+        return Ok(false);
+    }
     room.suspend_dialogues()?;
     super::native_talk::set_flag(room.base()+993,false)?;
     super::native_talk::set_flag(room.base()+994,false)?;
@@ -3628,7 +3756,7 @@ fn tick_merchant(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::room
             let mut next=state.view.run.clone().unwrap();let kind=next.defeat_hunter()?;record_checked(&next)?;state.view.run=Some(next);
             if let Some(kind)=kind {report(state,format!("获得{}！本局后续商店对应商品 +5。",erdtree_tower::merchant::NAMES[kind]));}
         }
-        hunter.retire();room.hunter=None;
+        room.hunter_defeated_at=Some(Instant::now());
         room.view.message="铃珠猎人已击败，铃珠已收入本局收藏，使用传送门继续。".into();
         super::native_talk::set_flag(room.base()+993,true)?;return Ok(false);
     }
@@ -3701,6 +3829,10 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
                 }
             }
             // 诊断：售出计数每秒比一次，变了就记下（本机买东西时卢恩会同时减少；卢恩没变而计数变了，说明是别人的旗标同步过来的）
+            if (room.shop_counters.as_ref().is_none_or(|(at,_)|at.elapsed()>=Duration::from_secs(1))||super::native_talk::flag(room.base()+994)?)
+                &&let (Some(run),Some(player))=(state.view.run.as_mut(),world.main_player.as_mut()) {
+                super::native_shop::redeem_ember(run,room.node,unsafe{player.player_game_data.as_mut()})?;
+            }
             if room.shop_counters.as_ref().is_none_or(|(at,_)|at.elapsed()>=Duration::from_secs(1)) {
                 let count=state.view.run.as_ref().and_then(|r|r.shop_stock.as_ref()).filter(|s|s.node==room.node).map_or(0,|s|s.items.len());
                 if let Ok(counts)=super::native_shop::sold_counts(count) {
@@ -4174,7 +4306,7 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
             state.pending=Some(Pending {
                 entity_base:None,networked:false,
                 spirits:Default::default(),foes:roster.into_iter().map(|spec|Foe{spec,fight:Encounter::default(),requested:None,entity_address:None,respawn:None,spawn_gap:Default::default(),grace:None,graced:false,spawn_protection:Default::default()}).collect(),
-                next_run:run.clone(),block:room.block,completed:false,stall:None,
+                next_run:run.clone(),block:room.block,completed:false,stall:None,godskin_pace:Default::default(),
             });
         }
         let pending=state.pending.as_mut().unwrap();
@@ -4424,7 +4556,7 @@ fn request_spawn(state: &mut Runtime, world: &mut WorldChrMan, id: usize) -> Res
         entity_base:None,networked:state.party.is_some(),
         spirits:Default::default(),
         foes: roster.into_iter().map(|spec| Foe { spec, fight: Encounter::default(), requested: None, entity_address: None, respawn: None,spawn_gap:Default::default(),grace:None,graced:false,spawn_protection:Default::default() }).collect(),
-        next_run, block: i32::from(player.current_block_id), completed: false, stall: None,
+        next_run, block: i32::from(player.current_block_id), completed: false, stall: None,godskin_pace:Default::default(),
     });
     state.spawn_used = true;
     state.view.travelling = true;
@@ -4448,8 +4580,52 @@ fn spawn_clock()->Duration {
     static START:std::sync::LazyLock<Instant>=std::sync::LazyLock::new(Instant::now);
     START.elapsed()
 }
+#[derive(Default)]
+struct GodskinPace {
+    started:Option<Instant>,
+    held:Option<(FieldInsHandle,usize)>,
+}
+impl GodskinPace {
+    fn standby(started:&mut Option<Instant>,both_ready:bool,now:Instant)->Option<usize>{
+        if !both_ready{*started=None;return None;}
+        Some(1-(now.duration_since(*started.get_or_insert(now)).as_secs()/8%2) as usize)
+    }
+    fn release(&self,world:&mut WorldChrMan){
+        if let Some((handle,address))=self.held&&let Some(chr)=world.chr_ins_by_handle_mut(&handle)
+            &&std::ptr::from_ref(&*chr) as usize==address {
+            chr.debug_flags.set_disabled_secondary_actions(false);
+        }
+    }
+    fn sync(&mut self,foes:&[Foe],world:&mut WorldChrMan){
+        let [a,b]=foes else{return;};
+        if [a.spec.npc,b.spec.npc]!=[950000210,950000198]{return;}
+        let actors=[a,b].map(|f|{
+            let h=f.fight.handle()?;
+            let chr=world.chr_ins_by_handle(&h)?;
+            let address=std::ptr::from_ref(chr) as usize;
+            (f.entity_address==Some(address)&&f.graced&&chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag()).then_some((h,address))
+        });
+        let target=Self::standby(&mut self.started,actors.iter().all(Option::is_some),Instant::now()).and_then(|i|actors[i]);
+        if self.held==target{return;}
+        self.release(world);self.held=None;
+        if let Some((h,address))=target&&let Some(chr)=world.chr_ins_by_handle_mut(&h)
+            &&std::ptr::from_ref(&*chr) as usize==address&&!chr.debug_flags.disabled_secondary_actions(){
+            chr.debug_flags.set_disabled_secondary_actions(true);self.held=target;
+        }
+    }
+}
+#[test]
+fn solo_godskin_pair_trades_attacks_until_one_dies(){
+    let now=Instant::now();let mut start=None;
+    for (seconds,both,expected) in [(0,false,None),(2,true,Some(1)),(9,true,Some(1)),(10,true,Some(0)),(11,false,None)]{
+        assert_eq!(GodskinPace::standby(&mut start,both,now+Duration::from_secs(seconds)),expected);
+    }
+}
 fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block: i32,authority:bool) -> (Outcome, Option<(i32,i32)>, bool) {
-    if dead { return (Outcome::PlayerDied, None, false); }
+    if dead {
+        pending.godskin_pace.release(world);pending.godskin_pace.held=None;
+        return (Outcome::PlayerDied,None,false);
+    }
     if block != pending.block { return (Outcome::LostEntity, None, false); }
     let mut outcomes = Vec::new();
     let mut hp = 0i32;
@@ -4585,6 +4761,7 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
         }
         outcomes.push(outcome);
     }
+    if !pending.networked {pending.godskin_pace.sync(&pending.foes,world);}
     let stalled=outcomes.contains(&Outcome::Victory)&&!untouched.is_empty()
         &&outcomes.iter().enumerate().all(|(i,o)|*o==Outcome::Victory||untouched.contains(&i));
     if !stalled {pending.stall=None;}
@@ -4646,6 +4823,7 @@ fn keep_summoned_ash(world:&WorldChrMan,run:&erdtree_tower::Run)->Option<Vec<sup
     (!plan.is_empty()).then_some(plan)
 }
 fn retire_group(pending:&Pending,world:&mut WorldChrMan){
+    pending.godskin_pace.release(world);
     if !pending.networked {super::radahn_entity::sync(world,None,false);}
     if pending.networked&&pending.entity_base.is_none() {
         if let Ok(ids)=super::enemies::map_entities(&pending.foes.iter().map(|f|f.spec).collect::<Vec<_>>()) {

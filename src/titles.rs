@@ -35,6 +35,10 @@ pub const TITLES:[Title;7]=[
 pub const SEPARATOR:char='·';
 
 pub fn lookup(id:u8)->Option<&'static Title> {TITLES.iter().find(|t|t.id==id)}
+pub fn listed(owned:&[u8])->impl Iterator<Item=&'static Title> + use<> {
+    let legacy=owned.contains(&7);
+    TITLES.iter().filter(move |t|t.id!=7||legacy)
+}
 /// 按旅程档案判断是否解锁（调试旅程不算）
 pub fn unlocked(id:u8,records:&[Record])->bool {
     let real=||records.iter().filter(|r|!r.debug);
@@ -92,6 +96,8 @@ mod tests {
     }
     #[test]
     fn unlocks_follow_the_archive() {
+        assert!(listed(&[1]).all(|t|t.id!=7));
+        assert!(listed(&[1,7]).any(|t|t.id==7));
         let run=Run::new(1,Class::Hero);
         let mut won=Record::new(&run,vec![],vec![],0);won.result=Outcome::Won;
         let lost=Record::new(&run,vec![],vec![],0);

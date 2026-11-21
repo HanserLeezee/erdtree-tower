@@ -1,4 +1,5 @@
 #include "ertransmogrify_vfx.hpp"
+#include "transmog_effect_action.hpp"
 #include "ertransmogrify_config.hpp"
 #include "ertransmogrify_local_player.hpp"
 #include "ertransmogrify_net.hpp"
@@ -532,24 +533,18 @@ public:
         auto any_changed = update_player_context(local_player_context, state, 0);
 
         // Apply or remove the transmog SpEffects on the main player based on their selections
-        if (local_player_context.player && any_changed) {
-            if (local_player_context.state.head_protector_id > 0) {
-                players::apply_speffect(local_player_context.player,
-                                        local_player_context.head_speffect_id, false);
-            } else {
-                players::clear_speffect(local_player_context.player,
-                                        local_player_context.head_speffect_id);
-            }
-
-            if (local_player_context.state.chest_protector_id > 0 ||
-                local_player_context.state.arms_protector_id > 0 ||
-                local_player_context.state.legs_protector_id > 0) {
-                players::apply_speffect(local_player_context.player,
-                                        local_player_context.body_speffect_id, false);
-            } else {
-                players::clear_speffect(local_player_context.player,
-                                        local_player_context.body_speffect_id);
-            }
+        auto now = clock.now();
+        if (auto *player = local_player_context.player;
+            player && player->special_effects && (any_changed || now >= next_net_update_time)) {
+            auto reconcile = [&](int id, bool wanted) {
+                auto action = effect_update(any_changed, wanted, players::has_speffect(player, id));
+                if (action == effect_action::apply) players::apply_speffect(player, id, false);
+                if (action == effect_action::clear) players::clear_speffect(player, id);
+            };
+            const auto &look = local_player_context.state;
+            reconcile(local_player_context.head_speffect_id, look.head_protector_id > 0);
+            reconcile(local_player_context.body_speffect_id, look.chest_protector_id > 0 ||
+                      look.arms_protector_id > 0 || look.legs_protector_id > 0);
         }
 
         static bool prev_client_side_only = false;
@@ -564,7 +559,6 @@ public:
 
         // Send the main player's transmog state to other players in the session when it changes,
         // and also periodically just in case
-        auto now = clock.now();
         if (any_changed || now >= next_net_update_time) {
             next_net_update_time = now + chrono::seconds(5);
             ertransmogrify::net::send_messages(state);

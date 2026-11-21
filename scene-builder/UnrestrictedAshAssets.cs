@@ -13,6 +13,9 @@ static class UnrestrictedAshAssets {
         PARAM Read(string name){var p=PARAM.Read(File_(name).Bytes);p.ApplyParamdef(PARAMDEF.XmlDeserialize($"work/SoulsRandomizers/diste/Defs/{name}.xml"));return p;}
         var weapons=Read("EquipParamWeapon");var gems=Read("EquipParamGem");var custom=Read("EquipParamCustomWeapon");
         var sold=File.ReadAllLines(Path.Combine(input,"shop-catalog.txt")).Select(l=>l.Split('|')).Where(p=>p[0]=="4").Select(p=>int.Parse(p[1])).ToHashSet();
+        // Standalone somber ashes are sold separately from the random preinstalled skill pool.
+        var somber=Path.Combine(input,"somber-ashes.tsv");
+        if(File.Exists(somber))sold.ExceptWith(File.ReadLines(somber).Skip(1).Select(l=>int.Parse(l.Split('\t')[0])));
         var pool=gems.Rows.Where(r=>sold.Contains(r.ID)).OrderBy(r=>r.ID).ToArray();
         if(pool.Length<100||!pool.Any(r=>r.ID>=400000))throw new Exception("Incomplete base/DLC ash pool");
         var targetWeapons=weapons.Rows.Where(r=>Types.Contains(I(r,"wepType"))).ToArray();

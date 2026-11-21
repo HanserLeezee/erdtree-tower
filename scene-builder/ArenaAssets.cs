@@ -25,7 +25,7 @@ static class ArenaAssets {
         return new Site(p[0],p[1],p[2],p[3],p[4]=="1",p.Length>5?F(p[5]):0,p.Length>8?new Vector3(F(p[6]),F(p[7]),F(p[8])):Vector3.Zero,p.Length>9?int.Parse(p[9]):0);
     }).ToArray();
 
-    sealed class Archives:IDisposable {
+    internal sealed class Archives:IDisposable {
         readonly List<(Dictionary<ulong,BHD5.FileHeader> files,FileStream data)> parts=new();
         public readonly string[] Maps;
         public Archives(string game) {

@@ -23,6 +23,7 @@ static class EnemyPoolAssets {
             var row=new PARAM.Row(source){ID=id,Name="Tower rune-only enemy"};
             Set(row,"itemLotId_enemy",-1);Set(row,"itemLotId_map",-1);Set(row,"isSoulGetByBoss",0);
             Set(row,"hp",BalanceAssets.ScaleHp(Convert.ToInt64(source["hp"].Value)));Set(row,"getSoul",BalanceAssets.Scale(runes));
+            if(model is 3510 or 4070)TowerScalingAssets.Apply(row,TowerScalingAssets.Tiers(input)[int.Parse(p[0])][0]);
             npcs.Rows.Add(row);added.Add(id);
         }
         npcs.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));File_("NpcParam").Bytes=npcs.Write();

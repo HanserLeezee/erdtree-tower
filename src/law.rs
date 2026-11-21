@@ -3,7 +3,7 @@
 pub struct Node {pub name:&'static str,pub branch:usize,pub parent:Option<usize>,pub points:u32,pub effect:&'static str,pub art:u8,pub col:u8,pub row:u8}
 pub const BRANCHES:[&str;4]=["敌人","我方","经济","规则"];
 const fn n(name:&'static str,branch:usize,parent:Option<usize>,points:u32,effect:&'static str,art:u8,col:u8,row:u8)->Node {Node{name,branch,parent,points,effect,art,col,row}}
-pub const NODES:[Node;36]=[
+pub const NODES:[Node;37]=[
     n("强敌 I",0,None,10,"敌人强度 +1 档：生命 +10%，攻击 +6%",0,1,0),
     n("强敌 II",0,Some(0),20,"再 +1 档：累计生命 +21%，攻击 +13%",0,2,0),
     n("强敌 III",0,Some(1),30,"再 +2 档：累计生命 +45%，攻击 +28%",0,3,0),
@@ -41,6 +41,7 @@ pub const NODES:[Node;36]=[
     n("精英成双 II",0,Some(32),40,"精英战里的两只精英同时上场",17,5,0),
     n("精英横行",0,None,20,"从第 6 个点起，普通战斗房有 25% 概率替换为精英房，路线结果固定",18,5,1),
     n("迅猛",0,None,20,"Boss 必带迅猛；开启精英词条时，精英战有 25% 概率带迅猛。未选此项时不会随机出现迅猛",19,6,0),
+    n("重担",1,None,20,"最大装备负重降低 20%",20,4,3),
 ];
 /// 停用的节点：位置与编号保留（存档、旅程档案与律法码里的位不变），界面不再显示，新开局选不上；
 /// 已经带着它开局的旅程照旧生效。14 孤狼（2026-11-06 移除）
@@ -75,6 +76,7 @@ impl Law {
     pub fn fragile(self)->u8 {self.chain(&[11,12,13])}
     pub fn lone_wolf(self)->bool {self.has(14)}
     pub fn fatigue(self)->u8 {self.chain(&[15,16])}
+    pub fn burden(self)->bool {self.has(36)}
     pub fn focus(self)->u8 {self.chain(&[17,18])}
     /// 贫瘠：卢恩获取百分比
     pub fn poverty(self)->u8 {self.chain(&[19,20])}
@@ -174,7 +176,7 @@ mod tests {
     #[test]
     fn every_route_has_its_own_icon() {
         // 18 个图集图标，加上由精英徽记与上升箭头组成的精英横行图标。
-        const ICONS:u8=20;
+        const ICONS:u8=21;
         let stem=|n:&Node|n.name.trim_end_matches(['I',' ']);
         assert!(NODES.iter().all(|n|n.art<ICONS));
         assert_eq!(NODES.iter().map(|n|n.art).collect::<std::collections::BTreeSet<_>>().len(),usize::from(ICONS),"every icon is used");
@@ -187,7 +189,11 @@ mod tests {
             if let Some(p)=node.parent {if Law::listed(id){assert_eq!(node.art,NODES[p].art,"different rules must not be chained");}}
             assert!(NODES.iter().enumerate().all(|(o,other)|o==id||(other.col,other.row)!=(node.col,node.row)));
         }
-        assert_eq!(Law((1u64<<NODES.len())-1).score(),590);
+        assert_eq!(Law((1u64<<NODES.len())-1).score(),610);
+        let burden=Law::default().toggle(36);
+        assert!(burden.burden());
+        assert_eq!(burden.score(),20);
+        assert_eq!(Law::parse(&burden.code()),Some(burden));
     }
     #[test]
     fn selection_follows_paths_and_cascades() {
@@ -198,7 +204,7 @@ mod tests {
         let law=Law::default().toggle(0).toggle(1).toggle(2);assert_eq!(law.score(),60);
         assert_eq!(law.toggle(1),Law::default().toggle(0),"removing a node removes its successors");
         let all=(0..NODES.len()).fold(Law::default(),|l,id|l.toggle(id));
-        assert_eq!(all.score(),540,"everything except retired nodes");assert_eq!(all.grade(),Some("危机"));assert!(all.valid());
+        assert_eq!(all.score(),560,"everything except retired nodes");assert_eq!(all.grade(),Some("危机"));assert!(all.valid());
         assert_eq!(Law::default().grade(),None);assert_eq!(Law::default().toggle(24).toggle(25).toggle(26).toggle(23).grade(),Some("老练"));
         assert!(!Law(1<<1).valid());
     }

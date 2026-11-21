@@ -8,6 +8,14 @@ unsafe extern "system" {
     fn LoadLibraryW(path:*const u16)->*mut c_void;
     fn GetProcAddress(module:*mut c_void,name:*const i8)->*mut c_void;
 }
+static PLAY_SFX:AtomicUsize=AtomicUsize::new(0);
+pub fn play_chr_sfx(chr:&mut eldenring::cs::ChrIns,sfx:i32) {
+    let address=PLAY_SFX.load(Ordering::Acquire);
+    if address!=0 && sfx>0 {
+        let play:unsafe extern "C" fn(*mut eldenring::cs::ChrIns,i32)=unsafe{std::mem::transmute(address)};
+        unsafe{play(chr,sfx)};
+    }
+}
 static SET:AtomicUsize=AtomicUsize::new(0);
 static STATUS:Mutex<String>=Mutex::new(String::new());
 static LOOK:Mutex<Option<((u32,i32),Appearance)>>=Mutex::new(None);
@@ -38,6 +46,7 @@ pub fn initialize(module:Option<PathBuf>) {
         let init:unsafe extern "C" fn(*const c_char)->bool=unsafe{std::mem::transmute(init)};
         let log=CString::new(super::LOG_PATH.with_file_name("tower-transmog.log").to_string_lossy().as_bytes()).map_err(|e|e.to_string())?;
         if !unsafe{init(log.as_ptr())}{return Err("幻化初始化失败，详见 tower-transmog.log".into());}
+        PLAY_SFX.store(unsafe{GetProcAddress(handle,c"tower_play_chr_sfx".as_ptr().cast())} as usize,Ordering::Release);
         SET.store(set as usize,Ordering::Release);Ok(())
     })();
     if let Err(error)=result{super::log(&error);if let Ok(mut s)=STATUS.lock(){*s=error;}}

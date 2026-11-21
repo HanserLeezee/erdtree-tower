@@ -186,7 +186,7 @@ impl Ember {
     }}
     /// 品质：余烬只有史诗（2）与传说（3），按强度定，决定抽到的概率与奖励卡的颜色
     pub fn quality(self)->u8 {match self {
-        Self::Rise|Self::SpiritTwin|Self::Miquella|Self::Feast|Self::Godslayer|Self::Meditation|Self::SpiritResonance|Self::Breaker|Self::Harvest|Self::Battlemage|Self::Capture|Self::Mind=>3,
+        Self::Rise|Self::SpiritTwin|Self::Miquella|Self::Feast|Self::Godslayer|Self::Meditation|Self::SpiritResonance|Self::Breaker|Self::Harvest|Self::Battlemage|Self::Tent|Self::Capture|Self::Mind=>3,
         _=>2,
     }}
     /// 只影响敌人的余烬：联机客机上不生效（敌人由房主计算）
@@ -502,7 +502,7 @@ mod tests {
         use super::*;
         assert_eq!(Ember::FrostShackle.index(),37);assert_eq!(Ember::Tent.index(),38);
         assert_eq!(Ember::Tent.icon_index(),38);
-        assert_eq!(Ember::Tent.quality(),2);assert!(Ember::Tent.classes().is_none());
+        assert_eq!(Ember::Tent.quality(),3);assert!(Ember::Tent.classes().is_none());
         assert_eq!(Ember::ALL.iter().map(|e|e.index()).collect::<std::collections::HashSet<_>>().len(),Ember::ALL.len());
     }
     #[test]
@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn every_quality_has_embers_and_rolls_follow_the_odds() {
         assert!(Ember::ALL.iter().all(|e|matches!(e.quality(),2|3)),"embers are only epic or legendary");
-        assert_eq!(Ember::ALL.iter().filter(|e|e.quality()==3).count(),12);
+        assert_eq!(Ember::ALL.iter().filter(|e|e.quality()==3).count(),13);
         assert_eq!(odds(crate::affixes::QUALITY_START),[0,0,85,15]);assert_eq!(odds(crate::affixes::QUALITY_END),[0,0,72,28]);
         let mut counts=[0u32;4];
         for seed in 0..20000u64 {counts[usize::from(offer_by_quality(seed,&[],true,true,None,[0,0,50,50]).unwrap().quality())]+=1;}
