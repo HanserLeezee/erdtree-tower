@@ -207,23 +207,15 @@ fn livers_and_fowl_feet_cannot_be_bought_in_new_or_saved_stock() {
     assert_eq!(saved.iter().map(|item|item.id).collect::<Vec<_>>(),[1190,1150,900]);
 }
 #[test]
-fn somber_ashes_use_normal_shop_slots_and_follow_dlc_mode() {
-    let catalog:std::collections::HashSet<_>=include_str!("../../scene-assets/shop-catalog.txt").lines().collect();
-    let mut ids=std::collections::HashSet::new();
-    for line in include_str!("../../scene-assets/somber-ashes.tsv").lines().skip(1) {
-        let fields:Vec<_>=line.split('\t').collect();
-        let id:i32=fields[0].parse().unwrap();
-        assert!(ids.insert(id));
-        assert_eq!(fields[3],"*");
-        let prefix=format!("4|{id}|1200|战灰：");
-        assert_eq!(catalog.iter().filter(|s|s.starts_with(&prefix)).count(),1);
-        let dlc_only=fields[2].split(',').map(|s|s.parse::<u32>().unwrap())
-            .all(erdtree_tower::dlc::is_dlc_item);
-        assert_eq!(erdtree_tower::dlc::is_dlc_gem(id as u32),dlc_only);
-        let stock=Stock{kind:4,id,price:1200,quantity:1};
-        assert_eq!(offered(&stock),erdtree_tower::dlc::gem_allowed(id as u32));
+fn standalone_somber_ashes_are_excluded_from_the_release_pool() {
+    let excluded:std::collections::HashSet<_>=include_str!("../../scene-builder/somber-ashes.tsv").lines().skip(1)
+        .map(|row|row.split_once('\t').unwrap().0.parse::<i32>().unwrap()).collect();
+    assert_eq!(excluded.len(),145);
+    for row in include_str!("../../scene-assets/shop-catalog.txt").lines(){
+        let mut fields=row.split('|');
+        if fields.next()==Some("4"){assert!(!excluded.contains(&fields.next().unwrap().parse::<i32>().unwrap()));}
     }
-    assert!(ids.contains(&91178)); // Transient Moonlight
+    assert!(include_str!("../../scene-assets/unrestricted-ashes.txt").lines().all(|id|!excluded.contains(&id.parse::<i32>().unwrap())));
 }
 #[test]
 fn dlc_shop_pools_are_reachable_with_affixes_and_native_categories() {
