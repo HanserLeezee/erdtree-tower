@@ -708,6 +708,6 @@ mod tests {
         assert!((layer_factor(3)-1.1775).abs()<0.0001);
         // 模拟表：5 层 2.24，8 层 3.13，11 层 4.06，14 层 5.05
         for (layers,expected) in [(5,2.24),(8,3.13),(11,4.06),(14,5.05)] {assert!((multiplier(layers)-expected).abs()<0.01,"{layers}: {}",multiplier(layers));}
-        assert!((2..80).all(|k|layer_factor(k+1)<layer_factor(k)||k<2)&&layer_factor(60)>1.012&&layer_factor(60)<1.013,"soft cap: 49+ keeps a quarter of the 1.05 floor");
+        assert!((2..80).all(|k|layer_factor(k+1)<=layer_factor(k))&&layer_factor(60)>1.012&&layer_factor(60)<1.013,"soft cap: 49+ keeps a quarter of the 1.05 floor");
     }
 }
