@@ -2291,7 +2291,8 @@ fn tick_locked() {
         let flasks=state.flasks.as_ref().map(|f|f.total());
         // Practice never forwards combat rewards or persistent stack gains.
         let _=state.ember_practice.tick(world,key,&held,&foes,true,false,flasks,keeper,false);
-        if state.party.is_none()||camp {super::starsurge::fight(world,&foes,state.party.is_some(),None);}
+        // 星辉术士：营地的测伤人偶不算叠层（不把它交给 starsurge）
+        if state.party.is_none(){super::starsurge::fight(world,&[],false,None);}
         super::frost_shackle::observe(world,key,&foes,held.contains(&erdtree_tower::embers::Ember::FrostShackle));
         super::embers::clear_practice_critical();
     } else {
@@ -3533,8 +3534,9 @@ fn host_embers(state:&mut Runtime,world:&mut WorldChrMan) {
                 if let Some((h,_,_))=foes.iter().find(|f|f.2==b.slot)
                     && let Some(chr)=world.chr_ins_by_handle_mut(h)
                     && chr.modules.data.hp>0 && !chr.chr_flags1c5.death_flag() && !chr.chr_flags1c5.is_invincible() {
-                    super::starsurge::burst_fx(chr);
                     chr.modules.data.hp=chr.modules.data.hp.saturating_sub(b.amount.min(chr.modules.data.max_hp.saturating_mul(2))).max(0);
+                    let h=*h;
+                    super::starsurge::burst_visual(world,&h);
                 }
             }
         }

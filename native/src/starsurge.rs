@@ -115,6 +115,18 @@ const SINGLE_CAP:u32=3;
 #[derive(Default,Debug,Clone,PartialEq)]
 pub struct Cycle {known:Vec<u32>,last:Option<u32>,pub layers:u32}
 impl Cycle {
+    /// 存盘格式：「层数;上一发;用过的魔法,…」
+    pub fn encode(&self)->String {
+        format!("{};{};{}",self.layers,self.last.map_or(String::new(),|v|v.to_string()),self.known.iter().map(u32::to_string).collect::<Vec<_>>().join(","))
+    }
+    pub fn decode(text:&str)->Option<Self> {
+        let mut parts=text.trim().splitn(3,';');
+        let layers=parts.next()?.parse().ok()?;
+        let last=match parts.next()? {""=>None,v=>Some(v.parse().ok()?)};
+        let known=parts.next()?.split(',').filter(|v|!v.is_empty()).map(str::parse).collect::<Result<Vec<u32>,_>>().ok()?;
+        let cycle=Self{known,last,layers};
+        (cycle.layers<cycle.cap().max(1)||cycle.known.len()<=1&&cycle.layers<=SINGLE_CAP).then_some(cycle)
+    }
     pub fn cap(&self)->u32 {3*self.known.len() as u32}
     pub fn hit(&mut self,spell:u32)->Outcome {
         let single=self.known.len()<=1;
@@ -134,7 +146,14 @@ impl Cycle {
     }
 }
 /// k 层时的伤害倍率
-pub fn layer_factor(layer:u32)->f32 {if layer<=2 {FIRST_LAYERS}else{LAYER_FLOOR+(FIRST_LAYERS-LAYER_FLOOR)*LAYER_DECAY.powi(layer as i32-2)}}
+/// 软上限：第 31–48 层每层的加成减半，第 49 层起只剩四分之一
+const SOFT_CAP:u32=30;
+const HARD_CAP:u32=48;
+pub fn layer_factor(layer:u32)->f32 {
+    let base=if layer<=2 {FIRST_LAYERS}else{LAYER_FLOOR+(FIRST_LAYERS-LAYER_FLOOR)*LAYER_DECAY.powi(layer as i32-2)};
+    let scale=if layer>HARD_CAP {0.25}else if layer>SOFT_CAP {0.5}else{1.0};
+    1.0+(base-1.0)*scale
+}
 pub fn multiplier(layers:u32)->f32 {(1..=layers).map(layer_factor).product()}
 
 /// 生成弹体时记下的一条：弹体编号、魔法（基础编号）、属于哪一次施法
@@ -157,6 +176,18 @@ struct Combat {cycle:Cycle,live:Vec<Live>,hp:Vec<(FieldInsHandle,i32)>,counted:V
 static HUD:AtomicU64=AtomicU64::new(0);
 fn publish_hud(layers:u32,cap:u32) {HUD.store((u64::from(layers)<<32)|u64::from(cap),Ordering::Relaxed);}
 static RUN_SEED:Mutex<Option<u64>>=Mutex::new(None);
+/// 叠层存盘：退出游戏、读档继续同一局（包括进入下一大层）时接着用。一行「种子 叠层」
+fn stacks_path()->std::path::PathBuf {super::LOG_PATH.with_file_name("starsurge-stacks.txt")}
+fn load_stacks(seed:u64)->Cycle {
+    std::fs::read_to_string(stacks_path()).ok().and_then(|text|{
+        let (s,cycle)=text.trim().split_once(' ')?;
+        (s.parse::<u64>().ok()?==seed).then(||Cycle::decode(cycle)).flatten()
+    }).unwrap_or_default()
+}
+fn save_stacks(seed:u64,cycle:&Cycle) {
+    let _=std::fs::write(stacks_path(),format!("{seed} {}",cycle.encode()));
+}
+fn clear_stacks() {let _=std::fs::remove_file(stacks_path());}
 static COMBAT:Mutex<Option<Combat>>=Mutex::new(None);
 /// 本机星辉术士的 FieldInsHandle（按 u64 读）；不是星辉术士时为 0
 static OWNER:AtomicU64=AtomicU64::new(0);
@@ -220,7 +251,7 @@ pub fn observe_spawn(data:&[u8;0x110]) {
     let bullet=i32::from_le_bytes(data[0x14..0x18].try_into().unwrap());
     // 命中后分裂出来的子弹体，生成数据里的归属可能不是玩家（岩石球就是这样）：是自己弹体的子弹体也照收
     if from!=owner&&!SPAWNS.try_lock().is_ok_and(|s|s.iter().any(|p|hit_child(p.bullet)==Some(bullet)&&p.at.elapsed()<Duration::from_secs(5))) {return;}
-    if bullet==HAIMA_BURST {return;}
+    if bullet==HAIMA_BURST||bullet==SHELL_ROW||bullet==BLAST_ROW {return;}
     let behavior=i32::from_le_bytes(data[0x08..0x0c].try_into().unwrap());
     let magic=i32::from_le_bytes(data[0x0c..0x10].try_into().unwrap());
     let goods=i32::from_le_bytes(data[0x18..0x1c].try_into().unwrap());
@@ -269,7 +300,7 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>) {
     let Ok(mut guard)=RUN_SEED.lock() else{return};
     // 旅程结束、换了职业：清掉一切；过场、切换房间时 run 暂时为空，只暂停，记录保留
     if run.is_some_and(|r|r.class!=Class::Astrologer||matches!(r.phase,Phase::Dead|Phase::Won)) {
-        if OWNER.swap(0,Ordering::Relaxed)!=0||guard.is_some() {end_combat(chr);}
+        if OWNER.swap(0,Ordering::Relaxed)!=0||guard.is_some() {end_combat(chr);clear_stacks();}
         *guard=None;return;
     }
     if !active(run,chr) {OWNER.store(0,Ordering::Relaxed);return;}
@@ -372,7 +403,7 @@ pub fn draw_hud(ui:&hudhook::imgui::Ui,icon:&mut dyn FnMut(u32)->Option<hudhook:
 fn apply_burst(world:&mut WorldChrMan,combat:&mut Combat,handle:FieldInsHandle,damage:i32,now:Instant,
     forward:&mut Option<&mut dyn FnMut(FieldInsHandle,i32)>) {
     let amount=damage.saturating_mul(BURST_FACTOR);
-    if let Some(chr)=world.chr_ins_by_handle_mut(&handle){burst_fx(chr);}
+    burst_visual(world,&handle);
     if let Some(send)=forward.as_mut() {
         send(handle,amount);
         combat.pending.push((handle,amount,now));
@@ -405,7 +436,12 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
     let owner=OWNER.load(Ordering::Relaxed);
     let Ok(mut guard)=COMBAT.lock() else{return};
     if owner==0 {return;}
-    let combat=guard.get_or_insert_with(Combat::default);
+    let seed=RUN_SEED.lock().ok().and_then(|s|*s);
+    let combat=guard.get_or_insert_with(||{
+        let cycle=seed.map(load_stacks).unwrap_or_default();
+        if cycle.layers>0 {super::log(format!("STARSURGE stacks restored layers={} cap={}",cycle.layers,cycle.cap()));}
+        Combat{cycle,..Default::default()}
+    });
     let now=Instant::now();
     // 商人、事件房间等没有名单的场合：身边 60 米内所有活着的非玩家角色都算（名单敌人照旧在前）
     let foes:Vec<FieldInsHandle>={
@@ -416,7 +452,8 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         if !multiplayer && let Some(me)=me {
             for chr in world.chr_sets.iter().flatten().flat_map(|set|set.characters()) {
                 let h=chr.field_ins_handle;
-                if players.contains(&h)||all.contains(&h)||scarab==Some(h)||chr.modules.data.hp<=0 {continue;}
+                // 测伤人偶、商人等不会动的角色不算（它们被设成不能移动）
+                if players.contains(&h)||all.contains(&h)||scarab==Some(h)||chr.modules.data.hp<=0||chr.debug_flags.disabled_movement() {continue;}
                 let q=chr.modules.physics.position;
                 if distance([q.0,q.1,q.2],me)<=NEARBY_REACH {all.push(h);}
             }
@@ -445,7 +482,10 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         let Some(chr)=world.chr_ins_by_handle(handle) else{continue};
         let hp=chr.modules.data.hp;let q=chr.modules.physics.position;let pos=[q.0,q.1+1.0,q.2];
         let before=match combat.hp.iter_mut().find(|(h,_)|h==handle) {Some(entry)=>std::mem::replace(&mut entry.1,hp),None=>{combat.hp.push((*handle,hp));continue;}};
-        if hp>=before || multiplayer && handle_bits(&chr.last_hit_by)!=owner {continue;}
+        // 联机：成员这边敌人的 last_hit_by 是空的（生命来自房主同步），这时只按自己的弹体认；记着别人打的就不算
+        let attacker=chr.last_hit_by;
+        if hp>=before || multiplayer && !attacker.is_empty() && handle_bits(&attacker)!=owner {continue;}
+        let attacker_unknown=multiplayer&&attacker.is_empty();
         // 爆炸自己扣的血不算新的伤害判定：掉血里先扣掉它（0.6 秒内到账）
         let mut drop=before-hp;
         combat.pending.retain(|(_,_,t)|now.duration_since(*t)<Duration::from_millis(600));
@@ -462,6 +502,8 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         let near=pick(HIT_REACH,&|l|distance(l.pos,pos));
         // 贴脸施放时弹体可能在被看到之前就已命中：算给 1 秒内刚生成、还没算过的那一次施法
         let fresh=spawns.iter().rev().find(|s|now.duration_since(s.at)<=FRESH_CAST&&!combat.counted.contains(&s.cast)).map(|s|(s.spell,s.cast));
+        // 联机且不知道是谁打的：不用「刚施法」兜底，免得把队友的伤害算给自己
+        let fresh=fresh.filter(|_|!attacker_unknown);
         let nearest=along.filter(|(_,c)|!stale(*c)).or(near.filter(|(_,c)|!stale(*c))).or(fresh).or(along).or(near);
         if let Some((spell,cast))=nearest {hits.push((*handle,pos,drop,spell,cast));}
         else if spawns.iter().any(|s|now.duration_since(s.at)<=Duration::from_millis(1500))&&DIAG_MISSES.fetch_add(1,Ordering::Relaxed)<60 {
@@ -487,6 +529,7 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         if combat.counted.contains(&cast) {continue;}
         combat.counted.push(cast);if combat.counted.len()>64 {combat.counted.remove(0);}
         let outcome=combat.cycle.hit(spell);
+        if let Some(seed)=seed {save_stacks(seed,&combat.cycle);}
         super::log(format!("STARSURGE_HIT spell={spell} cast={cast} damage={damage} outcome={outcome:?} layers={} cap={}",combat.cycle.layers,combat.cycle.cap()));
         if outcome==Outcome::Burst {
             let hp=world.chr_ins_by_handle(&handle).map_or(0,|c|c.modules.data.hp);
@@ -518,7 +561,7 @@ fn spawn_haima(world:&WorldChrMan,pos:[f32;3])->Option<Result<(),i32>> {
         // 不带原魔法的编号，免得游戏按魔法去生成弹体
         data[0x0c..0x10].copy_from_slice(&(-1i32).to_le_bytes());
         data[0x18..0x1c].copy_from_slice(&(-1i32).to_le_bytes());
-        data[0x14..0x18].copy_from_slice(&HAIMA_SHOT.to_le_bytes());
+        data[0x14..0x18].copy_from_slice(&SHELL_ROW.to_le_bytes());
         data[0x1c..0x20].copy_from_slice(&(-1i32).to_le_bytes());
         data[0x20..0x28].fill(0xff);
         // 朝向矩阵（与 star_stream 相同的排法）：right / up / forward，forward 朝正下方
@@ -531,6 +574,33 @@ fn spawn_haima(world:&WorldChrMan,pos:[f32;3])->Option<Result<(),i32>> {
     })
 }
 
+/// 爆炸的炮弹借用两行没人用的原版弹体（参数里没有任何地方引用）：复制海摩大炮的炮弹与爆炸，去掉攻击，
+/// 这样有特效和冲击，不会动到海摩大炮本身（联机时别人放的海摩大炮也不受影响）
+const SHELL_ROW:i32=10405099;
+const BLAST_ROW:i32=10500199;
+fn prepare_burst_rows()->bool {
+    static READY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+    if READY.load(Ordering::Acquire) {return true;}
+    let Ok(params)=(unsafe {SoloParamRepository::instance_mut()}) else{return false};
+    for (from,to,hit) in [(HAIMA_SHOT,SHELL_ROW,BLAST_ROW),(HAIMA_BURST,BLAST_ROW,-1)] {
+        let Some(source)=params.get::<Bullet>(from as u32).map(|r|std::ptr::from_ref(r)) else{return false};
+        let Some(row)=params.get_mut::<Bullet>(to as u32) else{return false};
+        unsafe {std::ptr::copy_nonoverlapping(source,std::ptr::from_mut(row),1);}
+        row.set_atk_id_bullet(-1);
+        if hit>0 {row.set_hit_bullet_id(hit);}
+    }
+    READY.store(true,Ordering::Release);
+    super::log("STARSURGE burst rows ready");
+    true
+}
+/// 在敌人头顶砸下一发没有伤害的海摩炮弹；不行就退回只播命中特效
+pub fn burst_visual(world:&mut WorldChrMan,handle:&FieldInsHandle) {
+    let pos=world.chr_ins_by_handle(handle).map(|c|{let q=c.modules.physics.position;[q.0,q.1,q.2]});
+    let shot=pos.filter(|_|prepare_burst_rows()).and_then(|pos|spawn_haima(world,pos));
+    if !matches!(shot,Some(Ok(()))) {
+        if let Some(chr)=world.chr_ins_by_handle_mut(handle) {burst_fx(chr);}
+    }
+}
 /// Play the Haima impact without modifying attack parameters shared by other casters.
 pub fn burst_fx(chr:&mut ChrIns) {
     let Ok(params)=(unsafe {SoloParamRepository::instance()}) else{return};
@@ -548,6 +618,26 @@ mod tests {
         assert!(sorcery(4000).is_some(),"Glintstone Pebble");
         assert!(sorcery(6000).is_none(),"incantations are not sorceries");
         assert!(sorcery(-1).is_none());
+    }
+    #[test]
+    fn layer_bonus_slows_after_thirty_and_again_after_forty_eight() {
+        assert!((layer_factor(31)-1.0)*2.0-(layer_factor(30)-1.0)<0.01);
+        assert!((layer_factor(31)-1.0-(LAYER_FLOOR+(FIRST_LAYERS-LAYER_FLOOR)*LAYER_DECAY.powi(29)-1.0)*0.5).abs()<1e-6);
+        assert!((layer_factor(49)-1.0-(LAYER_FLOOR+(FIRST_LAYERS-LAYER_FLOOR)*LAYER_DECAY.powi(47)-1.0)*0.25).abs()<1e-6);
+        for (layers,expected) in [(30,12.26),(48,19.21),(60,22.30)] {
+            assert!((multiplier(layers)-expected).abs()<0.05,"{layers}: {}",multiplier(layers));
+        }
+    }
+    #[test]
+    fn stacks_survive_a_save_round_trip() {
+        let mut c=Cycle::default();
+        run(&mut c,"ABCAB");
+        assert_eq!(Cycle::decode(&c.encode()),Some(c.clone()));
+        assert_eq!(Cycle::decode(&Cycle::default().encode()),Some(Cycle::default()));
+        let mut single=Cycle::default();run(&mut single,"AAA");
+        assert_eq!(Cycle::decode(&single.encode()),Some(single));
+        assert_eq!(Cycle::decode("9;65;65,66"),None,"layers at or past the cap are rejected");
+        assert_eq!(Cycle::decode("garbage"),None);
     }
     use Outcome::*;
     fn run(c:&mut Cycle,spells:&str)->Vec<Outcome> {spells.bytes().map(|b|c.hit(u32::from(b))).collect()}
