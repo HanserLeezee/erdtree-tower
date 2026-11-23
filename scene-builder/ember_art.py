@@ -32,7 +32,9 @@ ATLASES = [("emblems.png", 4, 3, ["无声处刑", "鲜血君王的赐福", "永�
            ("emblems-frostshackle.png", 1, 1, ["寒霜枷锁"], 990037),
            ("emblems-late.png", 2, 2, ["帐篷", "捕灵壶", "魔力辉剑", "由心及物"], 990038),
            ("emblems-phalanx.png", 1, 1, ["卡利亚剑阵"], 990042),
-           ("emblems-heavycast.png", 1, 1, ["重咏之威"], 990043)]
+           ("emblems-heavycast.png", 1, 1, ["重咏之威"], 990043),
+           ("emblems-huntermark.png", 1, 1, ["狩猎印记"], 990044),
+           ("emblems-venomfletch.png", 1, 1, ["百毒淬羽"], 990045)]
 
 assets = Path(sys.argv[1])
 destination = assets / "reward-icons"

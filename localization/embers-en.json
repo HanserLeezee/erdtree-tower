@@ -1,6 +1,6 @@
 {
   "寒霜枷锁": "Frost Shackles",
-  "敌人触发冻伤后，持续 10 秒\n行动速度 -30%，造成伤害 -20%\n再次触发刷新持续时间，不叠加": "When an enemy suffers Frostbite, for 10 seconds:\nAction speed -30%, damage dealt -20%.\nReapplying refreshes the duration; does not stack.",
+  "敌人触发冻伤后，持续 10 秒\n行动速度 -50%，造成伤害 -20%\n再次触发刷新持续时间，不叠加": "When an enemy suffers Frostbite, for 10 seconds:\nAction speed -50%, damage dealt -20%.\nReapplying refreshes the duration; does not stack.",
   "没有持有余烬「战斗法师」": "You do not have the Battlemage ember.",
   "无效的补正": "Invalid scaling type.",
   "一局最多转换 {BATTLEMAGE_WEAPONS} 把武器": "You may convert at most {BATTLEMAGE_WEAPONS} weapons per run.",
@@ -101,5 +101,9 @@
   "普攻命中敌人时\n回复 {PHALANX_FP_PERCENT}% 最大专注（至少 {PHALANX_FP_MIN} 点）\n{PHALANX_CHANCE_PERCENT}% 概率召唤卡利亚剑阵\n冷却 {PHALANX_COOLDOWN_SECONDS} 秒": "On light melee hit:\nrestore {PHALANX_FP_PERCENT}% max FP (min {PHALANX_FP_MIN}),\n{PHALANX_CHANCE_PERCENT}% chance to summon Carian Phalanx\n({PHALANX_COOLDOWN_SECONDS}s cooldown).",
   "重咏之威": "Weight of Casting",
   "施放魔法或祷告时\n基础消耗每有 1 点专注\n伤害提高 1.5%": "Sorceries and incantations gain\n+1.5% damage per 1 base FP cost.",
+  "狩猎印记": "Hunter's Mark",
+  "弓弩命中同一目标 4 次标记猎物\n持续 12 秒，猎物受伤 +30%\n击杀被标记目标回复 15% 生命\n与 20% 专注": "4 bow/crossbow hits on the same target\nmark it as Prey for 12s (+30% damage taken).\nKilling a marked target restores\n15% max HP and 20% max FP.",
+  "百毒淬羽": "Venomed Fletching",
+  "弓弩命中随机附加 40 点异常\n（中毒、腐败、出血或冻伤）\n目标每存在 1 种异常状态\n弓弩伤害 +15%（最多 +60%）": "Bow/crossbow hits randomly inflict 40\npoison, rot, bleed, or frostbite buildup.\nGain +15% bow/crossbow damage per active\nailment on the target (up to +60%).",
   "余烬「帐篷」：这次补瓶免费，营地送的强化石还在，仍可强化或再补一次瓶。": "Tent ember: this refill was free. The camp's smithing stone is still yours: upgrade with it, or refill once more."
 }

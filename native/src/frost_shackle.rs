@@ -24,7 +24,7 @@ fn restore(current:&mut f32,written:&mut Option<(f32,f32)>) {
 }
 fn slow(current:&mut f32)->Option<(f32,f32)> {
     if !current.is_finite()||*current<=0.0{return None;}
-    let base=*current;*current=base*0.7;Some((base,*current))
+    let base=*current;*current=base*0.5;Some((base,*current))
 }
 // Restore our previous frame before other speed modifiers run; apply once after them.
 pub fn begin_frame(world:&mut WorldChrMan) {
@@ -74,7 +74,7 @@ pub fn observe(world:&mut WorldChrMan,key:Key,foes:&[(FieldInsHandle,u8,u8)],ena
         if target.edge.observe(effects)&&enabled {
             refresh(&mut target.until,Instant::now());
             chr.remove_speffect(EFFECT);chr.apply_speffect(EFFECT,false);
-            super::log(format!("FROST_SHACKLE slot={slot} speed=0.7 attack=0.8 duration=10s"));
+            super::log(format!("FROST_SHACKLE slot={slot} speed=0.5 attack=0.8 duration=10s"));
         }
     }
 }
@@ -107,7 +107,7 @@ mod tests {
     fn slowdown_composes_without_compounding_and_restores() {
         for base in [1.0,1.1,1.3] {
             let mut speed=base;let mut written=None;
-            for _ in 0..1000 {restore(&mut speed,&mut written);written=slow(&mut speed);assert!((speed-base*0.7).abs()<0.0001);}
+            for _ in 0..1000 {restore(&mut speed,&mut written);written=slow(&mut speed);assert!((speed-base*0.5).abs()<0.0001);}
             restore(&mut speed,&mut written);assert!((speed-base).abs()<0.0001);
         }
     }
@@ -115,7 +115,7 @@ mod tests {
     fn external_speed_changes_are_not_overwritten() {
         let mut speed=1.0;let mut written=slow(&mut speed);speed=1.3;
         restore(&mut speed,&mut written);assert_eq!(speed,1.3);
-        written=slow(&mut speed);assert!((speed-0.91).abs()<0.0001);
+        written=slow(&mut speed);assert!((speed-0.65).abs()<0.0001);
         restore(&mut speed,&mut written);assert_eq!(speed,1.3);
     }
     #[test]

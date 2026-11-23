@@ -2,7 +2,7 @@ use serde::{Deserialize,Serialize};
 use crate::Class;
 
 pub const COSTS:[u32;5]=[100,200,350,550,800];
-pub fn weight_percent(level:u8)->u64 {100+80*u64::from(level.min(5))}
+pub fn weight_percent(level:u8)->u64 {100+380*u64::from(level.min(5))}
 pub const TYPES:&[(u8,&str)]=&[
     (1,"短剑"),(2,"直剑"),(3,"大剑"),(4,"特大剑"),(5,"刺剑"),(6,"重刺剑"),
     (7,"曲剑"),(8,"大曲剑"),(9,"刀"),(10,"双头剑"),(11,"槌"),(12,"大槌"),(13,"连枷"),
@@ -62,15 +62,13 @@ impl Training {
     pub fn preferences(&self)->Vec<Preference> {self.levels.iter().copied().filter(|p|self.enabled.contains(&p.kind)).collect()}
 }
 pub fn valid_preferences(prefs:&[Preference])->bool {prefs.len()<=TYPES.len()&&prefs.iter().enumerate().all(|(i,p)|p.valid()&&!prefs[..i].iter().any(|old|old.kind==p.kind))}
-/// Preserve the 70% class / 30% global mixture, then multiply the selected type's weight.
+/// Uniform base weight (100) across all weapons; enabled weapon preferences multiply matching types' weight.
 pub fn pick(ids:&[u32],roll:u64,preference:Preference,class:Option<Class>)->usize {
     pick_many(ids,roll,&[preference],class)
 }
-pub fn pick_many(ids:&[u32],roll:u64,preferences:&[Preference],class:Option<Class>)->usize {
+pub fn pick_many(ids:&[u32],roll:u64,preferences:&[Preference],_class:Option<Class>)->usize {
     assert!(!ids.is_empty());
-    let favored=|id:u32|class.is_some_and(|c|c.weapon_types().contains(&kind(id)));
-    let count=ids.iter().filter(|&&id|favored(id)).count() as u64;
-    let weight=|id|preferences.iter().map(|p|p.weight(id)).max().unwrap_or(100)*if count==0 {1}else{3*count+if favored(id){7*ids.len() as u64}else{0}};
+    let weight=|id|preferences.iter().map(|p|p.weight(id)).max().unwrap_or(100);
     let mut ticket=roll%ids.iter().map(|&id|weight(id)).sum::<u64>();
     for (i,&id) in ids.iter().enumerate() {let w=weight(id);if ticket<w{return i;}ticket-=w;}
     unreachable!()

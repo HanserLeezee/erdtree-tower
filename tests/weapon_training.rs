@@ -48,8 +48,8 @@ fn multiple_types_have_independent_levels_spending_and_toggles() {
     assert_eq!(Legacy::decode(&legacy.encode()),legacy);
     let prefs=vec![Preference{kind:3,level:5},Preference{kind:9,level:5}];
     let mut counts=[0;3];
-    for roll in 0..1100 {counts[erdtree_tower::weapon_training::pick_many(&[3000000,9000000,33000000],roll,&prefs,None)]+=1;}
-    assert_eq!(counts,[500,500,100]);
+    for roll in 0..4100 {counts[erdtree_tower::weapon_training::pick_many(&[3000000,9000000,33000000],roll,&prefs,None)]+=1;}
+    assert_eq!(counts,[2000,2000,100]);
     let mut run=Run::new(42,Class::Hero);run.weapon_preferences=prefs;
     assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
     run.weapon_preferences.push(Preference{kind:3,level:1});assert!(run.validate().is_err());
@@ -66,16 +66,16 @@ fn old_single_training_migrates_once_without_charging_again() {
 }
 
 #[test]
-fn full_training_has_fivefold_relative_weight_without_excluding_other_weapons() {
+fn full_training_has_twentyfold_relative_weight_without_excluding_other_weapons() {
     let ids=[1000000,9000000,33000000];
     let pref=Preference{kind:9,level:5};
     let mut counts=[0;3];
-    for roll in 0..700 {counts[pick(&ids,roll,pref,None)]+=1;}
-    assert_eq!(counts,[100,500,100]);
-    assert_eq!((1..=5).map(|level|Preference{kind:9,level}.weight(9000000)).collect::<Vec<_>>(),vec![180,260,340,420,500]);
+    for roll in 0..2200 {counts[pick(&ids,roll,pref,None)]+=1;}
+    assert_eq!(counts,[100,2000,100]);
+    assert_eq!((1..=5).map(|level|Preference{kind:9,level}.weight(9000000)).collect::<Vec<_>>(),vec![480,860,1240,1620,2000]);
     for class in Class::PLAYABLE {
         let mut counts=[0;3];
-        for seed in 0..30000 {counts[pick(&ids,seed,pref,Some(class))]+=1;}
+        for seed in 0..60_000 {counts[pick(&ids,seed,pref,Some(class))]+=1;}
         assert!(counts.iter().all(|n|*n>0));
     }
 }

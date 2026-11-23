@@ -11,8 +11,14 @@ const EXECUTION:i32=FIRST;
 const EXECUTION_RELIEF:i32=FIRST+2;
 const BLOOD:i32=FIRST+10;
 const FROST:i32=FIRST+11;
+const POISON:i32=FIRST+12;
+const ROT:i32=FIRST+13;
+const HUNTER_MARK:i32=FIRST+47;
 fn buildup_effect(ember:Ember)->Option<i32> {
     match ember {Ember::Bloodlord=>Some(BLOOD),Ember::Frost=>Some(FROST),_=>None}
+}
+fn venom_effect(kind:u8)->Option<i32> {
+    match kind {0=>Some(POISON),1=>Some(ROT),2=>Some(BLOOD),3=>Some(FROST),_=>None}
 }
 pub fn practice_held(held:&[Ember])->Vec<Ember> {
     held.iter().copied().filter(|e|!matches!(e,Ember::Rise|Ember::Feast|Ember::SpiritFeast|Ember::Harvest|Ember::Chain|Ember::SoulEater|Ember::Godslayer)).collect()
@@ -23,7 +29,7 @@ fn buildup_target(row:&mut SP_EFFECT_PARAM_ST) {
     row.set_effect_target_self_target(true);
 }
 fn apply_buildup(chr:&mut ChrIns,effect:i32) {
-    if !matches!(effect,BLOOD|FROST) {return;}
+    if !matches!(effect,BLOOD|FROST|POISON|ROT) {return;}
     let Ok(params)=(unsafe {SoloParamRepository::instance_mut()}) else{return;};
     let Some(row)=params.get_mut::<SpEffectParam>(effect as u32) else{return;};
     buildup_target(row);
@@ -148,8 +154,58 @@ fn player_ids()->impl Iterator<Item=i32> {[EXECUTION,REVENGE,ECHO,BARRIER,MEDITA
 /// 叠层余烬不设上限：每种两行轮换（灵魂收容挂在召唤物身上，其余挂在玩家身上）。
 /// 层数变了就把新倍率写进没挂着的那一行、换上它，再摘掉旧的那一行；不改正在生效的那一行
 fn slots(ember:Ember)->Option<[i32;2]> {
-    let base=match ember {Ember::Mind=>42,Ember::HeavyCast=>45,Ember::Battlemage=>26,Ember::Godslayer=>60,Ember::Harvest=>62,Ember::SoulEater=>70,Ember::Chain=>80,Ember::SpiritKeeper=>90,_=>return None};
+    let base=match ember {Ember::Mind=>42,Ember::HeavyCast=>45,Ember::VenomFletch=>48,Ember::Battlemage=>26,Ember::Godslayer=>60,Ember::Harvest=>62,Ember::SoulEater=>70,Ember::Chain=>80,Ember::SpiritKeeper=>90,_=>return None};
     Some([FIRST+base,FIRST+base+1])
+}
+/// 弓弩流派余烬：小弓(50)、长弓(51)、大弓(53)、弩(55)、弩炮(56)
+const BOW_LATCH:Duration=Duration::from_millis(2500);
+fn is_bow_weapon_type(wep_type:u16)->bool {matches!(wep_type,50|51|53|55|56)}
+fn bow_stance_from(equipment:&eldenring::cs::ChrAsmEquipment,ids:&[i32],lookup:impl Fn(u32)->Option<u16>)->(bool,bool) {
+    use eldenring::cs::{ChrAsmArmStyle as Style,ChrAsmHand as Hand};
+    let is_bow=|slot:usize|ids.get(slot).copied().filter(|id|*id>0).and_then(|id|lookup(id as u32)).is_some_and(is_bow_weapon_type);
+    let has_weapon=|slot:usize|ids.get(slot).copied().is_some_and(|id|id>0);
+    match equipment.arm_style {
+        Style::EmptyHanded=>(false,false),
+        Style::RightBothHands=>{let b=is_bow(equipment.active_weapon_slot(Hand::Right) as usize);(b,b)},
+        Style::LeftBothHands=>{let b=is_bow(equipment.active_weapon_slot(Hand::Left) as usize);(b,b)},
+        _=>{
+            let (r,l)=(equipment.active_weapon_slot(Hand::Right) as usize,equipment.active_weapon_slot(Hand::Left) as usize);
+            let (rb,lb)=(is_bow(r),is_bow(l));
+            let holding=rb||lb;
+            let exclusive=holding&&(!has_weapon(r)||rb)&&(!has_weapon(l)||lb);
+            (holding,exclusive)
+        },
+    }
+}
+fn bow_stance(player:&eldenring::cs::PlayerIns)->(bool,bool) {
+    let Ok(params)=(unsafe {SoloParamRepository::instance()}) else{return (false,false);};
+    bow_stance_from(&player.chr_asm.equipment,&player.chr_asm.equipment_param_ids,|id|{
+        params.get::<EquipParamWeapon>(id).or_else(||params.get::<EquipParamWeapon>(id/100*100)).map(|r|r.wep_type())
+    })
+}
+fn is_bow_hit(bow_exclusive:bool,bow_active:bool,attacker_is_spirit:bool,near_player_bullet:bool)->bool {
+    !attacker_is_spirit&&bow_active&&(near_player_bullet||bow_exclusive)
+}
+/// 百毒淬羽：统计目标当前存在的不同异常种类（stateInfo: 2 中毒、5 猩红腐败、260 冻伤、6 出血、436 睡眠、437 发狂）；
+/// 出血/睡眠/发狂等瞬发异常在触发后记忆 VENOM_BURST_SECONDS 秒，与持续型异常统一计入最多 4 种。
+fn observe_ailments(state_infos:impl IntoIterator<Item=i32>,bursts:&mut [Option<Instant>;3],now:Instant)->u32 {
+    let mut mask=0u8;
+    let burst_until=now+Duration::from_secs(embers::VENOM_BURST_SECONDS);
+    for info in state_infos {
+        match info {
+            2=>mask|=1<<0,
+            5=>mask|=1<<1,
+            260=>mask|=1<<2,
+            6=>{mask|=1<<3;bursts[0]=Some(burst_until);},
+            436=>{mask|=1<<4;bursts[1]=Some(burst_until);},
+            437=>{mask|=1<<5;bursts[2]=Some(burst_until);},
+            _=>{},
+        }
+    }
+    for (bit,until) in [(3u8,bursts[0]),(4u8,bursts[1]),(5u8,bursts[2])] {
+        if until.is_some_and(|t|now<t) {mask|=1<<bit;}
+    }
+    mask.count_ones().min(embers::VENOM_MAX_AILMENTS)
 }
 const HEAVY_CAST_LATCH:Duration=Duration::from_millis(2500);
 fn selected_spell_mp()->u32 {
@@ -379,6 +435,12 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>,fight:&Fight,spirit_alive:bool,grea
         scaled_slot_rates(Ember::HeavyCast,mp,&present,embers::Rates{attack:rate,hp:1.0,cut:1.0})
     }else{None};
     swap(chr,&present,Ember::HeavyCast,heavy_slot);
+    // 百毒淬羽：按目标当前异常种数动态缩放弓弩弹药伤害（保留 magicSubCategoryChange1=100，不影响近战/法术）
+    let venom_slot=if embers.contains(&Ember::VenomFletch)&&fight.venom_ailments>0 {
+        let rate=embers::venom_fletch_rate(fight.venom_ailments);
+        scaled_slot_rates(Ember::VenomFletch,fight.venom_ailments,&present,embers::Rates{attack:rate,hp:1.0,cut:1.0})
+    }else{None};
+    swap(chr,&present,Ember::VenomFletch,venom_slot);
     for id in player_ids() {if present.contains(&id)&&!want.contains(&id){chr.remove_speffect(id);}}
     if want.is_empty()||!ready(&want) {observe_chain(chr,stacks.level(Ember::Chain));return;}
     for id in want {if !present.contains(&id){chr.apply_speffect(id,false);}}
@@ -392,7 +454,10 @@ pub fn living_spirit(world:&WorldChrMan)->bool {
 }
 fn distance(a:[f32;3],b:[f32;3])->f32 {((a[0]-b[0]).powi(2)+(a[1]-b[1]).powi(2)+(a[2]-b[2]).powi(2)).sqrt()}
 /// slot：这场战斗敌人名单里的位置（联机时房主与成员一致，成员发来的敌人侧效果按它找敌人）
-struct Foe {handle:FieldInsHandle,hp:i32,max:i32,pos:[f32;3],alive:bool,boss:bool,rank:u8,slot:u8,hit_at:Option<Instant>,participation:Participation}
+struct Foe {
+    handle:FieldInsHandle,hp:i32,max:i32,pos:[f32;3],alive:bool,boss:bool,rank:u8,slot:u8,hit_at:Option<Instant>,participation:Participation,
+    mark_hits:u8,marked_until:Option<Instant>,venom_at:Option<Instant>,recent_bursts:[Option<Instant>;3],
+}
 #[derive(Default)]
 struct Participation {damaged:bool,settled:bool}
 impl Participation {
@@ -472,6 +537,8 @@ pub struct Fight {
     lone_king_regen:Option<Instant>,
     /// 重咏之威：当前生效的基础专注消耗，及刚施放高耗蓝法术时的短暂锁存（切法术不掉在飞弹体的加成）
     heavy_cast_mp:u32,heavy_cast_latch:Option<(u32,Instant)>,
+    /// 狩猎印记 & 百毒淬羽：最近手持弓弩的锁存窗口、百毒淬羽优先追踪目标与当前生效异常种数
+    bow_until:Option<Instant>,venom_target:Option<FieldInsHandle>,venom_ailments:u32,
 }
 impl Fight {
     pub fn observe_practice_refill(&mut self,world:&WorldChrMan) {
@@ -600,7 +667,10 @@ impl Fight {
             .chain(world.summon_buddy_chr_set.characters().map(|c|&*c))
             .filter(|c|!own.contains(&c.field_ins_handle)&&living(c)).map(at).collect();
         let non_spirit_at:Vec<_>=std::iter::once(here).chain(others_at.iter().copied()).collect();
-        if party||has(Ember::Glintblade)||has(Ember::SpiritKeeper)||has(Ember::Phalanx) {
+        let (holding_bow,bow_exclusive)=if has(Ember::HunterMark)||has(Ember::VenomFletch) {bow_stance(player)}else{(false,false)};
+        if holding_bow {self.bow_until=Some(now+BOW_LATCH);}
+        let bow_active=holding_bow||self.bow_until.is_some_and(|u|now<=u);
+        if party||has(Ember::Glintblade)||has(Ember::SpiritKeeper)||has(Ember::Phalanx)||has(Ember::HunterMark)||has(Ember::VenomFletch) {
             let teammates:Vec<_>=world.player_chr_set.characters().map(|p|p.chr_ins.field_ins_handle)
                 .chain(world.summon_buddy_chr_set.characters().map(|c|c.field_ins_handle))
                 .filter(|h|!own.contains(h)).collect();
@@ -623,6 +693,11 @@ impl Fight {
         let mut captured:Vec<usize>=Vec::new();
         let mut blades:Vec<(FieldInsHandle,[f32;3])>=Vec::new();
         let mut phalanx_hits=0u32;
+        let mut hunter_mark_kills=0u32;
+        let mut mark_procs:Vec<usize>=Vec::new();
+        let mut venom_procs:Vec<(usize,u8)>=Vec::new();
+        let (mut best_ailments,mut target_ailments)=(0u32,None::<u32>);
+        let sp_repo=if has(Ember::VenomFletch) {unsafe {SoloParamRepository::instance()}.ok()} else {None};
         for &(ref handle,rank,slot) in foes {
             let Some(chr)=world.chr_ins_by_handle(handle) else{continue};
             let (foe_hp,foe_max)=(chr.modules.data.hp,chr.modules.data.max_hp);
@@ -633,12 +708,27 @@ impl Fight {
             let by_bullet=if party {nearest_bullet.map(|o|!matches!(o,BulletOwner::Teammate))} else {None};
             let mine=!party||if attacker.is_empty() {by_bullet.unwrap_or_else(||nearest_is_mine(pos,&mine_at,&others_at))} else {own.contains(&attacker)};
             let Some(index)=self.foes.iter().position(|f|f.handle==*handle) else {
-                self.foes.push(Foe{handle:*handle,hp:foe_hp,max:foe_max,pos,alive,boss:rank<=1,rank,slot,hit_at:None,participation:Default::default()});continue;
+                self.foes.push(Foe{handle:*handle,hp:foe_hp,max:foe_max,pos,alive,boss:rank<=1,rank,slot,hit_at:None,participation:Default::default(),mark_hits:0,marked_until:None,venom_at:None,recent_bursts:[None;3]});continue;
             };
             let foe=&mut self.foes[index];
             let drop=foe.hp-foe_hp;let lost=(foe.hp-foe_hp.max(0)).max(0);
             let died=foe.alive&&!alive;
-            if !foe.alive&&alive {foe.participation=Default::default();}
+            if !foe.alive&&alive {foe.participation=Default::default();foe.mark_hits=0;foe.marked_until=None;foe.venom_at=None;foe.recent_bursts=[None;3];}
+            if has(Ember::VenomFletch)&&alive {
+                let state_infos=chr.special_effect.entries().filter_map(|e|sp_repo.and_then(|p|p.get::<SpEffectParam>(e.param_id as u32)).map(|r|i32::from(r.state_info())));
+                let ailments=observe_ailments(state_infos,&mut foe.recent_bursts,now);
+                best_ailments=best_ailments.max(ailments);
+                if self.venom_target==Some(*handle)&&ailments>0 {target_ailments=Some(ailments);}
+            }
+            if has(Ember::HunterMark)&&died {
+                let marked_local=foe.marked_until.is_some_and(|u|now<=u);
+                let marked_effect=chr.special_effect.entries().any(|e|e.param_id==HUNTER_MARK);
+                if marked_local||(mine&&marked_effect) {
+                    hunter_mark_kills+=1;
+                    super::log(format!("TOWER_EMBER hunter_mark kill slot={slot} local={marked_local} mine={mine}"));
+                }
+                foe.mark_hits=0;foe.marked_until=None;
+            }
             if foe.participation.observe(mine,lost,died)&&party&&!mine {
                 events.gains.push(Gain::Assist{rank:kill_rank(foe.rank)});
                 super::log(format!("TOWER_EMBER assist handle={handle} rank={} soul credit",foe.rank));
@@ -668,12 +758,32 @@ impl Fight {
             if has(Ember::Glintblade)&&drop>0&&alive
                 &&self.bullets.iter().any(|&(t,p,owner)|!matches!(owner,BulletOwner::Teammate)&&now.duration_since(t)<=BULLET_MEMORY&&distance(p,pos)<=BULLET_REACH)
                 &&super::glintblade::take_cast() {blades.push((*handle,pos));}
-            // 卡利亚剑阵：近战轻攻击命中（排除召唤物与玩家自己的弹体/剑阵回环）
+            // 卡利亚剑阵 & 弓弩余烬：区分近战普攻与弓弩弹体命中
+            let attacker_is_spirit=if !attacker.is_empty() {spirit_handles.contains(&attacker)} else {matches!(nearest_bullet,Some(BulletOwner::Spirit))};
+            let near_player_bullet=self.bullets.iter().any(|&(t,p,owner)|matches!(owner,BulletOwner::Player)&&now.duration_since(t)<=BULLET_MEMORY&&distance(p,pos)<=BULLET_REACH);
             if has(Ember::Phalanx)&&(hit||died) {
-                let attacker_is_spirit=if !attacker.is_empty() {spirit_handles.contains(&attacker)} else {matches!(nearest_bullet,Some(BulletOwner::Spirit))};
-                let near_player_bullet=self.bullets.iter().any(|&(t,p,owner)|matches!(owner,BulletOwner::Player)&&now.duration_since(t)<=BULLET_MEMORY&&distance(p,pos)<=BULLET_REACH);
                 let attack_active=self.normal_attack_until.is_some_and(|until|now<=until);
                 if is_normal_melee_hit(attack_active,attacker_is_spirit,near_player_bullet,distance(here,pos)) {phalanx_hits+=1;}
+            }
+            if (has(Ember::HunterMark)||has(Ember::VenomFletch))&&hit&&alive
+                &&is_bow_hit(bow_exclusive,bow_active,attacker_is_spirit,near_player_bullet)
+            {
+                if has(Ember::HunterMark) {
+                    foe.mark_hits=foe.mark_hits.saturating_add(1);
+                    if foe.mark_hits>=embers::HUNTER_MARK_HITS {
+                        foe.mark_hits=0;
+                        foe.marked_until=Some(now+Duration::from_secs(embers::HUNTER_MARK_SECONDS));
+                        mark_procs.push(index);
+                    }
+                }
+                if has(Ember::VenomFletch) {
+                    self.venom_target=Some(*handle);
+                    if foe.venom_at.is_none_or(|t|now.duration_since(t)>=Duration::from_millis(embers::VENOM_COOLDOWN_MS)) {
+                        foe.venom_at=Some(now);
+                        let kind=next_roll(&mut self.capture_seed,4) as u8;
+                        venom_procs.push((index,kind));
+                    }
+                }
             }
             dealt+=i64::from(lost);
             if died {
@@ -681,6 +791,7 @@ impl Fight {
                 deaths.push((index,by_spirit));
             } else if hit {hits.push((index,drop));}
         }
+        self.venom_ailments=if has(Ember::VenomFletch) {target_ailments.unwrap_or(best_ailments)} else {0};
         for (target,pos) in blades {
             match super::glintblade::spawn(here,&target,pos) {
                 Ok(())=>super::log(format!("TOWER_EMBER glintblade spawned target={target}")),
@@ -736,7 +847,7 @@ impl Fight {
         let phalanx_proc=if has(Ember::Phalanx)&&phalanx_hits>0&&self.phalanx_ready.is_none_or(|t|now>=t) {
             (0..phalanx_hits).any(|_|next_roll(&mut self.capture_seed,100)<embers::PHALANX_CHANCE_PERCENT)
         } else {false};
-        if heal>0||rise||dragon||refund>0||martyr>0||phalanx_hits>0||phalanx_proc {
+        if heal>0||rise||dragon||refund>0||martyr>0||phalanx_hits>0||phalanx_proc||hunter_mark_kills>0 {
             let chr=&mut world.main_player.as_mut().unwrap().chr_ins;
             let data=&mut chr.modules.data;
             if martyr>0 {
@@ -746,6 +857,12 @@ impl Fight {
             if phalanx_hits>0 {
                 let gain=i64::from(embers::phalanx_fp(data.max_fp))*i64::from(phalanx_hits);
                 if gain>0 {data.fp=(i64::from(data.fp.max(0))+gain).min(i64::from(data.max_fp)) as i32;}
+            }
+            if hunter_mark_kills>0 {
+                let hp_gain=i64::from(embers::hunter_mark_restore(data.max_hp,embers::HUNTER_MARK_HEAL_PERCENT))*i64::from(hunter_mark_kills);
+                let fp_gain=i64::from(embers::hunter_mark_restore(data.max_fp,embers::HUNTER_MARK_FP_PERCENT))*i64::from(hunter_mark_kills);
+                if hp_gain>0 {data.hp=(i64::from(data.hp)+hp_gain).min(i64::from(data.max_hp)) as i32;}
+                if fp_gain>0 {data.fp=(i64::from(data.fp.max(0))+fp_gain).min(i64::from(data.max_fp)) as i32;}
             }
             if refund>0 {
                 data.stamina=(i64::from(data.stamina.max(0))+i64::from(refund)).min(i64::from(data.max_stamina)) as i32;
@@ -800,6 +917,8 @@ impl Fight {
         for &(index,_) in &hits {
             for ember in [Ember::Bloodlord,Ember::Frost] {if has(ember) {strikes.push((index,Strike::Buildup{slot:self.foes[index].slot,ember}));}}
         }
+        for &index in &mark_procs {if self.foes[index].alive {strikes.push((index,Strike::Mark{slot:self.foes[index].slot}));}}
+        for &(index,kind) in &venom_procs {if self.foes[index].alive {strikes.push((index,Strike::Venom{slot:self.foes[index].slot,kind}));}}
         let mut wound=|origin:[f32;3],radius:f32,ember:Ember,foes:&[Foe]| {
             for (index,foe) in foes.iter().enumerate() {if foe.alive&&distance(foe.pos,origin)<=radius {strikes.push((index,Strike::Wound{slot:foe.slot,ember}));}}
         };
@@ -831,6 +950,16 @@ impl Fight {
                 return;
             },
             Strike::Buildup{ember,..}=>{if let Some(effect)=buildup_effect(ember){apply_buildup(chr,effect);}return;},
+            Strike::Mark{..}=>{
+                if ready(&[HUNTER_MARK]) {
+                    chr.remove_speffect(HUNTER_MARK);
+                    chr.apply_speffect(HUNTER_MARK,false);
+                    chr.apply_speffect(FLASH,false);
+                    super::log(format!("TOWER_EMBER hunter_mark applied slot={}",foe.slot));
+                } else if !self.missing {super::log("TOWER_EMBER missing hunter mark effect; update regulation.bin");self.missing=true;}
+                return;
+            },
+            Strike::Venom{kind,..}=>{if let Some(effect)=venom_effect(kind){apply_buildup(chr,effect);}return;},
             Strike::Wound{ember,..}=>embers::enemy_damage(max,embers::wound_percent(ember).unwrap_or(0),foe.boss),
             Strike::Thorns{taken,..}=>embers::thorns_damage(taken,max,foe.boss),
         };
@@ -855,7 +984,7 @@ impl Fight {
                     let Some(chr)=world.chr_ins_by_handle(&handle) else{continue};
                     let q=chr.modules.physics.position;
                     let alive=chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag();
-                    self.foes.push(Foe{handle,hp:chr.modules.data.hp,max:chr.modules.data.max_hp,pos:[q.0,q.1,q.2],alive,boss:rank<=1,rank,slot,hit_at:None,participation:Default::default()});
+                    self.foes.push(Foe{handle,hp:chr.modules.data.hp,max:chr.modules.data.max_hp,pos:[q.0,q.1,q.2],alive,boss:rank<=1,rank,slot,hit_at:None,participation:Default::default(),mark_hits:0,marked_until:None,venom_at:None,recent_bursts:[None;3]});
                     self.foes.len()-1
                 },
             };
@@ -1085,11 +1214,11 @@ mod tests {
         assert!([SPIRIT_RESONANCE,ARTS_ATTACK,ARTS_COST,BULWARK].into_iter().all(|id|ids.contains(&id)));
         assert!(!ids.contains(&EXECUTION_RELIEF),"the relief expires on its own, sync never strips it");
         assert_eq!(frenzy_effect(embers::FRENZY_STACKS),FIRST+131);
-        let mut all=ids.clone();all.extend([BLOOD,FROST,FLASH,PHALANX_CAST,SPIRIT_COMMAND,CHAIN_MARK,CHAIN_RESIDENT+1,EXECUTION+1,EXECUTION_RELIEF]);
+        let mut all=ids.clone();all.extend([BLOOD,FROST,POISON,ROT,FLASH,PHALANX_CAST,HUNTER_MARK,SPIRIT_COMMAND,CHAIN_MARK,CHAIN_RESIDENT+1,EXECUTION+1,EXECUTION_RELIEF]);
         all.extend(Ember::ALL.into_iter().filter_map(slots).flatten());
         let count=all.len();all.sort();all.dedup();assert_eq!(all.len(),count,"effect ids overlap");
         assert!(all.iter().all(|id|(FIRST..FIRST+200).contains(id)),"inside the ember range");
-        assert!(Ember::ALL.into_iter().all(|e|(e.stacking()||matches!(e,Ember::Battlemage|Ember::Mind|Ember::HeavyCast))==slots(e).is_some()));
+        assert!(Ember::ALL.into_iter().all(|e|(e.stacking()||matches!(e,Ember::Battlemage|Ember::Mind|Ember::HeavyCast|Ember::VenomFletch))==slots(e).is_some()));
         assert!(PLAYER_STACKING.iter().all(|e|e.stacking()&&*e!=Ember::SpiritKeeper));
         assert_eq!([0,1,2,3].map(kill_rank),[2,1,1,0]);
     }
@@ -1128,5 +1257,46 @@ mod tests {
         assert_eq!(heavy_cast_effective_mp(62,latch,now+Duration::from_secs(1)),62);
         assert_eq!(heavy_cast_effective_mp(7,latch,now+HEAVY_CAST_LATCH),7);
         assert_eq!(heavy_cast_effective_mp(24,None,now),24);
+    }
+    #[test]
+    fn bow_stance_and_hit_classification_require_active_bow_or_crossbow() {
+        use eldenring::cs::{ChrAsmArmStyle as Style,ChrAsmEquipment,ChrAsmEquipmentSlots};
+        let mut eq=ChrAsmEquipment{arm_style:Style::OneHanded,selected_slots:ChrAsmEquipmentSlots{
+            left_weapon_slot:0,right_weapon_slot:0,left_arrow_slot:0,right_arrow_slot:0,left_bolt_slot:0,right_bolt_slot:0}};
+        let mut ids=[-1;22];
+        let lookup=|id:u32|match id {40000000=>Some(50),41000000=>Some(51),42000000=>Some(53),43000000=>Some(55),44000000=>Some(56),9000000=>Some(15),_=>None};
+        // Two-handing a bow: exclusive bow stance (point-blank hits count even without bullet)
+        ids[1]=41000000;eq.arm_style=Style::RightBothHands;
+        assert_eq!(bow_stance_from(&eq,&ids,lookup),(true,true));
+        assert!(is_bow_hit(true,true,false,false));
+        assert!(!is_bow_hit(true,true,true,true),"spirit hits never count as bow hits");
+        // Bow on back while two-handing katana: not holding bow
+        ids[0]=41000000;ids[1]=9000000;eq.arm_style=Style::RightBothHands;
+        assert_eq!(bow_stance_from(&eq,&ids,lookup),(false,false));
+        // Crossbow in left + katana in right (one-handed): requires player bullet near target
+        ids[0]=43000000;ids[1]=9000000;eq.arm_style=Style::OneHanded;
+        assert_eq!(bow_stance_from(&eq,&ids,lookup),(true,false));
+        assert!(!is_bow_hit(false,true,false,false),"melee katana swing while off-handing crossbow must not trigger");
+        assert!(is_bow_hit(false,true,false,true),"crossbow bolt with bullet near target triggers");
+        // All 5 bow/crossbow/ballista weapon types recognized
+        for t in [50u16,51,53,55,56] {assert!(is_bow_weapon_type(t));}
+        for t in [1u16,9,15,57] {assert!(!is_bow_weapon_type(t));}
+    }
+    #[test]
+    fn venom_ailments_count_distinct_persistent_and_recent_burst_statuses() {
+        let now=Instant::now();
+        let mut bursts=[None;3];
+        assert_eq!(observe_ailments([],&mut bursts,now),0);
+        // Poison + Rot active
+        assert_eq!(observe_ailments([2,5,2],&mut bursts,now),2,"duplicate stateInfo only counts once");
+        // Hemorrhage bursts, then disappears next frame but stays remembered for 10s
+        assert_eq!(observe_ailments([2,5,6],&mut bursts,now),3);
+        assert_eq!(observe_ailments([2,5],&mut bursts,now+Duration::from_secs(5)),3);
+        // Add Frostbite -> reaches cap 4
+        assert_eq!(observe_ailments([2,5,260,437],&mut bursts,now+Duration::from_secs(6)),4);
+        // After burst window expires, only persistent Poison+Rot remain
+        assert_eq!(observe_ailments([2,5],&mut bursts,now+Duration::from_secs(17)),2);
+        assert_eq!([0,1,2,3].map(venom_effect),[Some(POISON),Some(ROT),Some(BLOOD),Some(FROST)]);
+        assert_eq!(venom_effect(4),None);
     }
 }

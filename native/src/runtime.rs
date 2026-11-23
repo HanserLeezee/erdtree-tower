@@ -2943,7 +2943,8 @@ fn tick_locked() {
             let team=runtime.party.as_ref().map(|p|p.gate.flask_uses());
             let hits=runtime.party.as_ref().filter(|p|p.host()).map(|p|p.gate.leech_hits(p.config.player)).unwrap_or_default();
             runtime.boss_fight.tick(world,&handles,authority,runtime.party.is_some(),flasks,team.as_deref(),&hits);
-            runtime.growth.tick(world,(run.seed,run.act,id),erdtree_tower::scaling::growth_step(run,id),&handles);
+            let party_players=runtime.party.as_ref().map_or(0,|p|p.gate.members().len());
+            runtime.growth.tick(world,(run.seed,run.act,id),erdtree_tower::scaling::growth_step(run,id),&handles,party_players);
             runtime.view.boss_affixes=runtime.boss_fight.title();runtime.view.boss_alert=runtime.boss_fight.alert();runtime.view.boss_affix_list=runtime.boss_fight.affixes().to_vec();
             // Boss 房的 Boss 卡在 1 点生命太久：视为转阶段锁血，直接放行
             if run.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Boss) {
@@ -3439,9 +3440,10 @@ fn member_combat(state:&mut Runtime,world:&mut WorldChrMan) {
         world.chr_sets.iter().flatten().flat_map(|set|set.characters())
             .find(|chr|chr.event_entity_id==entity&&chr.npc_id==spec.model&&chr.npc_param_id==spec.npc&&enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status))
             .map(|chr|chr.field_ins_handle)).collect()).unwrap_or_default();
-    // 层数成长：与房主挂同一个效果，本机副本的最大生命才和房主一致（见 scaling::Growth）
+    // 层数成长与无缝联机 Boss 多人缩放：房主与成员在本机挂同一个效果，最大生命才一致（见 scaling::Growth）
     let step=erdtree_tower::scaling::growth_step(run,id);
-    state.growth.tick(world,key,step,&handles);
+    let party_players=state.party.as_ref().map_or(0,|p|p.gate.members().len());
+    state.growth.tick(world,key,step,&handles,party_players);
     // 诊断：本机副本生命已到 0 却没有死亡（与房主不同步、卡在原地），每只敌人记一次
     {
         // (战斗, 实体, 第一次看到 0 生命的时间, 已记录)；正常死亡在同一时刻就有死亡标记，持续 1.5 秒才算卡住

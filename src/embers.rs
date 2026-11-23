@@ -2,7 +2,7 @@ use serde::{Deserialize,Serialize};
 
 /// 余烬：誓约三选一里的机制增益，没有代价，不能深化；选过的整局生效
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash,Serialize,Deserialize)]
-pub enum Ember {Execution,Bloodlord,Frost,Deathflame,Miquella,Rise,DragonHeart,Revenge,Frenzy,Echo,Feast,Thorns,SpiritLink,SpiritBurst,SpiritFeast,SpiritCommand,SpiritTwin,SoulEater,Chain,Godslayer,SpiritKeeper,Barrier,Meditation,Glintstone,FullMoon,Footwork,SpiritResonance,Pouch,Arts,Bulwark,Breaker,Harvest,LastStand,Martyr,Mercy,Battlemage,Stride,FrostShackle,Tent,Capture,Glintblade,Mind,Phalanx,HeavyCast}
+pub enum Ember {Execution,Bloodlord,Frost,Deathflame,Miquella,Rise,DragonHeart,Revenge,Frenzy,Echo,Feast,Thorns,SpiritLink,SpiritBurst,SpiritFeast,SpiritCommand,SpiritTwin,SoulEater,Chain,Godslayer,SpiritKeeper,Barrier,Meditation,Glintstone,FullMoon,Footwork,SpiritResonance,Pouch,Arts,Bulwark,Breaker,Harvest,LastStand,Martyr,Mercy,Battlemage,Stride,FrostShackle,Tent,Capture,Glintblade,Mind,Phalanx,HeavyCast,HunterMark,VenomFletch}
 
 // 运行时数值（参数类的数值见 scene-builder/EmberAssets.cs，说明文字同步引用这些常量）
 pub const EXECUTION_SECONDS:u32=10;
@@ -109,6 +109,25 @@ pub const HEAVY_CAST_MAX_FP:u32=100;
 pub fn heavy_cast_rate(base_fp:u32)->f32 {
     1.0+(base_fp.min(HEAVY_CAST_MAX_FP)*HEAVY_CAST_PERMILLE) as f32/1000.0
 }
+/// 狩猎印记：弓弩命中同一目标累计 4 次标记为猎物，持续 12 秒，期间受到伤害 +30%；击杀被标记目标回复 15% 最大生命与 20% 最大专注
+pub const HUNTER_MARK_HITS:u8=4;
+pub const HUNTER_MARK_SECONDS:u64=12;
+pub const HUNTER_MARK_DAMAGE_PERCENT:u32=30;
+pub const HUNTER_MARK_HEAL_PERCENT:u32=15;
+pub const HUNTER_MARK_FP_PERCENT:u32=20;
+pub fn hunter_mark_restore(max:i32,percent:u32)->i32 {
+    if max<=0||percent==0 {return 0;}
+    ((i64::from(max)*i64::from(percent)/100) as i32).max(1).min(max)
+}
+/// 百毒淬羽：弓弩命中随机附加 40 点中毒/腐败/出血/冻伤积累（短内置冷却）；目标每存在 1 种异常状态，弓弩伤害 +15%（最多计 4 种即 +60%）
+pub const VENOM_BUILDUP:u32=BUILDUP;
+pub const VENOM_COOLDOWN_MS:u64=800;
+pub const VENOM_STEP_PERCENT:u32=15;
+pub const VENOM_MAX_AILMENTS:u32=4;
+pub const VENOM_BURST_SECONDS:u64=10;
+pub fn venom_fletch_rate(ailments:u32)->f32 {
+    1.0+(ailments.min(VENOM_MAX_AILMENTS)*VENOM_STEP_PERCENT) as f32/100.0
+}
 /// 由心及物的最大生命倍率：base 为不算这枚余烬时的最大生命，按千分之一取整（倍率不变就不用换行）
 pub fn mind_hp_rate(base:i32,max_fp:i32)->f32 {
     if base<=0||max_fp<=0 {return 1.0;}
@@ -134,15 +153,15 @@ pub fn capture_chance_permille(hp:i32,max:i32)->Option<u32> {
 pub const HARVEST_POINT_CAP:u32=1000;
 
 impl Ember {
-    pub const ALL:[Self;43]=[Self::Execution,Self::Bloodlord,Self::Frost,Self::Deathflame,Self::Miquella,Self::Rise,Self::DragonHeart,Self::Revenge,Self::Frenzy,Self::Echo,Self::Feast,Self::Thorns,
+    pub const ALL:[Self;45]=[Self::Execution,Self::Bloodlord,Self::Frost,Self::Deathflame,Self::Miquella,Self::Rise,Self::DragonHeart,Self::Revenge,Self::Frenzy,Self::Echo,Self::Feast,Self::Thorns,
         Self::SpiritLink,Self::SpiritBurst,Self::SpiritFeast,Self::SpiritCommand,Self::SpiritTwin,Self::SoulEater,Self::Chain,Self::Godslayer,Self::SpiritKeeper,
-        Self::Barrier,Self::Meditation,Self::Glintstone,Self::FullMoon,Self::Footwork,Self::SpiritResonance,Self::Pouch,Self::Arts,Self::Bulwark,Self::Breaker,Self::Harvest,Self::LastStand,Self::Martyr,Self::Mercy,Self::Battlemage,Self::FrostShackle,Self::Tent,Self::Capture,Self::Glintblade,Self::Mind,Self::Phalanx,Self::HeavyCast];
+        Self::Barrier,Self::Meditation,Self::Glintstone,Self::FullMoon,Self::Footwork,Self::SpiritResonance,Self::Pouch,Self::Arts,Self::Bulwark,Self::Breaker,Self::Harvest,Self::LastStand,Self::Martyr,Self::Mercy,Self::Battlemage,Self::FrostShackle,Self::Tent,Self::Capture,Self::Glintblade,Self::Mind,Self::Phalanx,Self::HeavyCast,Self::HunterMark,Self::VenomFletch];
     // Retained only for old saves and archived runs.
     pub fn retired(self)->bool {matches!(self,Self::Stride)}
-    pub fn index(self)->usize {match self {Self::Stride=>36,Self::FrostShackle=>37,Self::Tent=>38,Self::Capture=>39,Self::Glintblade=>40,Self::Mind=>41,Self::Phalanx=>42,Self::HeavyCast=>43,_=>Self::ALL.iter().position(|e|*e==self).unwrap()}}
+    pub fn index(self)->usize {match self {Self::Stride=>36,Self::FrostShackle=>37,Self::Tent=>38,Self::Capture=>39,Self::Glintblade=>40,Self::Mind=>41,Self::Phalanx=>42,Self::HeavyCast=>43,Self::HunterMark=>44,Self::VenomFletch=>45,_=>Self::ALL.iter().position(|e|*e==self).unwrap()}}
     /// 奖励卡徽记使用独立序号；原生拾取图集暂未重打时，新增余烬复用相近原生图标号。
     pub fn emblem_index(self)->usize {self.index()}
-    pub fn icon_index(self)->usize {match self {Self::Phalanx=>40,Self::HeavyCast=>23,_=>self.index()}}
+    pub fn icon_index(self)->usize {match self {Self::Phalanx=>40,Self::HeavyCast=>23,Self::HunterMark=>25,Self::VenomFletch=>1,_=>self.index()}}
     pub fn name(self)->&'static str {match self {
         Self::FrostShackle=>"寒霜枷锁",
         Self::Tent=>"帐篷",
@@ -151,6 +170,8 @@ impl Ember {
         Self::Mind=>"由心及物",
         Self::Phalanx=>"卡利亚剑阵",
         Self::HeavyCast=>"重咏之威",
+        Self::HunterMark=>"狩猎印记",
+        Self::VenomFletch=>"百毒淬羽",
         Self::Execution=>"无声处刑",Self::Bloodlord=>"鲜血君王的赐福",Self::Frost=>"永冻吐息",Self::Deathflame=>"死诞之焰",
         Self::Miquella=>"米凯拉之刃",Self::Rise=>"荷莱·露的再起",Self::DragonHeart=>"古龙之心",Self::Revenge=>"以血还血",
         Self::Frenzy=>"癫火狂热",Self::Echo=>"圣杯余响",Self::Feast=>"噬神之蛇的饱食",Self::Thorns=>"荆棘之躯",
@@ -160,13 +181,15 @@ impl Ember {
         Self::Footwork=>"黑刀刺客的身法",Self::SpiritResonance=>"灵唤师的共鸣",Self::Pouch=>"行商的无底囊",Self::Arts=>"战技的精粹",Self::Bulwark=>"坩埚骑士的铁壁",Self::Breaker=>"鲜血骑士的破势",Self::Harvest=>"处刑者的血宴",Self::LastStand=>"红狮子的不退",Self::Martyr=>"殉道者的苦修",Self::Mercy=>"黄金树的恩泽",Self::Battlemage=>"战斗法师",Self::Stride=>"已移除的余烬",
     }}
     pub fn effect(self)->String {match self {
+        Self::VenomFletch=>format!("弓弩命中随机附加 {VENOM_BUILDUP} 点异常\n（中毒、腐败、出血或冻伤）\n目标每存在 1 种异常状态\n弓弩伤害 +{VENOM_STEP_PERCENT}%（最多 +{}%）",VENOM_STEP_PERCENT*VENOM_MAX_AILMENTS),
+        Self::HunterMark=>format!("弓弩命中同一目标 {HUNTER_MARK_HITS} 次标记猎物\n持续 {HUNTER_MARK_SECONDS} 秒，猎物受伤 +{HUNTER_MARK_DAMAGE_PERCENT}%\n击杀被标记目标回复 {HUNTER_MARK_HEAL_PERCENT}% 生命\n与 {HUNTER_MARK_FP_PERCENT}% 专注"),
         Self::HeavyCast=>format!("施放魔法或祷告时\n基础消耗每有 1 点专注\n伤害提高 {}%",HEAVY_CAST_PERMILLE as f32/10.0),
         Self::Phalanx=>format!("普攻命中敌人时\n回复 {PHALANX_FP_PERCENT}% 最大专注（至少 {PHALANX_FP_MIN} 点）\n{PHALANX_CHANCE_PERCENT}% 概率召唤卡利亚剑阵\n冷却 {PHALANX_COOLDOWN_SECONDS} 秒"),
         Self::Mind=>format!("最大生命增加\n相当于最大专注的 {MIND_HP_TIMES} 倍"),
         Self::Glintblade=>"魔法命中敌人时\n召唤一把魔力辉剑追击它\n每次施法最多一把".into(),
         Self::Capture=>format!("投掷壶命中残血敌人可捕捉\n{CAPTURE_FROM_PERCENT}% 生命时 {CAPTURE_BASE_CHANCE}%，{CAPTURE_SURE_PERCENT}% 以下必定\n视为击杀，并获得其骨灰\nBoss 也能捕捉"),
         Self::Tent=>"每个篝火可以免费使用一次\n圣杯瓶补给，不占营地服务次数".into(),
-        Self::FrostShackle=>"敌人触发冻伤后，持续 10 秒\n行动速度 -30%，造成伤害 -20%\n再次触发刷新持续时间，不叠加".into(),
+        Self::FrostShackle=>"敌人触发冻伤后，持续 10 秒\n行动速度 -50%，造成伤害 -20%\n再次触发刷新持续时间，不叠加".into(),
         Self::Execution=>format!("致命一击后 {EXECUTION_SECONDS} 秒内\n精力消耗 -{EXECUTION_STAMINA_CUT}%"),
         Self::Bloodlord=>format!("每次命中积累\n{BUILDUP} 点出血"),
         Self::Frost=>format!("每次命中积累\n{BUILDUP} 点冻伤"),
@@ -226,7 +249,7 @@ impl Ember {
             _=>return None,
         })
     }
-    pub fn affects_enemies(self)->bool {matches!(self,Self::Bloodlord|Self::Frost|Self::Deathflame|Self::Thorns|Self::SpiritBurst)}
+    pub fn affects_enemies(self)->bool {matches!(self,Self::Bloodlord|Self::Frost|Self::Deathflame|Self::Thorns|Self::SpiritBurst|Self::HunterMark|Self::VenomFletch)}
     /// 召唤流余烬：只有身上带着骨灰时才会出现在奖励里
     pub fn needs_spirit(self)->bool {matches!(self,Self::SpiritLink|Self::SpiritBurst|Self::SpiritFeast|Self::SpiritCommand|Self::SpiritTwin|Self::SpiritKeeper|Self::SpiritResonance)}
     /// 法师余烬：只有身上带着法杖或圣印记时才会出现在奖励里
@@ -240,7 +263,7 @@ impl Ember {
             Self::Frenzy|Self::Arts|Self::LastStand=>Some(&[Hero]),
             Self::Mercy=>Some(&[Prophet,Confessor]),
             Self::Stride=>Some(&[Astrologer,Prophet,Confessor]),
-            Self::Bloodlord|Self::Frost|Self::Footwork|Self::Breaker=>Some(&[Samurai]),
+            Self::Bloodlord|Self::Frost|Self::Footwork|Self::Breaker|Self::HunterMark|Self::VenomFletch=>Some(&[Samurai]),
             Self::Barrier|Self::Meditation|Self::Glintstone|Self::FullMoon|Self::Martyr|Self::Battlemage|Self::HeavyCast=>Some(&[Astrologer,Prophet]),
             Self::Glintblade|Self::Phalanx=>Some(&[Astrologer]),
             Self::SpiritLink|Self::SpiritBurst|Self::SpiritFeast|Self::SpiritCommand|Self::SpiritTwin|Self::SpiritKeeper|Self::SpiritResonance|Self::Capture=>Some(&[Confessor]),
@@ -264,21 +287,26 @@ pub enum Strike {
     Thorns{slot:u8,taken:i32},
     /// 捕灵壶：成员用投掷壶捕捉成功（概率在成员那边掷过），房主把这只敌人打倒
     Capture{slot:u8},
+    /// 狩猎印记：弓弩命中累计 4 次后标记猎物（房主施加 12 秒 +30% 易伤）
+    Mark{slot:u8},
+    /// 百毒淬羽：弓弩命中随机施加 40 点异常积累（0 中毒、1 猩红腐败、2 出血、3 冻伤）
+    Venom{slot:u8,kind:u8},
 }
 /// 荆棘之躯一次反弹按受到的伤害计，超过这个数视为无效请求
 pub const THORNS_TAKEN_LIMIT:i32=100_000;
 /// 汇报里最多带的敌人侧效果条数（最近的若干条；房主按序号执行没执行过的）
 pub const STRIKE_WINDOW:usize=32;
 impl Strike {
-    pub fn slot(self)->u8 {match self {Self::Buildup{slot,..}|Self::Wound{slot,..}|Self::Thorns{slot,..}|Self::Capture{slot}=>slot}}
-    pub fn ember(self)->Ember {match self {Self::Buildup{ember,..}|Self::Wound{ember,..}=>ember,Self::Thorns{..}=>Ember::Thorns,Self::Capture{..}=>Ember::Capture}}
+    pub fn slot(self)->u8 {match self {Self::Buildup{slot,..}|Self::Wound{slot,..}|Self::Thorns{slot,..}|Self::Capture{slot}|Self::Mark{slot}|Self::Venom{slot,..}=>slot}}
+    pub fn ember(self)->Ember {match self {Self::Buildup{ember,..}|Self::Wound{ember,..}=>ember,Self::Thorns{..}=>Ember::Thorns,Self::Capture{..}=>Ember::Capture,Self::Mark{..}=>Ember::HunterMark,Self::Venom{..}=>Ember::VenomFletch}}
     /// 成员确实带着这个余烬，且效果类型与余烬对得上
     pub fn valid(self,held:&[Ember])->bool {
         held.contains(&self.ember())&&match self {
             Self::Buildup{ember,..}=>matches!(ember,Ember::Bloodlord|Ember::Frost),
             Self::Wound{ember,..}=>wound_percent(ember).is_some(),
             Self::Thorns{taken,..}=>(1..=THORNS_TAKEN_LIMIT).contains(&taken),
-            Self::Capture{..}=>true,
+            Self::Capture{..}|Self::Mark{..}=>true,
+            Self::Venom{kind,..}=>kind<4,
         }
     }
 }
@@ -458,6 +486,8 @@ pub fn icon_talisman(ember:Ember)->u32 {match ember {
     Ember::Mind=>1010,
     Ember::Phalanx=>1010,
     Ember::HeavyCast=>1010,
+    Ember::HunterMark=>2130,
+    Ember::VenomFletch=>2160,
     Ember::Execution=>5050,Ember::Bloodlord=>2160,Ember::Frost=>1140,Ember::Deathflame=>1190,Ember::Miquella=>1250,Ember::Rise=>3090,
     Ember::DragonHeart=>4020,Ember::Revenge=>2060,Ember::Frenzy=>2080,Ember::Echo=>5000,Ember::Feast=>5030,Ember::Thorns=>1210,
     Ember::SpiritLink=>6090,Ember::SpiritBurst=>6020,Ember::SpiritFeast=>2210,Ember::SpiritCommand=>3060,Ember::SpiritTwin=>6090,
@@ -533,6 +563,30 @@ mod tests {
         assert!((heavy_cast_rate(48)-1.72).abs()<1e-5);
         assert!((heavy_cast_rate(62)-1.93).abs()<1e-5);
         assert!((heavy_cast_rate(200)-2.5).abs()<1e-5);
+    }
+    #[test]
+    fn bow_embers_have_stable_ids_math_and_samurai_class_pool() {
+        use super::*;
+        assert_eq!(Ember::HunterMark.index(),44);
+        assert_eq!(Ember::HunterMark.emblem_index(),44);
+        assert_eq!(Ember::HunterMark.icon_index(),25);
+        assert_eq!(Ember::HunterMark.quality(),2);
+        assert_eq!(Ember::HunterMark.classes(),Some(&[crate::Class::Samurai][..]));
+        assert!(Ember::HunterMark.affects_enemies()&&!Ember::HunterMark.needs_casting()&&!Ember::HunterMark.needs_spirit());
+        assert_eq!(hunter_mark_restore(1000,HUNTER_MARK_HEAL_PERCENT),150);
+        assert_eq!(hunter_mark_restore(200,HUNTER_MARK_FP_PERCENT),40);
+        assert_eq!(hunter_mark_restore(0,HUNTER_MARK_HEAL_PERCENT),0);
+        assert_eq!(Ember::VenomFletch.index(),45);
+        assert_eq!(Ember::VenomFletch.emblem_index(),45);
+        assert_eq!(Ember::VenomFletch.icon_index(),1);
+        assert_eq!(Ember::VenomFletch.quality(),2);
+        assert_eq!(Ember::VenomFletch.classes(),Some(&[crate::Class::Samurai][..]));
+        assert!(Ember::VenomFletch.affects_enemies()&&!Ember::VenomFletch.needs_casting()&&!Ember::VenomFletch.needs_spirit());
+        assert!((venom_fletch_rate(0)-1.0).abs()<1e-5);
+        assert!((venom_fletch_rate(1)-1.15).abs()<1e-5);
+        assert!((venom_fletch_rate(4)-1.60).abs()<1e-5);
+        assert!((venom_fletch_rate(9)-1.60).abs()<1e-5);
+        assert_eq!(Ember::ALL.iter().map(|e|e.index()).collect::<std::collections::HashSet<_>>().len(),Ember::ALL.len());
     }
     #[test]
     fn capture_chance_starts_at_thirty_percent_and_is_certain_at_ten() {
@@ -685,10 +739,10 @@ mod tests {
         for _ in 0..Ember::ALL.iter().filter(|e|!e.retired()).count() {let e=offer(held.len() as u64*31,&held,true,true,None).unwrap();assert!(!held.contains(&e));held.push(e);}
         assert_eq!(offer(1,&held,true,true,None),None);
         assert_eq!(offer(5,&[],true,true,None),offer(5,&[],true,true,None));
-        // 没有骨灰、也没有法杖圣印记时只出 31 枚（不分职业时），抽完就没有了
+        // 没有骨灰、也没有法杖圣印记时只出 33 枚（不分职业时），抽完就没有了
         let mut plain=vec![];
         while let Some(e)=offer(plain.len() as u64*17,&plain,false,false,None) {assert!(!e.needs_spirit()&&!e.needs_casting());plain.push(e);}
-        assert_eq!(plain.len(),31);
+        assert_eq!(plain.len(),33);
     }
     #[test]
     fn enemy_damage_is_capped_for_bosses() {
@@ -699,7 +753,7 @@ mod tests {
     }
     #[test]
     fn member_strikes_need_the_matching_ember() {
-        let held=[Ember::Bloodlord,Ember::Deathflame,Ember::Thorns];
+        let held=[Ember::Bloodlord,Ember::Deathflame,Ember::Thorns,Ember::HunterMark,Ember::VenomFletch];
         assert!(Strike::Buildup{slot:0,ember:Ember::Bloodlord}.valid(&held));
         assert!(!Strike::Buildup{slot:0,ember:Ember::Frost}.valid(&held),"frost not held");
         assert!(!Strike::Buildup{slot:0,ember:Ember::Deathflame}.valid(&held),"not a buildup ember");
@@ -708,7 +762,9 @@ mod tests {
         assert!(!Strike::Wound{slot:1,ember:Ember::Echo}.valid(&held));
         assert!(Strike::Thorns{slot:2,taken:300}.valid(&held));
         assert!(!Strike::Thorns{slot:2,taken:0}.valid(&held)&&!Strike::Thorns{slot:2,taken:THORNS_TAKEN_LIMIT+1}.valid(&held));
-        assert!(Ember::ALL.into_iter().filter(|e|e.affects_enemies()).all(|e|wound_percent(e).is_some()||matches!(e,Ember::Bloodlord|Ember::Frost|Ember::Thorns)),"every enemy-side ember can be requested");
+        assert!(Strike::Mark{slot:3}.valid(&held)&&!Strike::Mark{slot:3}.valid(&[Ember::Bloodlord]));
+        assert!(Strike::Venom{slot:4,kind:0}.valid(&held)&&Strike::Venom{slot:4,kind:3}.valid(&held)&&!Strike::Venom{slot:4,kind:4}.valid(&held)&&!Strike::Venom{slot:4,kind:1}.valid(&[Ember::Bloodlord]));
+        assert!(Ember::ALL.into_iter().filter(|e|e.affects_enemies()).all(|e|wound_percent(e).is_some()||matches!(e,Ember::Bloodlord|Ember::Frost|Ember::Thorns|Ember::HunterMark|Ember::VenomFletch)),"every enemy-side ember can be requested");
     }
     #[test]
     fn embers_show_up_in_combat_rewards_and_persist() {

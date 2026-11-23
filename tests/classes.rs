@@ -30,10 +30,11 @@ fn six_playable_classes_keep_their_original_archetypes() {
     assert_eq!(Run::new(1,Class::Hero).class_rules,1);
 }
 #[test]
-fn weapon_rewards_lean_towards_the_class() {
+fn weapon_rewards_draw_uniformly_without_class_skew() {
     for class in [Class::Vagabond,Class::Hero,Class::Samurai] {
         let (favored,total)=weapon_offers(class);
-        assert!(favored as f64/total as f64>0.6,"{class:?} favored {favored}/{total}");
+        let rate=favored as f64/total as f64;
+        assert!(total>0&&rate<0.45,"{class:?} should not lean 70% toward class weapons, got {favored}/{total} ({rate:.2})");
     }
 }
 #[test]

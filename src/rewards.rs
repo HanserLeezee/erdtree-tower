@@ -183,10 +183,12 @@ fn reward_spirit_level(run:&Run,id:u32,entropy:u64,cap:u32)->u32 {
     base+(crate::mix(entropy^u64::from(base)^0xa541_e7e1)%u64::from(cap.min(u32::from(SPIRIT_MAX))+1)) as u32
 }
 
-pub fn offers(run:&Run,node:usize)->Vec<Reward> {
-    if crate::mix(run.reward_seed()^(node as u64).wrapping_mul(7919)^0x746f6f6c)%100<10{return before_tool_rate(run,node);}
+pub fn offers(run:&Run,node:usize)->Vec<Reward> {offers_with(run,node,true)}
+pub(crate) fn before_memory_catalyst(run:&Run,node:usize)->Vec<Reward> {offers_with(run,node,false)}
+fn offers_with(run:&Run,node:usize,memory_needs_catalyst:bool)->Vec<Reward> {
+    if crate::mix(run.reward_seed()^(node as u64).wrapping_mul(7919)^0x746f6f6c)%100<10{return before_tool_rate_with(run,node,memory_needs_catalyst);}
     let mut limited=run.clone();limited.claimed_items.extend(CATALOG.iter().filter(|i|i.kind==ItemKind::Tool).map(|i|i.id));
-    before_tool_rate(&limited,node)
+    before_tool_rate_with(&limited,node,memory_needs_catalyst)
 }
 pub(crate) fn ensure_summoner_spirit(run:&Run,node:usize,offers:&mut [Reward]) {
     if !run.summoner()||run.law.lone_wolf()||offers.is_empty()||offers.iter().any(|r|matches!(r,Reward::Item(id) if spirit_level(*id).is_some())) {return;}
@@ -201,24 +203,25 @@ pub(crate) fn ensure_summoner_spirit(run:&Run,node:usize,offers:&mut [Reward]) {
     let slot=if offers.len()>2||run.nodes[node].kind==crate::NodeKind::Boss {1.min(offers.len()-1)}else{0};
     offers[slot]=Reward::Item(pool[crate::mix(entropy^0x5a11_0a5) as usize%pool.len()]);
 }
-pub(crate) fn before_tool_rate(run:&Run,node:usize)->Vec<Reward> {
+pub(crate) fn before_tool_rate(run:&Run,node:usize)->Vec<Reward> {before_tool_rate_with(run,node,false)}
+fn before_tool_rate_with(run:&Run,node:usize,memory_needs_catalyst:bool)->Vec<Reward> {
     let mut owned:Vec<_>=run.claimed_items.iter().map(|id|crate::affixes::base(*id)).filter(|id|!run.claimed_items.contains(id)).collect();
     // 职业传承选用的开局护符已经在身上，不再作为奖励出现
     if run.start_talisman!=0&&!run.claimed_items.contains(&(0x20000000|run.start_talisman)) {owned.push(0x20000000|run.start_talisman);}
-    if owned.is_empty(){return crate::affixes::rewards(run,node,casting_replaced(run,node,true));}
+    if owned.is_empty(){return crate::affixes::rewards(run,node,casting_replaced(run,node,true,memory_needs_catalyst));}
     let mut run=run.clone();run.claimed_items.extend(owned);
-    crate::affixes::rewards(&run,node,casting_replaced(&run,node,true))
+    crate::affixes::rewards(&run,node,casting_replaced(&run,node,true,memory_needs_catalyst))
 }
 pub(crate) fn before_whetblades(run:&Run,node:usize)->Vec<Reward> {
     let mut run=run.clone();
     run.claimed_items.extend(CATALOG.iter().filter(|i|i.kind==ItemKind::Tool).map(|i|i.id));
-    offers(&run,node)
+    before_memory_catalyst(&run,node)
 }
 pub(crate) fn before_claimed_bases(run:&Run,node:usize)->Vec<Reward> {
-    crate::affixes::rewards(run,node,casting_replaced(run,node,false))
+    crate::affixes::rewards(run,node,casting_replaced(run,node,false,false))
 }
-fn casting_replaced(run:&Run,node:usize,spread:bool)->Vec<Reward> {
-    let mut result=before_spirit_levels(run,node);let cap=spirit_cap(run);
+fn casting_replaced(run:&Run,node:usize,spread:bool,memory_needs_catalyst:bool)->Vec<Reward> {
+    let mut result=offers_currency(run,node,1500,memory_needs_catalyst);let cap=spirit_cap(run);
     for reward in &mut result {if let Reward::Item(id)=reward {
         *id=reward_spirit_level(run,*id,run.reward_seed()^(node as u64).wrapping_mul(7919),cap);
         if lookup(*id).is_some_and(|i|i.kind==ItemKind::Spirit)&&run.claimed_items.contains(id) {
@@ -246,17 +249,18 @@ fn casting_replaced(run:&Run,node:usize,spread:bool)->Vec<Reward> {
 pub fn castable(id:u32,tools:[bool;2])->bool {
     match lookup(id).map(|i|i.kind) {Some(ItemKind::Sorcery)=>tools[0],Some(ItemKind::Incantation)=>tools[1],_=>true}
 }
-pub(crate) fn before_spirit_levels(run:&Run,node:usize)->Vec<Reward> {offers_currency(run,node,1500)}
-pub(crate) fn before_currency_1500(run:&Run,node:usize)->Vec<Reward> {offers_currency(run,node,600)}
-fn offers_currency(run:&Run,node:usize,currency:u32)->Vec<Reward> {
+pub(crate) fn before_spirit_levels(run:&Run,node:usize)->Vec<Reward> {offers_currency(run,node,1500,false)}
+pub(crate) fn before_currency_1500(run:&Run,node:usize)->Vec<Reward> {offers_currency(run,node,600,false)}
+fn offers_currency(run:&Run,node:usize,currency:u32,memory_needs_catalyst:bool)->Vec<Reward> {
     if run.nodes.get(node).is_some_and(|n|n.kind==crate::NodeKind::Boss){return crate::elite::boss_offers(run,node);}
     if run.nodes.get(node).is_some_and(|n|n.kind==crate::NodeKind::Elite){return crate::elite::offers(run,node);}
     let mut result=if run.nodes.get(node).is_some_and(|n|n.kind==crate::NodeKind::Chest){chest_offers(run,node)}else{before_bosses(run,node)};
     if run.nodes.get(node).is_some_and(|n|n.kind==crate::NodeKind::Monster) {
         let roll=crate::mix(run.reward_seed() ^ node as u64 ^ 0x67077);
+        let has_catalyst=!memory_needs_catalyst||run.casting_tools.is_none_or(|tools|tools[0]||tools[1]);
         match roll%100 {
             0..=9 if run.flask_bonus<4=>result[1]=Reward::FlaskCapacity,
-            10..=19 if run.memory_bonus<6=>result[1]=Reward::MemorySlot,
+            10..=19 if run.memory_bonus<6&&has_catalyst=>result[1]=Reward::MemorySlot,
             20..=29 if run.class.sorcerer()&&!run.star_stream=>result[1]=Reward::StarStream,
             _=>{},
         }
@@ -343,15 +347,10 @@ fn ranked_pool(run:&Run,node:usize,spirits:bool,catalog:&[Item],base_only:bool)-
     for (index,kind) in [ItemKind::Weapon,ItemKind::Armor,ItemKind::Sorcery,ItemKind::Incantation,ItemKind::Spirit,ItemKind::Talisman,ItemKind::Tool].into_iter().enumerate() {
         if kind==ItemKind::Tool&&!base_only {continue;}
         if kind==ItemKind::Spirit&&!spirits {continue;}
-        let mut pool:Vec<_>=catalog.iter().filter(|item|item.kind==kind&&kind.allowed(run.class)&&!run.claimed_items.contains(&item.id)&&crate::dlc::item_allowed(item.id)&&!capture_only(item.id)&&(!base_only||item.random_eligible())).collect();
-        // 职业规则 1：武器约七成从职业擅长的类型里出
-        if kind==ItemKind::Weapon&&run.preferences().is_empty()&&crate::mix(run.reward_seed()^(node as u64*131)^0xc1a5_5e5)%10<7 {
-            let favored:Vec<_>=pool.iter().copied().filter(|i|run.class.weapon_types().contains(&crate::weapon_training::kind(i.id))).collect();
-            if !favored.is_empty() {pool=favored;}
-        }
+        let pool:Vec<_>=catalog.iter().filter(|item|item.kind==kind&&kind.allowed(run.class)&&!run.claimed_items.contains(&item.id)&&crate::dlc::item_allowed(item.id)&&!capture_only(item.id)&&(!base_only||item.random_eligible())).collect();
         if !pool.is_empty() {
             let roll=crate::mix(run.reward_seed()^(node as u64*97+index as u64+1234));
-            let choice=if kind==ItemKind::Weapon&&!run.preferences().is_empty() {Some(crate::weapon_training::pick_many(&pool.iter().map(|i|i.id).collect::<Vec<_>>(),roll,run.preferences(),Some(run.class)))}else{None};
+            let choice=if kind==ItemKind::Weapon&&!run.preferences().is_empty() {Some(crate::weapon_training::pick_many(&pool.iter().map(|i|i.id).collect::<Vec<_>>(),roll,run.preferences(),None))}else{None};
             categories.push(Reward::Item(pool[choice.unwrap_or(roll as usize%pool.len())].id));
         }
     }
@@ -561,12 +560,46 @@ mod tests {
                 let mut run=Run::new(seed,class);
                 run.casting_tools=Some([false,false]);
                 for node in 0..run.nodes.len() {
-                    assert!(offers(&run,node).iter().all(|r|!matches!(r,Reward::Item(id) if lookup(*id).is_some_and(|i|matches!(i.kind,ItemKind::Sorcery|ItemKind::Incantation)))));
+                    let list=offers(&run,node);
+                    assert!(list.iter().all(|r|!matches!(r,Reward::MemorySlot)));
+                    assert!(list.iter().all(|r|!matches!(r,Reward::Item(id) if lookup(*id).is_some_and(|i|matches!(i.kind,ItemKind::Sorcery|ItemKind::Incantation)))));
                 }
                 let node=run.available()[0];run.enter(node).unwrap();run.win_combat().unwrap();
                 assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
             }
         }
+    }
+    #[test]
+    fn memory_slot_requires_a_staff_or_seal_in_inventory() {
+        let mut seen_without=false;
+        let mut seen_with_staff=false;
+        let mut seen_with_seal=false;
+        let mut migrated=false;
+        for seed in 0..200 {
+            for class in [Class::Samurai,Class::Astrologer,Class::Prophet] {
+                let mut run=Run::new(seed,class);
+                let node=run.start_nodes()[0];
+                run.casting_tools=Some([false,false]);
+                if offers(&run,node).contains(&Reward::MemorySlot) {seen_without=true;}
+                if !migrated&&before_memory_catalyst(&run,node).contains(&Reward::MemorySlot) {
+                    let mut saved=run.clone();
+                    saved.enter(node).unwrap();
+                    saved.win_combat().unwrap();
+                    saved.phase=crate::Phase::Reward{id:node,offers:saved.before_memory_catalyst_for_test(node)};
+                    let loaded=Run::decode(&saved.encode().unwrap()).unwrap();
+                    assert_eq!(loaded.phase,crate::Phase::Reward{id:node,offers:loaded.offers_for_test(node)});
+                    if let crate::Phase::Reward{offers,..}=&loaded.phase {assert!(!offers.contains(&Reward::MemorySlot));}
+                    migrated=true;
+                }
+                run.casting_tools=Some([true,false]);
+                if offers(&run,node).contains(&Reward::MemorySlot) {seen_with_staff=true;}
+                run.casting_tools=Some([false,true]);
+                if offers(&run,node).contains(&Reward::MemorySlot) {seen_with_seal=true;}
+            }
+        }
+        assert!(!seen_without,"MemorySlot must not roll without a staff or sacred seal");
+        assert!(seen_with_staff&&seen_with_seal,"either a staff or a sacred seal unlocks MemorySlot");
+        assert!(migrated,"saved pre-gate MemorySlot reward pages migrate cleanly");
     }
     #[test]
     fn chest_boosts_are_stable_personal_and_exclude_owned_buffs() {

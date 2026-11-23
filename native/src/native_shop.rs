@@ -353,7 +353,7 @@ fn weapon_preference_shop_selection_is_weighted_unique_and_legacy_stable() {
         assert_eq!(stock.iter().map(|s|s.id).collect::<std::collections::HashSet<_>>().len(),3);
         favored+=usize::from(stock[0].id==9000000);
     }
-    assert!((1150..1350).contains(&favored),"expected about 62.5%, got {favored}/2000");
+    assert!((1650..1830).contains(&favored),"expected about 87.0%, got {favored}/2000");
 }
 fn preferred_weapons(mut pool:Vec<Stock>,count:usize,run:&Run,visit:usize)->Vec<Stock> {
     if run.preferences().is_empty(){return select(pool,count,run.seed,visit);}

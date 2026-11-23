@@ -56,6 +56,7 @@ if(args.Length==4&&args[3] is "spirit-model-patch" or "spirit-model-verify") {
 }
 if(args.Length==4&&args[3] is "spirit-net-patch" or "spirit-net-verify") {SpiritNetAssets.Patch(args[2],args[1],args[3]=="spirit-net-verify");return;}
 if(args.Length==4&&args[3] is "spirit-visual-patch" or "spirit-visual-verify") {SpiritVisualAssets.Patch(args[2],args[1],args[3]=="spirit-visual-verify");return;}
+if(args.Length==4&&args[3] is "boss-coop-scaling-patch" or "boss-coop-scaling-verify") {BossCoopScalingAssets.Patch(args[2],args[1],args[3]=="boss-coop-scaling-verify");return;}
 if(args.Length==4&&args[3]=="spirit-visual-inspect") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     SpiritVisualAssets.Inspect(args[2]);return;
@@ -89,6 +90,7 @@ if(args.Length==4&&args[3]=="glintblade-patch") {TentAssets.PatchGlintblade(args
 if(args.Length==4&&args[3]=="mind-patch") {MindAssets.Patch(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="phalanx-patch") {PhalanxAssets.Patch(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="heavycast-patch") {HeavyCastAssets.Patch(args[2],args[1],args[0]);return;}
+if(args.Length==4&&args[3]=="bow-ember-patch") {BowEmberAssets.Patch(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="talisman-passive-build") {TalismanPassiveAssets.Build(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="patches-event-patch") {PatchesEventAssets.Patch(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="patches-event-inspect") {Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));PatchesEventAssets.Inspect(args[2]);return;}

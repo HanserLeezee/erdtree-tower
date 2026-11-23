@@ -1001,13 +1001,22 @@ impl Run {
 
     #[cfg(test)]
     pub(crate) fn offers_for_test(&self,id:usize)->Vec<Reward> {self.offers(id)}
+    #[cfg(test)]
+    pub(crate) fn before_memory_catalyst_for_test(&self,id:usize)->Vec<Reward> {self.before_memory_catalyst_offers(id)}
     fn offers(&self, id: usize) -> Vec<Reward> {
         let mut offers=self.before_summoner_guarantee(id);
         rewards::ensure_summoner_spirit(self,id,&mut offers);
         offers
     }
+    fn before_memory_catalyst_offers(&self, id: usize) -> Vec<Reward> {
+        let mut offers=self.finalize_offers(id,rewards::before_memory_catalyst(self,id));
+        rewards::ensure_summoner_spirit(self,id,&mut offers);
+        offers
+    }
     fn before_summoner_guarantee(&self, id: usize) -> Vec<Reward> {
-        let mut offers=rewards::offers(self,id);
+        self.finalize_offers(id,rewards::offers(self,id))
+    }
+    fn finalize_offers(&self, id: usize, mut offers: Vec<Reward>) -> Vec<Reward> {
         if !self.law.is_empty() {
             for reward in &mut offers {
                 if self.law.lone_wolf()&&matches!(reward,Reward::Item(item) if rewards::lookup(*item).is_some_and(|i|i.kind==rewards::ItemKind::Spirit)) {*reward=Reward::Gold(1500);}
@@ -1291,7 +1300,7 @@ impl Run {
         }
         // 旧版规则生成的奖励换成当前规则；先比当前规则，相同就不用把每个旧版本都算一遍
         if let Phase::Reward{id,ref offers}=run.phase {
-            if *offers!=run.offers(id)&&(*offers==rewards::before_tool_rate(&run,id)||*offers==rewards::before_whetblades(&run,id)||*offers==rewards::before_claimed_bases(&run,id)||*offers==rewards::before_spirit_levels(&run,id)||*offers==rewards::before_currency_1500(&run,id)||*offers==rewards::before_chest_boosts(&run,id)||*offers==rewards::before_bosses(&run,id)||*offers==rewards::before_elites(&run,id)||*offers==rewards::before_base_talismans(&run,id)||*offers==rewards::before_spirit_weight(&run,id)||*offers==rewards::previous_offers(&run,id)||*offers==run.legacy_offers(id)||*offers==rewards::before_spirits(&run,id)||*offers==rewards::before_expansion(&run,id)) {
+            if *offers!=run.offers(id)&&(*offers==run.before_memory_catalyst_offers(id)||*offers==rewards::before_tool_rate(&run,id)||*offers==rewards::before_whetblades(&run,id)||*offers==rewards::before_claimed_bases(&run,id)||*offers==rewards::before_spirit_levels(&run,id)||*offers==rewards::before_currency_1500(&run,id)||*offers==rewards::before_chest_boosts(&run,id)||*offers==rewards::before_bosses(&run,id)||*offers==rewards::before_elites(&run,id)||*offers==rewards::before_base_talismans(&run,id)||*offers==rewards::before_spirit_weight(&run,id)||*offers==rewards::previous_offers(&run,id)||*offers==run.legacy_offers(id)||*offers==rewards::before_spirits(&run,id)||*offers==rewards::before_expansion(&run,id)) {
                 run.phase=Phase::Reward{id,offers:run.offers(id)};
             }
         }
@@ -1385,11 +1394,12 @@ impl Run {
             }
             Phase::Reward { id, offers } => {
                 let previous_summoner=self.summoner()&&*offers==self.before_summoner_guarantee(*id);
+                let previous_memory=*offers==self.before_memory_catalyst_offers(*id);
                 if !self
                     .nodes
                     .get(*id)
                     .is_some_and(|n| n.kind.combat() || n.kind == NodeKind::Chest)
-                    || (!previous_summoner && *offers != self.offers(*id) && *offers != rewards::before_custom_spirits(self,*id) && *offers != rewards::before_enemy_spirits(self,*id) && *offers != rewards::before_tool_rate(self,*id) && *offers != rewards::before_whetblades(self,*id) && *offers != rewards::before_claimed_bases(self,*id) && *offers != rewards::before_spirit_levels(self,*id) && *offers != rewards::before_currency_1500(self,*id) && *offers != rewards::before_chest_boosts(self,*id) && *offers != rewards::before_bosses(self,*id) && *offers != rewards::before_elites(self,*id) && *offers != rewards::before_base_talismans(self,*id) && *offers != self.legacy_offers(*id) && *offers != rewards::previous_offers(self,*id) && *offers != rewards::before_spirits(self,*id) && *offers != rewards::before_expansion(self,*id) && *offers != rewards::before_spirit_weight(self,*id))
+                    || (!previous_summoner && !previous_memory && *offers != self.offers(*id) && *offers != rewards::before_custom_spirits(self,*id) && *offers != rewards::before_enemy_spirits(self,*id) && *offers != rewards::before_tool_rate(self,*id) && *offers != rewards::before_whetblades(self,*id) && *offers != rewards::before_claimed_bases(self,*id) && *offers != rewards::before_spirit_levels(self,*id) && *offers != rewards::before_currency_1500(self,*id) && *offers != rewards::before_chest_boosts(self,*id) && *offers != rewards::before_bosses(self,*id) && *offers != rewards::before_elites(self,*id) && *offers != rewards::before_base_talismans(self,*id) && *offers != self.legacy_offers(*id) && *offers != rewards::previous_offers(self,*id) && *offers != rewards::before_spirits(self,*id) && *offers != rewards::before_expansion(self,*id) && *offers != rewards::before_spirit_weight(self,*id))
                 {
                     return fail();
                 }
