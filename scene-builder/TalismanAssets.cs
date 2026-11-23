@@ -92,9 +92,10 @@ static class TalismanAssets {
             var row=new PARAM.Row(sourceItems[d.Source]){ID=d.Id,Name=$"Tower talisman accessory:{d.Effect}"};
             if(I(row,"refId")!=d.Effect)throw new Exception("Source accessory reference mismatch");
             Set(row,"refId",Mapped("SpEffectParam",d.Effect));Set(row,"rarity",d.Tier);Set(row,"sortId",950000+d.Id-960100);
-            bool onHit=I(sources["SpEffectParam"][d.Effect],"stateInfo") is 303 or 304 or 305 or 306;
-            int group=onHit?24900+d.Tier:25000+kinds[d.Kind]*4+(d.Info.Contains("同类效果不能重复")?0:d.Tier);
-            Set(row,"accessoryGroup",group);Set(row,"sellValue",100*(d.Tier+1));
+            int channel=I(sources["SpEffectParam"][d.Effect],"stateInfo")-303;
+            bool onHit=channel is >=0 and <=3;
+            int group=onHit?24900+channel:25000+kinds[d.Kind]*4+(d.Info.Contains("同类效果不能重复")?0:d.Tier);
+            Set(row,"accessoryGroup",group);Set(row,"sellValue",100*((onHit?channel:d.Tier)+1));
             if(redrawn!=null)Set(row,"iconId",redrawn[d.Id]);
             int icon=I(row,"iconId");if(!File.Exists(Path.Combine(input,"reward-icons",icon+".rgba"))){icon=18000;Set(row,"iconId",icon);}
             if(!File.Exists(Path.Combine(input,"reward-icons",icon+".rgba")))throw new Exception("Talisman icon missing");
@@ -140,7 +141,7 @@ static class TalismanAssets {
             if(I(row,"refId")!=Mapped("SpEffectParam",source)||I(row,"rarity")!=tier)throw new Exception("Talisman root/rarity mismatch");
             var effect=tables["SpEffectParam"][I(row,"refId")];
             if(I(effect,"stateInfo") is 303 or 304 or 305 or 306) {
-                if(I(row,"accessoryGroup")!=24900+tier||I(effect,"stateInfo")!=303+tier)throw new Exception("On-hit rarity channel/group mismatch");
+                if(I(row,"accessoryGroup")!=24900+I(effect,"stateInfo")-303)throw new Exception("On-hit rarity channel/group mismatch");
             }
             if(!text["AccessoryName"].Entries.Any(e=>e.ID==id&&EquipmentStyleAssets.Plain(e.Text)==p[5]))throw new Exception("Talisman name mismatch");
             if(!text["AccessoryInfo"].Entries.Any(e=>e.ID==id&&EquipmentStyleAssets.Plain(e.Text)==p[6]))throw new Exception("Talisman effect description mismatch");

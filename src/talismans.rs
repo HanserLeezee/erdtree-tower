@@ -11,7 +11,10 @@ static GROUPS:LazyLock<Vec<Vec<usize>>>=LazyLock::new(||{
     let mut map=std::collections::BTreeMap::<&str,Vec<usize>>::new();
     for (i,v) in VARIANTS.iter().enumerate(){
         if matches!(v.kind,"experienced rider"|"finding"){continue;}
-        map.entry(v.kind).or_default().push(i);
+        let group=map.entry(v.kind).or_default();
+        // Older extraction IDs remain readable. Offer the strongest variant of each quality.
+        if TRIGGER_KINDS.contains(&v.kind){group.retain(|&j|VARIANTS[j].tier!=v.tier);}
+        group.push(i);
     }
     map.into_values().collect()
 });
@@ -29,7 +32,7 @@ pub fn owned_family(run:&Run,id:u32)->bool {
 fn triggered(run:&Run,seed:u64,_repeat:bool,min:u8)->Option<u32> {
     let floor=min.min(3);let mut value=crate::mix(seed^0x726172697479)%100;let mut tier=3;
     for (i,odds) in crate::affixes::quality_odds(run).into_iter().enumerate() {if value<u64::from(odds){tier=i as u8;break;}value-=u64::from(odds);}
-    tier=tier.max(floor);
+    tier=tier.max(floor).max(2);
     let eligible:Vec<_>=TRIGGERS.iter().flat_map(|g|g.iter()).map(|&i|&VARIANTS[i])
         .filter(|v|v.tier==tier&&!owned_family(run,v.id)).collect();
     if eligible.is_empty(){return None;}
@@ -82,7 +85,7 @@ mod tests {
             run.act=act;run.reached_layer=layer;
             for floor in 0..=3 {
                 let mut counts=[0u32;4];let mut expected=[0u32;4];
-                for (tier,odds) in crate::affixes::quality_odds(&run).into_iter().enumerate(){expected[tier.max(floor)]+=odds;}
+                for (tier,odds) in crate::affixes::quality_odds(&run).into_iter().enumerate(){expected[tier.max(floor).max(2)]+=odds;}
                 for seed in 0..20000 {
                     let id=triggered(&run,seed,false,floor as u8).unwrap();
                     counts[tier(id).unwrap() as usize]+=1;
@@ -99,7 +102,7 @@ mod tests {
     fn exhausted_trigger_quality_does_not_upgrade_or_duplicate() {
         let mut run=Run::new(8,crate::Class::Samurai);
         let seed=(0..10000).find(|&s|crate::mix(s^0x726172697479)%100<45).unwrap();
-        run.claimed_items.extend(TRIGGERS.iter().flat_map(|g|g.iter()).map(|&i|&VARIANTS[i]).filter(|v|v.tier==0).map(|v|v.id));
+        run.claimed_items.extend(TRIGGERS.iter().flat_map(|g|g.iter()).map(|&i|&VARIANTS[i]).filter(|v|v.tier==2).map(|v|v.id));
         assert_eq!(triggered(&run,seed,false,0),None);
         assert_eq!(triggered(&run,seed,true,0),None);
         let remaining=run.claimed_items.pop().unwrap();
@@ -115,6 +118,6 @@ mod tests {
             assert!(lookup(v.id).is_some());
             assert!(!GROUPS.iter().any(|g|g.contains(&index)),"{}",v.name);
         }
-        assert_eq!(GROUPS.iter().map(Vec::len).sum::<usize>(),VARIANTS.len()-8);
+        assert_eq!(GROUPS.iter().map(Vec::len).sum::<usize>(),VARIANTS.len()-8-4);
     }
 }

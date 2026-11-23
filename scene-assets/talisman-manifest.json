@@ -2560,7 +2560,7 @@
     "sourceEffect": 7004840,
     "effect": 57004840,
     "kind": "extracting spirit",
-    "tier": 0,
+    "tier": 2,
     "onHit": true,
     "group": 24900
   },
@@ -2569,7 +2569,7 @@
     "sourceEffect": 7004850,
     "effect": 57004850,
     "kind": "extracting spirit",
-    "tier": 1,
+    "tier": 2,
     "onHit": true,
     "group": 24901
   },
@@ -2596,7 +2596,7 @@
     "sourceEffect": 7004880,
     "effect": 57004880,
     "kind": "extracting vitality",
-    "tier": 0,
+    "tier": 2,
     "onHit": true,
     "group": 24900
   },
@@ -2605,7 +2605,7 @@
     "sourceEffect": 7004890,
     "effect": 57004890,
     "kind": "extracting vitality",
-    "tier": 1,
+    "tier": 2,
     "onHit": true,
     "group": 24901
   },
@@ -2965,7 +2965,7 @@
     "sourceEffect": 7005290,
     "effect": 57005290,
     "kind": "glintstone pebble",
-    "tier": 0,
+    "tier": 2,
     "onHit": true,
     "group": 24900
   },
@@ -2974,7 +2974,7 @@
     "sourceEffect": 7005300,
     "effect": 57005300,
     "kind": "glintstone pebble",
-    "tier": 1,
+    "tier": 3,
     "onHit": true,
     "group": 24901
   },
@@ -2983,7 +2983,7 @@
     "sourceEffect": 7005310,
     "effect": 57005310,
     "kind": "glintstone shards",
-    "tier": 1,
+    "tier": 2,
     "onHit": true,
     "group": 24901
   },
@@ -3010,7 +3010,7 @@
     "sourceEffect": 7005340,
     "effect": 57005340,
     "kind": "phalanx guard",
-    "tier": 0,
+    "tier": 2,
     "onHit": true,
     "group": 24900
   },
@@ -3019,7 +3019,7 @@
     "sourceEffect": 7005350,
     "effect": 57005350,
     "kind": "phalanx guard",
-    "tier": 1,
+    "tier": 3,
     "onHit": true,
     "group": 24901
   },
@@ -3046,7 +3046,7 @@
     "sourceEffect": 7005380,
     "effect": 57005380,
     "kind": "thorns",
-    "tier": 0,
+    "tier": 2,
     "onHit": true,
     "group": 24900
   },
@@ -3055,7 +3055,7 @@
     "sourceEffect": 7005390,
     "effect": 57005390,
     "kind": "thorns",
-    "tier": 1,
+    "tier": 3,
     "onHit": true,
     "group": 24901
   },
@@ -3064,7 +3064,7 @@
     "sourceEffect": 7005400,
     "effect": 57005400,
     "kind": "magma ball",
-    "tier": 1,
+    "tier": 2,
     "onHit": true,
     "group": 24901
   },
@@ -3163,7 +3163,7 @@
     "sourceEffect": 7005510,
     "effect": 57005510,
     "kind": "chilly breath",
-    "tier": 1,
+    "tier": 2,
     "onHit": true,
     "group": 24901
   },
@@ -3172,7 +3172,7 @@
     "sourceEffect": 7005520,
     "effect": 57005520,
     "kind": "chilly breath",
-    "tier": 2,
+    "tier": 3,
     "onHit": true,
     "group": 24902
   },
@@ -3190,7 +3190,7 @@
     "sourceEffect": 7005540,
     "effect": 57005540,
     "kind": "light rings",
-    "tier": 1,
+    "tier": 2,
     "onHit": true,
     "group": 24901
   },
@@ -3199,7 +3199,7 @@
     "sourceEffect": 7005550,
     "effect": 57005550,
     "kind": "light rings",
-    "tier": 2,
+    "tier": 3,
     "onHit": true,
     "group": 24902
   },
