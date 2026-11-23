@@ -2,12 +2,12 @@ use serde::{Deserialize,Serialize};
 use crate::{Phase,Run,RuleResult};
 
 #[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
-pub struct Point {pub seed:u64,pub initial_seed:u64,pub act:u8,pub route:u64,pub visited:Vec<usize>,pub retry:Option<usize>,pub law:String}
+pub struct Point {pub seed:u64,pub initial_seed:u64,pub act:u8,pub route:u64,pub visited:Vec<usize>,pub retry:Option<usize>,pub law:String,#[serde(default)] pub endless:bool}
 impl Point {
     pub fn of(run:&Run)->Option<Self> {
         if run.phase!=Phase::Map||run.contract_pending(){return None;}
         let route=serde_json::to_vec(&run.nodes).ok()?.into_iter().fold(0xcbf29ce484222325u64,|h,b|(h^u64::from(b)).wrapping_mul(0x100000001b3));
-        Some(Self{seed:run.seed,initial_seed:run.initial_seed.unwrap_or(run.seed),act:run.act,route,visited:run.visited.clone(),retry:run.retry_node,law:run.law.code()})
+        Some(Self{seed:run.seed,initial_seed:run.initial_seed.unwrap_or(run.seed),act:run.act,route,visited:run.visited.clone(),retry:run.retry_node,law:run.law.code(),endless:run.endless})
     }
 }
 pub fn prepare(run:&Run,gold:u32,flasks:Option<u8>)->RuleResult<Run> {

@@ -107,18 +107,25 @@ impl State {
         let second=*pool.iter().find(|k|**k!=first).unwrap();
         Self{act,offers:vec![first,second],chosen:None,gear:[0;3],gear_done:false,peak:peak.min(MAX_PEAK),gift:None,rules:0,held:vec![],deepen:None,deepened:false}
     }
-    /// 开局三份新誓约；后续两份新誓约，并提供未满级誓约的深化。
+    /// 开局三份新誓约；后续两份新誓约，并提供未满级誓约的深化（无尽模式誓约池耗尽时自动跳过）。
     pub fn start(seed:u64,class:Class,act:u8,held:Vec<Oath>,peak:u8)->Self {
         let roll=crate::mix(seed^0xc071ac7);
         let preferred=preferred(class,roll);
         let mut pool:Vec<_>=Kind::ALL.into_iter().filter(|k|*k!=Kind::Hunter&&!held.iter().any(|o|o.kind==*k)).collect();
         pool.sort_by_key(|k|crate::mix(roll^k.index() as u64));
-        let first=if pool.contains(&preferred){preferred}else{pool[0]};
-        let second=*pool.iter().find(|k|**k!=first).unwrap();
+        let mut offers=Vec::new();
+        if let Some(first)=if pool.contains(&preferred){Some(preferred)}else{pool.first().copied()} {
+            offers.push(first);
+            if let Some(second)=pool.iter().copied().find(|k|*k!=first) {
+                offers.push(second);
+                if act==1&&held.is_empty() {
+                    if let Some(third)=pool.iter().copied().find(|k|!offers.contains(k)) {offers.push(third);}
+                }
+            }
+        }
         let deepen=held.iter().rev().filter(|o|o.kind!=Kind::Hunter&&o.level<MAX_LEVEL).max_by_key(|o|o.level).map(|o|o.kind);
-        let mut offers=vec![first,second];
-        if act==1&&held.is_empty() {offers.push(*pool.iter().find(|k|!offers.contains(k)).unwrap());}
-        Self{act,offers,chosen:None,gear:[0;3],gear_done:false,peak:peak.min(MAX_PEAK),gift:None,rules:1,held,deepen,deepened:false}
+        let gear_done=offers.is_empty()&&deepen.is_none();
+        Self{act,offers,chosen:None,gear:[0;3],gear_done,peak:peak.min(MAX_PEAK),gift:None,rules:1,held,deepen,deepened:false}
     }
     /// 进入下一幕：旧规则换一份新契约，新规则保留已有誓约
     pub fn next_act(&self,seed:u64,class:Class,act:u8)->Self {
@@ -215,7 +222,7 @@ impl State {
                 &&(!self.deepened||self.chosen.is_some()&&self.chosen==self.deepen),
             _=>false,
         };
-        let count_ok=self.offers.len()==2||(self.rules==1&&act==1&&self.offers.len()==3&&self.deepen.is_none());
+        let count_ok=self.offers.len()==2||(self.rules==1&&act==1&&self.offers.len()==3&&self.deepen.is_none())||(self.rules==1&&act>3&&self.offers.len()<=2);
         self.act==act&&self.peak<=MAX_PEAK&&count_ok&&self.offers.iter().enumerate().all(|(i,k)|!self.offers[..i].contains(k))&&held_ok
             &&self.chosen.is_none_or(|k|self.offers.contains(&k)||self.deepened)
             &&if self.chosen.is_none()||self.deepened{self.gift.is_none()&&self.gear==[0;3]}else{

@@ -252,6 +252,9 @@ pub struct Run {
     pub scaling_rules: u8,
     #[serde(default,skip_serializing_if="no_law")]
     pub law: law::Law,
+    /// 无尽模式（通关一次 280 分以上苦难律法解锁）：第三幕 Boss 战后不结束，继续进入第 4、5、6……幕
+    #[serde(default,skip_serializing_if="std::ops::Not::not")]
+    pub endless: bool,
     /// 职业传承选用的开局护符（0：旧存档，随身的祖灵角不计入）
     #[serde(default,skip_serializing_if="no_start_talisman")]
     pub start_talisman: u32,
@@ -370,6 +373,15 @@ pub struct Run {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShopStock {pub node:usize,pub items:Vec<[i32;4]>}
+
+/// 解锁无尽模式所需的最低苦难律法分数（通关一次非调试旅程即可解锁）
+pub const ENDLESS_UNLOCK_LAW: u32 = 280;
+/// 无尽模式最高幕数上限（防溢出与异常存档）
+pub const MAX_ENDLESS_ACT: u8 = 250;
+/// 是否已解锁无尽模式：在旅程档案中存在任意一次苦难律法 ≥ 280 分的非调试登顶记录
+pub fn endless_unlocked(records: &[journal::Record]) -> bool {
+    records.iter().any(|r| !r.debug && r.result == journal::Outcome::Won && r.law.score() >= ENDLESS_UNLOCK_LAW)
+}
 
 fn first_act()->u8 {1}
 fn no_law(law:&law::Law)->bool {law.is_empty()}
@@ -725,6 +737,7 @@ impl Run {
             boss_affix_rules: 2,
             scaling_rules: 1,
             law: law::Law::default(),
+            endless: false,
             start_talisman: 0,
             weapon_preference: None,
             weapon_preferences: Vec::new(),
@@ -788,6 +801,15 @@ impl Run {
         let mut run=Self::new(seed,class);
         run.personal_reward_seed=Some(reward_seed);
         run
+    }
+
+    /// 开局时设置无尽模式；只能在第一幕起点、尚未行动时设置
+    pub fn set_endless(&mut self, endless: bool) -> RuleResult<()> {
+        if self.act != 1 || !self.visited.is_empty() || self.phase != Phase::Map {
+            return Err("无尽模式只能在开局时设置".into());
+        }
+        self.endless = endless;
+        Ok(())
     }
 
     /// 开局时立下苦难律法；只能在第一幕起点、尚未行动时设置
@@ -899,7 +921,7 @@ impl Run {
         self.visited.push(id);
         self.checkpoint = None;
         self.shop_purchased = 0;self.shop_stock=None;
-        if self.nodes[id].kind==NodeKind::Boss && self.act<3 {
+        if self.nodes[id].kind==NodeKind::Boss && (self.act<3 || (self.endless && self.act<MAX_ENDLESS_ACT)) {
             self.act+=1;
             self.reached_layer=0;
             self.hp=self.max_hp;
@@ -1069,8 +1091,8 @@ impl Run {
         }
         self.checkpoint = None;
         if matches!(kind,NodeKind::Elite|NodeKind::Boss) {self.ember_stacks.gain(&self.embers,embers::Gain::Slain);}
-        // 最后一幕的 Boss：直接登顶，不再三选一
-        if kind==NodeKind::Boss&&self.act>=3 {self.finish(id);return Ok(());}
+        // 最后一幕的 Boss：普通模式直接登顶不再三选一；无尽模式每幕 Boss 战后都领奖并进入下一幕
+        if kind==NodeKind::Boss && (self.act>=3 && !self.endless || self.act>=MAX_ENDLESS_ACT) {self.finish(id);return Ok(());}
         self.phase = Phase::Reward {
             id,
             offers: self.offers(id),
@@ -1324,7 +1346,7 @@ impl Run {
             || self.elite_buffs.iter().any(|id|!elite::BUFFS.contains(id))
             || self.elite_buffs.iter().collect::<std::collections::BTreeSet<_>>().len()!=self.elite_buffs.len()
             || !self.valid_regional_event()
-            || !(1..=3).contains(&self.act)
+            || !(1..=if self.endless { MAX_ENDLESS_ACT } else { 3 }).contains(&self.act)
             || self.nodes != law_graph(self.seed,self.schema,self.law)
             || self.max_hp == 0
             || self.max_hp > 100

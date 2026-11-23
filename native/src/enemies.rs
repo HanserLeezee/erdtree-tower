@@ -118,10 +118,18 @@ fn expanded_early_enemies_work_in_solo_and_party_without_leaking_chariots() {
         }
     }
 }
+/// 无尽模式第 4 幕起：按本幕种子、幕数与节点序号确定性地从 1、2、3 幕怪物池中随机抽取一幕
+pub fn pool_act(seed:u64,act:u8,kind:NodeKind,ordinal:usize)->u8 {
+    if act<=3 {act.max(1)} else {
+        let tag=match kind {NodeKind::Boss=>3u64,NodeKind::Elite=>2,NodeKind::Monster=>1,_=>0};
+        (mix(seed^(u64::from(act)<<40)^(ordinal as u64).wrapping_mul(0x9e3779b97f4a7c15)^tag^0x656e646c657373)%3) as u8+1
+    }
+}
 pub fn event_roster(seed:u64,ordinal:usize,layer:usize,act:u8,altar:bool)->Vec<Enemy> {
     event_roster_in(seed,ordinal,layer,act,altar,party())
 }
 fn event_roster_in(seed:u64,ordinal:usize,layer:usize,act:u8,altar:bool,party:bool)->Vec<Enemy> {
+    let act=pool_act(seed,act,NodeKind::Event,ordinal);
     let stage=layer.min(11)/3;
     let count=if altar {stage+1}else{[2,3,3,4][stage]};
     (0..count).map(|i|choose_in(NodeKind::Monster,seed,ordinal*count+i,act,party)).collect()
@@ -151,6 +159,7 @@ fn roster_in(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8,part
     group
 }
 fn roster_group(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8,party:bool) -> Vec<Enemy> {
+    let act=pool_act(seed,act,kind,ordinal);
     if kind == NodeKind::Boss { return boss_roster(kind,seed,ordinal,act,party); }
     let stage = layer.min(11) / 3;
     if kind==NodeKind::Elite {
@@ -1250,5 +1259,27 @@ mod tests {
             }
         }}}}
         assert!(seen);
+    }
+    #[test]
+    fn endless_acts_roll_from_acts_one_to_three_with_valid_entities() {
+        let mut seen_acts=std::collections::BTreeSet::new();
+        for party in [false,true] {
+            for act in 4..=10u8 {
+                for kind in [NodeKind::Monster,NodeKind::Elite,NodeKind::Boss] {
+                    for seed in 0..24u64 {
+                        let group=roster_in(kind,seed,seed as usize%8,6,act,party);
+                        assert!(!group.is_empty());
+                        assert!(group.iter().all(|e|(1..=3).contains(&e.act)));
+                        seen_acts.insert(group[0].act);
+                        if party {assert!(map_entities(&group).is_ok(),"act={act} kind={kind:?} seed={seed}");}
+                    }
+                }
+                let ev=event_roster_in(100+u64::from(act),act as usize,5,act,false,party);
+                assert!(!ev.is_empty());
+                assert!(ev.iter().all(|e|(1..=3).contains(&e.act)));
+                if party {assert!(map_entities(&ev).is_ok());}
+            }
+        }
+        assert_eq!(seen_acts,[1,2,3].into_iter().collect());
     }
 }

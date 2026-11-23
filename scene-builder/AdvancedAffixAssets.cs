@@ -14,6 +14,31 @@ static class AdvancedAffixAssets {
     static void Set(PARAM.Row r,string k,object v)=>r[k].Value=Convert.ChangeType(v,r[k].Value.GetType(),CultureInfo.InvariantCulture);
     static int I(PARAM.Row r,string k)=>Convert.ToInt32(r[k].Value);
     static double F(PARAM.Row r,string k)=>Convert.ToDouble(r[k].Value);
+    static readonly string[] ReinforceScaling=["correctStrengthRate","correctAgilityRate","correctMagicRate","correctFaithRate","correctLuckRate"];
+    public const double SingleStatMaxEffectiveScaling=210.0;
+    public static double EffectiveScalingBudget(PARAM.Row original,Dictionary<int,PARAM.Row> corrections) {
+        if(I(original,"enableMagic")!=0||I(original,"enableMiracle")!=0)
+            return Math.Max(60,Scaling.Sum(k=>F(original,k)));
+        if(!corrections.TryGetValue(I(original,"attackElementCorrectId"),out var c))
+            return Math.Max(60,Scaling.Sum(k=>F(original,k)));
+        double totalBase=0,weighted=0;
+        for(int e=0;e<5;e++) {
+            double b=I(original,"attackBase"+Damage[e]);
+            if(b<=0)continue;
+            totalBase+=b;
+            double sum=0;
+            for(int s=0;s<5;s++)if(I(c,$"is{Stats[s]}Correct_by{Damage[e]}")!=0)sum+=F(original,Scaling[s]);
+            weighted+=b*sum;
+        }
+        return Math.Max(60,totalBase>0?weighted/totalBase:Scaling.Sum(k=>F(original,k)));
+    }
+    public static double CapSingleStatScaling(double value,int statIndex,PARAM.Row original,Dictionary<int,PARAM.Row> reinforce) {
+        if(I(original,"enableMagic")!=0||I(original,"enableMiracle")!=0)return value;
+        int cap=I(original,"originEquipWep1")<0?0:I(original,"originEquipWep16")<0?10:25;
+        int rfId=I(original,"reinforceTypeId")+cap;
+        double rate=reinforce.TryGetValue(rfId,out var rf)?Math.Max(1.0,F(rf,ReinforceScaling[statIndex])):1.0;
+        return Math.Min(value,SingleStatMaxEffectiveScaling/rate);
+    }
     public static int Mask(PARAM.Row source,ulong seed,int profile) {
         int anchor=profile==0?Enumerable.Range(0,5).MaxBy(i=>F(source,Scaling[i])):(int)(Mix(seed^19)%5);
         int mask=1<<anchor;
@@ -25,19 +50,25 @@ static class AdvancedAffixAssets {
         return mask;
     }
     static double ArmorMultiplier(int type,bool physical)=>type switch {
+        0=>physical?1.6:0.45,1=>physical?0.45:1.8,2=>0.70,_=>1.2
+    };
+    static double LegacyArmorMultiplier(int type,bool physical)=>type switch {
         0=>physical?1.6:0,1=>physical?0:1.8,2=>0.55,_=>1.2
     };
     public static void Test() {
         foreach(bool physical in new[]{false,true}) {
             if(ArmorMultiplier(2,physical)>=ArmorMultiplier(3,physical))throw new Exception("Rusted/Elden ordering mismatch");
         }
-        if(ArmorMultiplier(0,false)!=0||ArmorMultiplier(1,true)!=0)throw new Exception("Armor specialization mismatch");
+        if(ArmorMultiplier(0,false)>=ArmorMultiplier(2,false)||ArmorMultiplier(1,true)>=ArmorMultiplier(2,true))throw new Exception("Armor specialization mismatch");
+        if(ArmorMultiplier(0,false)<=0||ArmorMultiplier(1,true)<=0)throw new Exception("Specialized armor must keep non-zero off-type negation");
         if(ArmorMultiplier(0,true)<=ArmorMultiplier(3,true)||ArmorMultiplier(1,false)<=ArmorMultiplier(3,false))throw new Exception("Armor specialization must exceed balanced armor");
         Console.WriteLine("Verified independent physical/magical/rusted/elden armor rules");
     }
     public static void Build(Func<string,PARAM> read,Action<string,PARAM> save,BND4 messages,string input,string output,bool append=false) {
         Test();
         var correction=read("AttackElementCorrectParam");
+        var correctionRows=correction.Rows.ToDictionary(r=>r.ID);
+        var reinforceRows=read("ReinforceParamWeapon").Rows.ToDictionary(r=>r.ID);
         if(!append&&correction.Rows.Any(r=>r.ID>CorrectionFirst&&r.ID<=CorrectionFirst+31))throw new Exception("Advanced scaling correction collision");
         for(int mask=1;!append&&mask<32;mask++) {
             var row=new PARAM.Row(correction.Rows.Single(r=>r.ID==ScalingCorrectionFix.Template)){ID=CorrectionFirst+mask,Name=$"Tower scaling mask {mask}"};
@@ -82,7 +113,7 @@ static class AdvancedAffixAssets {
                     var choices=Enumerable.Range(0,AffixAssets.Kinds).OrderBy(i=>Mix(seed^(ulong)(100+i))).Take(count).ToArray();
                     string effectText=string.Join("\\n",choices.Select(i=>AffixAssets.DescribeEffect(i,tier)));
                     if(count==0)effectText="保留全部固有效果";
-                    string info=(weapon?$"补正组合：{build}":$"防具类型：{Types[profile]}\\n"+(profile switch {0=>"偏重物理防护，不提供元素减伤",1=>"偏重元素防护，不提供物理减伤",2=>"物理与元素防护较低，重量较轻",_=>"兼顾物理与元素防护"}))+"\\n"+effectText;
+                    string info=(weapon?$"补正组合：{build}":$"防具类型：{Types[profile]}\\n"+(profile switch {0=>"偏重物理防护，元素减伤较低",1=>"偏重元素防护，物理减伤较低",2=>"物理与元素防护较低，重量较轻",_=>"兼顾物理与元素防护"}))+"\\n"+effectText;
                     PARAM.Row basis=null;
                     foreach(var originalRow in family) {
                         var row=new PARAM.Row(originalRow){ID=id+originalRow.ID-baseId,Name=$"Tower advanced affix {baseId}:{profile}:{tier}"};
@@ -93,14 +124,14 @@ static class AdvancedAffixAssets {
                         if(weapon) {
                             for(int e=0;e<5;e++)Set(row,"attackBase"+Damage[e],Math.Clamp((int)Math.Round(I(originalRow,"attackBase"+Damage[e])*damageRate),0,ushort.MaxValue));
                             if(originalRow.ID==baseId&&mode!=0) {
-                                int total=(int)Math.Round(Damage.Sum(e=>I(originalRow,"attackBase"+e))*damageRate*1.1);
+                                int total=(int)Math.Round(Damage.Sum(e=>I(originalRow,"attackBase"+e))*damageRate);
                                 int physical=(int)Math.Round(total*(Mix(seed^53)%100<25?0:0.55));
                                 foreach(var element in Damage)Set(row,"attackBase"+element,0);
                                 Set(row,"attackBasePhysics",Math.Clamp(physical,0,ushort.MaxValue));Set(row,"attackBase"+Damage[mode],Math.Clamp(total-physical,0,ushort.MaxValue));
                             }
-                            double budget=Math.Max(60,Scaling.Sum(k=>F(originalRow,k)))*(0.95+roll*0.1+tier*AffixQualityAssets.ScalingStep);
+                            double budget=EffectiveScalingBudget(originalRow,correctionRows)*(0.95+roll*0.1+tier*AffixQualityAssets.ScalingStep);
                             double totalWeight=Enumerable.Range(0,5).Where(i=>(mask&(1<<i))!=0).Sum(i=>70d+Mix(seed^(ulong)(200+i))%61);
-                            for(int i=0;i<5;i++)Set(row,Scaling[i],(mask&(1<<i))==0?0:Math.Round(budget*(70+Mix(seed^(ulong)(200+i))%61)/totalWeight,2));
+                            for(int i=0;i<5;i++)Set(row,Scaling[i],(mask&(1<<i))==0?0:Math.Round(CapSingleStatScaling(budget*(70+Mix(seed^(ulong)(200+i))%61)/totalWeight,i,originalRow,reinforceRows),2));
                             Set(row,"attackElementCorrectId",CorrectionFirst+mask);
                             foreach(var f in row.Cells.Where(c=>c.Def.InternalName.StartsWith("originEquipWep")).Select(c=>c.Def.InternalName)) {
                                 int origin=I(originalRow,f);if(origin>=baseId&&origin<baseId+10000)Set(row,f,id+origin-baseId);else if(origin>=0)throw new Exception("Cross-family advanced reinforcement origin");
@@ -165,8 +196,8 @@ static class AdvancedAffixAssets {
                 int stars=int.Parse(line[7]);if(details[encoded][2].Count(c=>c=='★')!=stars)throw new Exception("Weapon star text mismatch");
             } else {
                 if(!details[encoded][2].Contains(Types[profile]))throw new Exception("Armor archetype label mismatch");
-                if(profile==0&&new[]{"magic","fire","thunder","dark"}.Any(e=>Math.Abs(F(row,e+"DamageCutRate")-1)>1e-6))throw new Exception("Physical armor has elemental defense");
-                if(profile==1&&new[]{"neutral","slash","blow","thrust"}.Any(e=>Math.Abs(F(row,e+"DamageCutRate")-1)>1e-6))throw new Exception("Magical armor has physical defense");
+                if(profile==0&&new[]{"magic","fire","thunder","dark"}.Any(e=>F(source,e+"DamageCutRate")<1&&F(row,e+"DamageCutRate")<F(source,e+"DamageCutRate")))throw new Exception("Physical armor elemental defense should be reduced");
+                if(profile==1&&new[]{"neutral","slash","blow","thrust"}.Any(e=>F(source,e+"DamageCutRate")<1&&F(row,e+"DamageCutRate")<F(source,e+"DamageCutRate")))throw new Exception("Magical armor physical defense should be reduced");
             }
             foreach(var value in line[8].Split(',',StringSplitOptions.RemoveEmptyEntries))if(!effects.Contains(int.Parse(value)))throw new Exception("Missing advanced affix effect");
         }
@@ -187,5 +218,72 @@ static class AdvancedAffixAssets {
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
         PARAM Read(string name){var p=PARAM.Read(reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name)==name).Bytes);p.ApplyParamdef(PARAMDEF.XmlDeserialize("work/SoulsRandomizers/diste/Defs/"+(name=="SpEffectParam"?"SpEffect":name)+".xml"));return p;}
         Verify(Read,input);
+    }
+
+    // 防具四类型减伤平衡补丁：将物理/魔法防具弱项由 0% 调至 0.45×、锈蚀由 0.55× 调至 0.70×（仅改 v2 防具 8 项 DamageCutRate 与 affix-v2-details.tsv）
+    public static void PatchArmorBalance(string input,string output) {
+        if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging output required");
+        Test();
+        var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
+        var file=reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="EquipParamProtector");
+        var defs=Environment.GetEnvironmentVariable("TOWER_PARAMDEFS")??"work/SoulsRandomizers/diste/Defs";
+        var def=PARAMDEF.XmlDeserialize(Path.Combine(defs,"EquipParamProtector.xml"));
+        var armor=PARAM.Read(file.Bytes);armor.ApplyParamdef(def);
+        var original=PARAM.Read(file.Bytes);original.ApplyParamdef(def);
+        var rows=armor.Rows.ToDictionary(r=>r.ID);
+        string[] cuts=["neutral","slash","blow","thrust","magic","fire","thunder","dark"];
+        var v2=File.ReadAllLines(Path.Combine(input,"affix-v2-catalog.txt")).Select(l=>l.Split('|')).Where(p=>p[0]=="armor").ToArray();
+        var expectedStats=new Dictionary<uint,string>();
+        int oldRows=0,currentRows=0,changed=0;
+        foreach(var p in v2) {
+            int id=int.Parse(p[1]),baseId=int.Parse(p[2]),tier=int.Parse(p[3]),profile=int.Parse(p[5]);
+            ulong seed=Mix((ulong)baseId^((ulong)tier<<32)^((ulong)profile<<40)^0xaff22026UL);
+            double roll=(Mix(seed^43)%10001)/10000.0;
+            var row=rows[id];var source=rows[baseId];
+            double ExpectedCut(string el,bool legacy) {
+                bool physical=el is "neutral" or "slash" or "blow" or "thrust";
+                double mult=legacy?LegacyArmorMultiplier(profile,physical):ArmorMultiplier(profile,physical);
+                double reduction=(1-F(source,el+"DamageCutRate"))*mult*(0.95+roll*0.1+tier*0.05);
+                return Math.Clamp(1-reduction,0.1,1);
+            }
+            bool Matches(bool legacy)=>cuts.All(el=>Math.Abs(F(row,el+"DamageCutRate")-ExpectedCut(el,legacy))<0.001);
+            if(Matches(false))currentRows++;
+            else if(Matches(true)) {
+                oldRows++;
+                foreach(var el in cuts)Set(row,el+"DamageCutRate",ExpectedCut(el,false));
+                changed++;
+            } else throw new Exception($"Unexpected armor cut rates on {id} (base={baseId}, profile={profile}, tier={tier})");
+            expectedStats[0x10000000u|(uint)id]=$"防具类型：{Types[profile]}\\n重量：{row["weight"].Value}\\n{string.Join('　',new[]{"neutral","magic","fire","thunder","dark"}.Select((e,i)=>(i==0?"物理":DamageLabels[i])+"减伤 "+((1-F(row,e+"DamageCutRate"))*100).ToString("0.0",CultureInfo.InvariantCulture)+"%"))}";
+        }
+        if(changed>0)file.Bytes=armor.Write();
+        var others=reg.Files.Where(f=>f!=file).ToDictionary(f=>f.Name,f=>f.Bytes.ToArray());
+        Directory.CreateDirectory(output);var path=Path.Combine(output,"regulation.bin");
+        SoulsFormats.Cryptography.RegulationDecryptor.EncryptERRegulation(path,reg);
+        if(new FileInfo(path).Length>4799*1024)throw new Exception("Regulation size limit exceeded");
+        var check=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(path);
+        foreach(var f in check.Files.Where(f=>f.Name!=file.Name))if(!f.Bytes.SequenceEqual(others[f.Name]))throw new Exception($"Unrelated param changed: {f.Name}");
+        var actual=PARAM.Read(check.Files.Single(f=>f.Name==file.Name).Bytes);actual.ApplyParamdef(def);
+        var byId=actual.Rows.ToDictionary(r=>r.ID);
+        var allowed=cuts.Select(c=>c+"DamageCutRate").ToHashSet();
+        var v2Ids=v2.Select(p=>int.Parse(p[1])).ToHashSet();
+        foreach(var row in original.Rows)foreach(var cell in row.Cells) {
+            bool ours=v2Ids.Contains(row.ID)&&allowed.Contains(cell.Def.InternalName);
+            if(!ours&&!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,byId[row.ID][cell.Def.InternalName].Value))
+                throw new Exception($"Unrelated armor field changed: {row.ID} {cell.Def.InternalName}");
+        }
+        var detailsPath=Path.Combine(input,"affix-v2-details.tsv");
+        var detailLines=File.ReadAllLines(detailsPath);int detailsUpdated=0;
+        for(int i=0;i<detailLines.Length;i++) {
+            var cells=detailLines[i].Split('\t');
+            if(!uint.TryParse(cells[0],out var key)||!expectedStats.TryGetValue(key,out var stats))continue;
+            string c3=cells[3].Replace("偏重物理防护，不提供元素减伤","偏重物理防护，元素减伤较低").Replace("偏重元素防护，不提供物理减伤","偏重元素防护，物理减伤较低");
+            string c4=cells[4].Replace("偏重物理防护，不提供元素减伤","偏重物理防护，元素减伤较低").Replace("偏重元素防护，不提供物理减伤","偏重元素防护，物理减伤较低");
+            if(c3!=cells[3]||c4!=cells[4]||stats!=cells[5]) {
+                cells[3]=c3;cells[4]=c4;cells[5]=stats;
+                detailLines[i]=string.Join('\t',cells);detailsUpdated++;
+            }
+        }
+        File.WriteAllLines(Path.Combine(output,"affix-v2-details.tsv"),detailLines);
+        Console.WriteLine($"Armor balance verified: {oldRows} updated, {currentRows} already current, {detailsUpdated} detail rows updated; unrelated params preserved");
     }
 }

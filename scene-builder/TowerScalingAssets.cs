@@ -3,20 +3,21 @@ using SoulsFormats;
 // 档位用爬塔自己的区域强度效果 TierFirst+档位×10：复制原版 7000+档位×10，生命等不变，只把攻击倍率乘 TierAttackScale
 // （原版行不改，原版地图上的敌人照旧）。每层递增由运行时施加 9640001–9640011。
 static class TowerScalingAssets {
-    public const int GrowthFirst=9640000,GrowthSteps=11;
-    public const float GrowthHp=0.03f,GrowthAttack=0.015f;
+    public const int GrowthFirst=9640000,GrowthSteps=11,EndlessEffect=GrowthFirst+20;
+    public const float GrowthHp=0.03f,GrowthAttack=0.015f,EndlessHpStep=1.30f,EndlessAttackStep=1.15f;
     // 旧 Boss 专属加成，迁移时移除引用及参数行。
     public const int BossBonus=9640050;
     // 本体区域强度 7000–7280；DLC 的区域强度 20007000–20007150（敌人）与 20007200–20007350（人形 NPC），之后追加的 DLC Boss 带着它们
     // 爬塔的档位效果（TierFirst 起）也算区域强度，重跑时会被替换
     public static bool AreaScaling(int id)=>id>=7000&&id<=7280||id>=20007000&&id<=20007350||id>=TierFirst&&id<TierFirst+300;
     public const int TierFirst=9641000;
-    /// 档位攻击倍率：原版区域强度的攻击倍率再乘这个系数（全局降伤，生命不变）
-    public const float TierAttackScale=0.8f;
+    /// 分幕档位攻击倍率：保留第 1 幕（tier ≤ 6）0.80×，压平第 2 幕（tier 7–11）0.70× 与第 3 幕（tier ≥ 12）0.62×（仅降攻击，生命不变）
+    public static float TierAttackScale(int tier)=>tier<=6?0.80f:tier<=11?0.70f:0.62f;
     public static int TierEffect(int tier)=>TierFirst+tier*10;
     static PARAM.Row TowerTier(PARAM effects,int tier) {
         var row=new PARAM.Row(effects.Rows.Single(r=>r.ID==7000+tier*10)){ID=TierEffect(tier),Name=$"Tower area scaling tier {tier}"};
-        foreach(var key in Attacks)row[key].Value=Convert.ToSingle(row[key].Value)*TierAttackScale;
+        float scale=TierAttackScale(tier);
+        foreach(var key in Attacks)row[key].Value=Convert.ToSingle(row[key].Value)*scale;
         return row;
     }
     static readonly string[] Attacks=["physicsAttackPowerRate","magicAttackPowerRate","fireAttackPowerRate","thunderAttackPowerRate","darkAttackPowerRate"];
@@ -117,5 +118,52 @@ static class TowerScalingAssets {
         string Hash(string p)=>Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(p)));
         File.WriteAllText(Path.Combine(output,"tower-scaling-build.json"),System.Text.Json.JsonSerializer.Serialize(new{targets=targets.Count,growthEffects=GrowthSteps,growthHpPerStep=GrowthHp,growthAttackPerStep=GrowthAttack,sourceRegulationSha256=Hash(Path.Combine(input,"regulation.bin")),regulationSha256=Hash(path)},new System.Text.Json.JsonSerializerOptions{WriteIndented=true}));
         Console.WriteLine($"Normalized area scaling on {targets.Count} tower NPC rows ({effects.Rows.Count-beforeEffects} growth effects added); other params preserved; report: tower-scaling-report.tsv");
+    }
+
+    static PARAM.Row EndlessRow(PARAM effects) {
+        var row=Growth(effects,1);
+        row.ID=EndlessEffect;row.Name="Tower endless act scaling";
+        row["maxHpRate"].Value=EndlessHpStep;
+        foreach(var key in Attacks)row[key].Value=EndlessAttackStep;
+        return row;
+    }
+    // 仅更新 SpEffectParam 中的爬塔档位攻击倍率（9641000+档位×10）与无尽模式幕数缩放行（9640020），保持 NpcParam 与其余参数逐字节不变
+    public static void PatchTierRates(string input,string output) {
+        if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging output required");
+        var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
+        var file=reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="SpEffectParam");
+        var defs=Environment.GetEnvironmentVariable("TOWER_PARAMDEFS")??"work/SoulsRandomizers/diste/Defs";
+        var def=PARAMDEF.XmlDeserialize(Path.Combine(defs,"SpEffect.xml"));
+        var effects=PARAM.Read(file.Bytes);effects.ApplyParamdef(def);
+        var original=PARAM.Read(file.Bytes);original.ApplyParamdef(def);
+        var tiers=Tiers(input).Values.SelectMany(v=>v).Distinct().OrderBy(t=>t).ToArray();
+        var touched=tiers.Select(TierEffect).Append(EndlessEffect).ToHashSet();
+        int changed=0;
+        foreach(int tier in tiers) {
+            int id=TierEffect(tier);
+            var expected=TowerTier(effects,tier);
+            int idx=effects.Rows.FindIndex(r=>r.ID==id);
+            if(idx<0)throw new Exception($"Missing tower tier effect {id}");
+            if(!expected.Cells.All(c=>System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(c.Value,effects.Rows[idx][c.Def.InternalName].Value))) {
+                effects.Rows[idx]=expected;changed++;
+            }
+            float hp=Convert.ToSingle(expected["maxHpRate"].Value),atk=Convert.ToSingle(expected["physicsAttackPowerRate"].Value);
+            Console.WriteLine($"  tier {tier,2} ({id}): scale={TierAttackScale(tier):0.00}, hp={hp:0.00}x, atk={atk:0.00}x (boss/end {atk*(1+GrowthAttack*GrowthSteps):0.00}x)");
+        }
+        var endlessRow=EndlessRow(effects);
+        int eIdx=effects.Rows.FindIndex(r=>r.ID==EndlessEffect);
+        if(eIdx<0){effects.Rows.Add(endlessRow);effects.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));changed++;}
+        else if(!endlessRow.Cells.All(c=>System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(c.Value,effects.Rows[eIdx][c.Def.InternalName].Value))){effects.Rows[eIdx]=endlessRow;changed++;}
+        if(changed>0)file.Bytes=effects.Write();
+        var others=reg.Files.Where(f=>f!=file).ToDictionary(f=>f.Name,f=>f.Bytes.ToArray());
+        Directory.CreateDirectory(output);var path=Path.Combine(output,"regulation.bin");
+        SoulsFormats.Cryptography.RegulationDecryptor.EncryptERRegulation(path,reg);
+        var check=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(path);
+        foreach(var f in check.Files.Where(f=>f.Name!=file.Name))if(!f.Bytes.SequenceEqual(others[f.Name]))throw new Exception($"Unrelated param changed: {f.Name}");
+        var actual=PARAM.Read(check.Files.Single(f=>f.Name==file.Name).Bytes);actual.ApplyParamdef(def);
+        var byId=actual.Rows.ToDictionary(r=>r.ID);
+        foreach(var row in original.Rows.Where(r=>!touched.Contains(r.ID)))foreach(var c in row.Cells)
+            if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(c.Value,byId[row.ID][c.Def.InternalName].Value))throw new Exception($"Unrelated SpEffect changed: {row.ID} {c.Def.InternalName}");
+        Console.WriteLine($"Verified {tiers.Length} tower tier rates ({changed} updated); all NpcParam and unrelated rows byte-identical");
     }
 }

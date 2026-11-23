@@ -33,6 +33,7 @@ pub enum Message {
 pub struct Checkpoint {
     pub epoch:u64,
     seed:u64,initial:u64,act:u8,schema:u32,law:crate::law::Law,
+    #[serde(default)] endless:bool,
     visited:Vec<usize>,completed_nodes:u32,completed_battles:u32,reached_layer:usize,
 }
 impl Checkpoint {
@@ -42,12 +43,13 @@ impl Checkpoint {
             return Err("等待房主完成当前房间并回到路线图；调试旅程不支持重连".into());
         }
         Ok(Self{epoch,seed:run.seed,initial:run.initial_seed.unwrap_or(run.seed),act:run.act,schema:run.schema,
-            law:run.law,visited:run.visited.clone(),completed_nodes:run.completed_nodes,
+            law:run.law,endless:run.endless,visited:run.visited.clone(),completed_nodes:run.completed_nodes,
             completed_battles:run.completed_battles,reached_layer:run.reached_layer})
     }
     pub fn restore(&self,local:&Run)->RuleResult<Run> {
         local.validate()?;
-        if self.initial!=local.initial_seed.unwrap_or(local.seed)||self.law!=local.law||self.act<local.act||self.act>3
+        let max_act=if self.endless {crate::MAX_ENDLESS_ACT}else{3};
+        if self.initial!=local.initial_seed.unwrap_or(local.seed)||self.law!=local.law||self.endless!=local.endless||self.act<local.act||self.act>max_act
             ||self.completed_nodes<local.completed_nodes||self.completed_battles<local.completed_battles
             ||self.act==local.act&&(!self.visited.starts_with(&local.visited)||self.seed!=local.seed)
             ||crate::party_game::act_seed(self.initial,self.act)?!=self.seed

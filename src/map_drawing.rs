@@ -28,7 +28,7 @@ pub struct Request {pub scope:Scope,pub sequence:u64,pub edit:Edit}
 pub struct Canvas {pub scope:Scope,pub revision:u64,pub strokes:Vec<Stroke>,pub acknowledged:Vec<(u64,u64)>}
 impl Canvas {
     pub fn valid(&self)->bool {
-        (1..=3).contains(&self.scope.act)&&self.strokes.len()<=MAX_STROKES
+        (1..=crate::MAX_ENDLESS_ACT).contains(&self.scope.act)&&self.strokes.len()<=MAX_STROKES
             &&self.acknowledged.len()<=crate::party_roster::MAX_PLAYERS
             &&self.acknowledged.iter().enumerate().all(|(i,(id,n))|*id!=0&&*n!=0&&!self.acknowledged[..i].iter().any(|p|p.0==*id))
             &&self.strokes.iter().enumerate().all(|(i,s)|s.id.player!=0&&s.id.sequence!=0

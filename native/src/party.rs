@@ -511,7 +511,7 @@ impl Link {
                 if *phase!=self.event.merchant_phase+1||*phase>3{return Err("商人挑战同步次序无效".into());}
                 self.event.merchant_phase=*phase;
             },
-            Order::Law{epoch,seed,law}=>{
+            Order::Law{epoch,seed,law,..}=>{
                 if *epoch!=self.epoch||*seed!=self.config.seed||!law.valid(){return Err("律法同步指令无效或过期".into());}
             },
             Order::ChariotPose{epoch,sequence,pose}=>{
@@ -1051,11 +1051,11 @@ mod tests {
         let (mut host,events,commands)=test_link(1);host.epoch=0;host.last_report=Instant::now()-Duration::from_secs(1);
         events.send(Receive::Report(2,Report::new(&guest_run,0,false,false,true))).unwrap();
         let orders=host.poll(Some(&run),true,false,false);
-        assert!(orders.iter().any(|o|matches!(o,Order::Law{epoch:0,seed:42,law} if *law==run.law)));
+        assert!(orders.iter().any(|o|matches!(o,Order::Law{epoch:0,seed:42,law,..} if *law==run.law)));
         let order=commands.try_iter().find_map(|s|match s{Send::Broadcast(o@Order::Law{..})=>Some(o),_=>None}).unwrap();
         let (mut guest,_events,_commands)=test_link(2);guest.epoch=0;
         assert!(guest.accept(&order).unwrap());
-        assert!(guest.accept(&Order::Law{epoch:1,seed:42,law:run.law}).is_err());
+        assert!(guest.accept(&Order::Law{epoch:1,seed:42,law:run.law,endless:false}).is_err());
         assert!(steam_event(&guest.config,3,erdtree_tower::party_handshake::Payload::Order{session:17,order}).is_err());
         guest_run.set_law(run.law).unwrap();
         events.send(Receive::Report(2,Report::new(&guest_run,0,false,false,true))).unwrap();

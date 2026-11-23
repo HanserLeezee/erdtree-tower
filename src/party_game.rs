@@ -1,7 +1,7 @@
 use serde::{Deserialize,Serialize};
 use crate::{Run,Phase,RuleResult};
 pub fn act_seed(initial:u64,act:u8)->RuleResult<u64> {
-    if !(1..=3).contains(&act){return Err("幕数无效".into());}
+    if !(1..=crate::MAX_ENDLESS_ACT).contains(&act){return Err("幕数无效".into());}
     Ok((2..=act).fold(initial,|seed,act|crate::mix(seed^u64::from(act))))
 }
 
@@ -42,6 +42,7 @@ pub struct Report {
     #[serde(default)] pub mausoleum_open:Option<bool>,
     #[serde(default)] pub scarab_claim:Option<ScarabClaim>,
     #[serde(default)] pub law:crate::law::Law,
+    #[serde(default)] pub endless:bool,
     #[serde(default)] pub flask_uses:u64,
     #[serde(default)] pub leech_hits:Option<crate::leech::Hits>,
     #[serde(default)] pub drawing:Option<crate::map_drawing::Request>,
@@ -89,10 +90,10 @@ impl ScarabClaim {
 }
 impl Report {
     pub fn new(run:&Run,epoch:u64,arrived:bool,bound:bool,alive:bool)->Self {
-        Self{dance:None,leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,embers:run.embers.clone(),star_bursts:vec![],strikes:vec![],epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
+        Self{dance:None,leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:run.law,endless:run.endless,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,embers:run.embers.clone(),star_bursts:vec![],strikes:vec![],epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
     }
     pub fn unavailable(epoch:u64)->Self {
-        Self{dance:None,leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,embers:vec![],star_bursts:vec![],strikes:vec![],epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
+        Self{dance:None,leech_hits:None,pause_saved:None,leaving:false,resume:None,merchant_bound:false,testing:false,event_testing:false,mausoleum_open:None,scarab_claim:None,law:Default::default(),endless:false,flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,embers:vec![],star_bursts:vec![],strikes:vec![],epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
     }
     pub fn at_hub(epoch:u64)->Self {Self{present:true,at_hub:true,alive:true,..Self::unavailable(epoch)}}
 }
@@ -109,7 +110,7 @@ pub enum Order {
     Merchant{epoch:u64,phase:u8},
     BossTest{epoch:u64,seed:u64,test:crate::debug::BossTest},
     EventTest{epoch:u64,seed:u64,act:u8,visited:Vec<usize>,draw:crate::events::Draw,has_stonesword_key:bool},
-    Law{epoch:u64,seed:u64,law:crate::law::Law},
+    Law{epoch:u64,seed:u64,law:crate::law::Law,#[serde(default)] endless:bool},
     MapDrawing(crate::map_drawing::Canvas),
     ForceEnd,
     SkipNode{epoch:u64,target:crate::skip::Target},
@@ -172,9 +173,9 @@ impl Gate {
     }
     pub fn law_order(&self,run:&Run)->RuleResult<Option<Order>> {
         if !self.all(|r|r.seed==run.seed&&r.act==run.act&&r.visited==run.visited){return Ok(None);}
-        if self.all(|r|r.law==run.law){return Ok(None);}
+        if self.all(|r|r.law==run.law&&r.endless==run.endless){return Ok(None);}
         if run.act!=1||!run.visited.is_empty()||run.phase!=Phase::Map {return Err("队伍苦难律法不一致，请重新开始共同旅程".into());}
-        Ok(Some(Order::Law{epoch:self.epoch,seed:run.seed,law:run.law}))
+        Ok(Some(Order::Law{epoch:self.epoch,seed:run.seed,law:run.law,endless:run.endless}))
     }
     pub fn flask_uses(&self)->Vec<(u64,u64)> {
         self.peers.iter().filter_map(|(id,r)|r.as_ref().filter(|r|r.present&&r.epoch==self.epoch).map(|r|(*id,r.flask_uses))).collect()
@@ -314,8 +315,8 @@ impl Gate {
     }
     pub fn report(&mut self,id:u64,report:Report)->RuleResult<()> {
         if report.leech_hits.as_ref().is_some_and(|h|h.counts.len()>32||h.key.0!=report.seed||h.key.1!=report.act){return Err("队员吸血命中汇报无效".into());}
-        if report.resume.as_ref().is_some_and(|p|p.visited.len()>64||!(1..=3).contains(&p.act)||p.law.len()>16){return Err("暂存旅程信息无效".into());}
-        if report.visited.len()>64||report.act==0||report.act>3||report.epoch!=self.epoch||!report.law.valid(){return Err("队员旅程进度或律法不匹配".into());}
+        if report.resume.as_ref().is_some_and(|p|p.visited.len()>64||!(1..=crate::MAX_ENDLESS_ACT).contains(&p.act)||p.law.len()>16){return Err("暂存旅程信息无效".into());}
+        if report.visited.len()>64||report.act==0||report.act>crate::MAX_ENDLESS_ACT||report.epoch!=self.epoch||!report.law.valid(){return Err("队员旅程进度或律法不匹配".into());}
         if report.event_request.is_some_and(|k|!k.valid()){return Err("队员事件请求无效".into());}
         if report.scarab_claim.is_some_and(|c|!c.valid()){return Err("粪金龟击杀汇报无效".into());}
         if report.star_bursts.len()>crate::embers::STRIKE_WINDOW || report.star_bursts.iter().any(|b|b.sequence==0||b.amount<=0) || report.star_bursts.windows(2).any(|b|b[0].sequence>=b[1].sequence){return Err("星涌同步记录无效".into());}
@@ -327,7 +328,7 @@ impl Gate {
     }
     pub fn enter(&mut self,run:&Run,node:usize)->RuleResult<Order> {
         if self.events_unsettled()||!matches!(self.stage,Stage::Map|Stage::Reward|Stage::Service)||!run.available().contains(&node)
-            ||!self.all(|r|r.alive&&r.map_ready&&r.law==run.law&&r.seed==run.seed&&r.act==run.act&&r.visited==run.visited){return Err("等待全员同步律法并完成奖励与契约选择".into());}
+            ||!self.all(|r|r.alive&&r.map_ready&&r.law==run.law&&r.endless==run.endless&&r.seed==run.seed&&r.act==run.act&&r.visited==run.visited){return Err("等待全员同步律法并完成奖励与契约选择".into());}
         let has_stonesword_key=self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.has_stonesword_key));
         self.epoch=self.epoch.checked_add(1).ok_or("队伍序号耗尽")?;
         self.stage=if run.nodes[node].kind.combat(){Stage::Travel}else{Stage::Service};
@@ -337,7 +338,7 @@ impl Gate {
     }
     pub fn resolve_votes(&mut self,run:&Run,entropy:u64)->RuleResult<Option<Order>> {
         if self.events_unsettled()||!matches!(self.stage,Stage::Map|Stage::Reward|Stage::Service)
-            ||!self.all(|r|r.alive&&r.map_ready&&r.law==run.law&&r.seed==run.seed&&r.act==run.act&&r.visited==run.visited){return Ok(None);}
+            ||!self.all(|r|r.alive&&r.map_ready&&r.law==run.law&&r.endless==run.endless&&r.seed==run.seed&&r.act==run.act&&r.visited==run.visited){return Ok(None);}
         let ids:Vec<_>=self.peers.iter().map(|p|p.0).collect();let available=run.available();
         let mut vote=crate::party_vote::Vote::new(self.epoch,&ids,&available)?;
         for (id,report) in &self.peers {
@@ -361,7 +362,7 @@ impl Gate {
         // The saved run remains Map while the native encounter waits for entry.
         if !matches!(self.stage,Stage::Map|Stage::Reward|Stage::Service){return false;}
         let Some(first)=self.peers.first().and_then(|p|p.1.as_ref()) else{return false};
-        self.all(|r|r.alive&&r.map_ready&&r.seed==first.seed&&r.act==first.act&&r.visited==first.visited&&r.law==first.law)
+        self.all(|r|r.alive&&r.map_ready&&r.seed==first.seed&&r.act==first.act&&r.visited==first.visited&&r.law==first.law&&r.endless==first.endless)
     }
     pub fn pause_saved(&self,ticket:u64)->bool {
         let Some(point)=self.peers.first().and_then(|p|p.1.as_ref()).and_then(|r|r.resume.as_ref()) else{return false};
@@ -1019,7 +1020,7 @@ mod tests {
             assert_eq!(act_seed(42,act).unwrap(),run.seed);
             if act<3 {let boss=run.nodes.iter().position(|n|n.kind==crate::NodeKind::Boss).unwrap();run.finish(boss);}
         }
-        assert!(act_seed(42,0).is_err());assert!(act_seed(42,4).is_err());
+        assert!(act_seed(42,0).is_err());assert!(act_seed(42,4).is_ok());assert!(act_seed(42,crate::MAX_ENDLESS_ACT+1).is_err());
     }
     #[test]
     fn aligning_first_route_preserves_personal_contract_and_resources() {

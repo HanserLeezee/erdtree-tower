@@ -1,5 +1,5 @@
 use std::time::{Duration,Instant};
-use eldenring::{cs::{AttackElementCorrectParam,ChrIns,ChrInsExt,EquipParamGoods,EquipParamWeapon,FieldInsHandle,SoloParamRepository,SpEffectParam,WorldChrMan},param::SP_EFFECT_PARAM_ST};
+use eldenring::{cs::{AttackElementCorrectParam,ChrIns,ChrInsExt,EquipParamGoods,EquipParamWeapon,FieldInsHandle,ReinforceParamWeapon,SoloParamRepository,SpEffectParam,WorldChrMan},param::SP_EFFECT_PARAM_ST};
 use fromsoftware_shared::FromStatic;
 use erdtree_tower::{Phase,Run,embers::{self,Ember,Gain,Strike,StrikeRequest}};
 
@@ -360,8 +360,12 @@ fn sync_mercy(on:bool) {
 /// 战斗法师：属性补正表里预留的专用行（battlemage-patch 写进 regulation）。转换时把武器原来的补正规则复制过来，
 /// 再让智力或信仰也计入物理伤害；武器参数行改用这一行，智力 / 信仰补正提到 S。都只改本机内存，读档后按存档重新写
 const BATTLEMAGE_ELEMENTS:u32=9670000;
-/// 补正值：原版字母 S 的门槛是 175，取 180（强化后的倍率通常 ≥1，仍是 S）
-const BATTLEMAGE_CORRECT:f32=180.0;
+/// 战斗法师：原版满级（+25 / 失色 +10）时的目标有效补正（原版字母 S 门槛 175，取 185）；
+/// 按满级对应的 ReinforceParamWeapon 补正倍率反算 +0 基础补正，避免强化后翻倍暴走。
+const BATTLEMAGE_TARGET_S:f32=185.0;
+fn battlemage_base_correct(vanilla_max_rate:f32)->f32 {
+    BATTLEMAGE_TARGET_S/vanilla_max_rate.max(1.0)
+}
 struct Converted {row:u32,stat:u8,correct:f32,elements:i32}
 static BATTLEMAGE:std::sync::Mutex<Vec<Converted>>=std::sync::Mutex::new(Vec::new());
 /// 铁匠菜单据此显示「战斗法师」一项
@@ -381,12 +385,22 @@ fn sync_battlemage(wanted:&[(u32,u8)]) {
         let custom=BATTLEMAGE_ELEMENTS+slot as u32;
         let Some(row)=params.get::<EquipParamWeapon>(row_id) else{continue};
         let (correct,elements)=(if stat==0{row.correct_magic()}else{row.correct_faith()},row.attack_element_correct_id());
+        let vanilla_cap=if row.origin_equip_wep1()<0 {0} else if row.origin_equip_wep16()<0 {10} else {25};
+        let reinforce_type=i32::from(row.reinforce_type_id());
+        let rate=if reinforce_type<0||vanilla_cap==0 {
+            1.0
+        } else {
+            let ref_level=vanilla_cap.min(super::smith::level_max(params,row.reinforce_type_id()));
+            params.get::<ReinforceParamWeapon>((reinforce_type+ref_level) as u32)
+                .map_or(1.0,|rf|if stat==0 {rf.correct_magic_rate()} else {rf.correct_faith_rate()})
+        };
+        let target_correct=battlemage_base_correct(rate);
         let Some(source)=params.get::<AttackElementCorrectParam>(elements.max(0) as u32).map(|r|std::ptr::from_ref(r)) else{continue};
         let Some(target)=params.get_mut::<AttackElementCorrectParam>(custom) else{super::log_repeating("TOWER_EMBER battlemage: element correction rows missing; run battlemage-patch");return;};
         unsafe {std::ptr::copy_nonoverlapping(source,std::ptr::from_mut(target),1);}
         if stat==0 {target.set_is_magic_correct_by_physics(true);}else{target.set_is_faith_correct_by_physics(true);}
         let row=params.get_mut::<EquipParamWeapon>(row_id).unwrap();
-        if stat==0 {row.set_correct_magic(correct.max(BATTLEMAGE_CORRECT));}else{row.set_correct_faith(correct.max(BATTLEMAGE_CORRECT));}
+        if stat==0 {row.set_correct_magic(correct.max(target_correct));}else{row.set_correct_faith(correct.max(target_correct));}
         row.set_attack_element_correct_id(custom as i32);
         applied.push(Converted{row:row_id,stat,correct,elements});
     }
@@ -1378,5 +1392,18 @@ mod tests {
         assert_eq!(spirit_link_transfer(500,true,120),(0,120),"capped by spirit spare HP");
         assert_eq!(spirit_link_transfer(1000,false,2000),(500,500),"fallback path without SpEffect refunds 500 and transfers 500");
         assert_eq!(spirit_link_transfer(500,true,0),(0,0));
+    }
+    #[test]
+    fn battlemage_base_correct_targets_vanilla_max_s_scaling() {
+        // Standard +25 / Somber +10 (rate 1.80) -> base ~102.78, reaching 185.0 at vanilla max
+        let std_base=battlemage_base_correct(1.80);
+        assert!((std_base*1.80-185.0).abs()<0.01);
+        assert!(std_base>100.0&&std_base<105.0);
+        // Magic +25 (rate 2.35) -> base ~78.72, reaching 185.0 at +25
+        let magic_base=battlemage_base_correct(2.35);
+        assert!((magic_base*2.35-185.0).abs()<0.01);
+        // Unreinforceable or rate <= 1.0 falls back to 185.0 without dividing by zero
+        assert_eq!(battlemage_base_correct(1.0),185.0);
+        assert_eq!(battlemage_base_correct(0.0),185.0);
     }
 }

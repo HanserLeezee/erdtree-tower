@@ -234,8 +234,196 @@ struct TowerPreview {
     run: Option<Run>,
     last_archetype: Option<u8>,
     last_prompt: u64,
+    /// 顶部状态提示栏：(提示序号, 首次显示时间)
+    status_banner: Option<(u64,std::time::Instant)>,
     /// 正在显示的场地文件提示：(提示序号, 开始显示的时间)
     resource_alert: Option<(u64,std::time::Instant)>,
+}
+
+fn native_hud_visible()->bool {
+    use fromsoftware_shared::FromStatic;
+    unsafe {eldenring::cs::CSFeManImp::instance()}.ok().is_none_or(|fe|fe.hud_state!=eldenring::cs::CSFeManHudState::HideAll)
+}
+
+/// 在前景层指定字号绘制带深色阴影的文字（不依赖当前窗口缩放）
+fn draw_fg_text(pos:[f32;2],px:f32,col:hudhook::imgui::ImColor32,shadow_alpha:u8,text:&str) {
+    use hudhook::imgui::{ImColor32,sys};
+    if text.is_empty() {return;}
+    let range=text.as_bytes().as_ptr_range();
+    unsafe {
+        let raw=sys::igGetForegroundDrawList();
+        let font=sys::igGetFont();
+        let off=(px*0.065).clamp(1.0,2.2);
+        let shadow=ImColor32::from_rgba(0,0,0,shadow_alpha).to_bits();
+        sys::ImDrawList_AddText_FontPtr(raw,font,px,sys::ImVec2{x:pos[0]+off,y:pos[1]+off},shadow,range.start.cast(),range.end.cast(),0.0,std::ptr::null());
+        sys::ImDrawList_AddText_FontPtr(raw,font,px,sys::ImVec2{x:pos[0],y:pos[1]},col.to_bits(),range.start.cast(),range.end.cast(),0.0,std::ptr::null());
+    }
+}
+
+/// 两侧渐隐的暗金横幅底（用于顶部词条与状态提示）
+fn draw_tapered_ribbon(draw:&hudhook::imgui::DrawListMut<'_>,cx:f32,y0:f32,y1:f32,half_core:f32,wing:f32,bg_alpha:u8,line_rgb:[u8;3],line_alpha:u8,s:f32) {
+    use hudhook::imgui::ImColor32;
+    let mid=ImColor32::from_rgba(11,10,9,bg_alpha);
+    let clear=ImColor32::from_rgba(11,10,9,0);
+    draw.add_rect_filled_multicolor([cx-half_core-wing,y0],[cx-half_core,y1],clear,mid,mid,clear);
+    draw.add_rect([cx-half_core,y0],[cx+half_core,y1],mid).filled(true).build();
+    draw.add_rect_filled_multicolor([cx+half_core,y0],[cx+half_core+wing,y1],mid,clear,clear,mid);
+    let lc=ImColor32::from_rgba(line_rgb[0],line_rgb[1],line_rgb[2],line_alpha);
+    let l0=ImColor32::from_rgba(line_rgb[0],line_rgb[1],line_rgb[2],0);
+    let t=1.0*s;
+    for y in [y0,y1-t] {
+        draw.add_rect_filled_multicolor([cx-half_core-wing*0.8,y],[cx-half_core,y+t],l0,lc,lc,l0);
+        draw.add_rect([cx-half_core,y],[cx+half_core,y+t],lc).filled(true).build();
+        draw.add_rect_filled_multicolor([cx+half_core,y],[cx+half_core+wing*0.8,y+t],lc,l0,l0,lc);
+    }
+}
+
+/// 顶部紧凑胶囊徽章（用于 Boss 护盾预警、苦难律法限时等）
+fn draw_top_pill(ui:&hudhook::imgui::Ui,cx:f32,y:f32,s:f32,label:&str,accent:[u8;3],text_rgb:[u8;3],pulse:f32,digits:Option<&str>)->f32 {
+    use hudhook::imgui::ImColor32;
+    let label_px=17.0*s;
+    let digit_px=20.0*s;
+    let pad_x=16.0*s;
+    let pad_y=6.0*s;
+    let gap=if digits.is_some(){10.0*s}else{0.0};
+    let lw=fancy_text::measure(label,label_px);
+    let dw=digits.map_or(0.0,|d|{
+        let token=fancy_text::button_font().map(|f|ui.push_font(f));
+        let w=fancy_text::measure(d,digit_px);
+        drop(token);
+        w
+    });
+    let diamond_w=12.0*s;
+    let content_w=diamond_w+lw+gap+dw+diamond_w;
+    let w=content_w+pad_x*2.0;
+    let h=digit_px.max(label_px)+pad_y*2.0;
+    let (x0,x1)=(cx-w*0.5,cx+w*0.5);
+    let y1=y+h;
+    let r=4.0*s;
+    let draw=ui.get_foreground_draw_list();
+    draw.add_rect([x0+1.5*s,y+2.5*s],[x1+1.5*s,y1+2.5*s],ImColor32::from_rgba(0,0,0,125)).filled(true).rounding(r).build();
+    draw.add_rect_filled_multicolor([x0,y],[x1,y1],
+        ImColor32::from_rgba(16,13,11,218),ImColor32::from_rgba(16,13,11,218),
+        ImColor32::from_rgba(10,8,7,230),ImColor32::from_rgba(10,8,7,230));
+    if pulse>0.01 {
+        draw.add_rect([x0,y],[x1,y1],ImColor32::from_rgba(accent[0],accent[1],accent[2],(42.0*pulse) as u8)).filled(true).rounding(r).build();
+    }
+    draw.add_rect([x0,y],[x1,y1],ImColor32::from_rgba(accent[0],accent[1],accent[2],(145.0+90.0*pulse) as u8)).rounding(r).thickness(1.2*s).build();
+    let cy=y+h*0.5;
+    let rad=3.2*s;
+    let dcol=ImColor32::from_rgba(accent[0],accent[1],accent[2],(190.0+65.0*pulse) as u8);
+    for dx in [x0+pad_x+3.0*s,x1-pad_x-3.0*s] {
+        draw.add_polyline(vec![[dx,cy-rad],[dx+rad,cy],[dx,cy+rad],[dx-rad,cy]],dcol).filled(true).build();
+    }
+    let tx=x0+pad_x+diamond_w;
+    draw_fg_text([tx,cy-label_px*0.52],label_px,ImColor32::from_rgb(text_rgb[0],text_rgb[1],text_rgb[2]),220,label);
+    if let Some(d)=digits {
+        let token=fancy_text::button_font().map(|f|ui.push_font(f));
+        draw_fg_text([tx+lw+gap,cy-digit_px*0.52],digit_px,ImColor32::from_rgb(accent[0].max(text_rgb[0]),accent[1].max(text_rgb[1]),accent[2].max(text_rgb[2])),225,d);
+        drop(token);
+    }
+    h
+}
+
+/// 顶部状态提示横幅（原指南针区域）：传送状态、传送门就绪、余烬叠层、捕捉成功、联机等待等
+fn draw_top_status_banner(ui:&hudhook::imgui::Ui,y:f32,text:&str,alpha:f32) {
+    use hudhook::imgui::ImColor32;
+    if text.trim().is_empty() || alpha<=0.02 {return;}
+    let size=ui.io().display_size;
+    let s=(size[1]/1080.0).clamp(0.65,1.8);
+    let px=18.5*s;
+    let max_w=(size[0]*0.56).max(320.0*s);
+    let translated=crate::i18n::t(text);
+    let lines=fancy_text::wrap_lines(&translated,max_w,|piece|fancy_text::measure(piece,px));
+    if lines.is_empty() {return;}
+    let text_w=lines.iter().map(|l|fancy_text::measure(l,px)).fold(0.0f32,f32::max);
+    let line_h=px*1.32;
+    let pad_y=8.0*s;
+    let h=pad_y*2.0+line_h*lines.len() as f32-(line_h-px)*0.4;
+    let cx=size[0]*0.5;
+    let half_core=(text_w*0.5+28.0*s).max(110.0*s);
+    let wing=76.0*s;
+    let warn=text.contains("失败")||text.contains("超时")||text.contains("拒绝")||text.contains("上限")||text.contains("不足")||text.contains("错误");
+    let line_rgb=if warn {[224,104,84]} else {[202,168,100]};
+    let text_rgb=if warn {[248,186,166]} else {[242,226,186]};
+    let a=alpha.clamp(0.0,1.0);
+    let draw=ui.get_foreground_draw_list();
+    draw_tapered_ribbon(&draw,cx,y,y+h,half_core,wing,(196.0*a) as u8,line_rgb,(155.0*a) as u8,s);
+    let cy=y+h*0.5;
+    let rad=3.2*s;
+    let dcol=ImColor32::from_rgba(line_rgb[0],line_rgb[1],line_rgb[2],(210.0*a) as u8);
+    for dx in [cx-text_w*0.5-15.0*s,cx+text_w*0.5+15.0*s] {
+        draw.add_polyline(vec![[dx,cy-rad],[dx+rad,cy],[dx,cy+rad],[dx-rad,cy]],dcol).filled(true).build();
+    }
+    let col=ImColor32::from_rgba(text_rgb[0],text_rgb[1],text_rgb[2],(255.0*a) as u8);
+    let shadow_a=(215.0*a) as u8;
+    for (i,line) in lines.iter().enumerate() {
+        let lw=fancy_text::measure(line,px);
+        draw_fg_text([cx-lw*0.5,y+pad_y+i as f32*line_h],px,col,shadow_a,line);
+    }
+}
+
+/// 战斗顶部 HUD（原指南针区域）：Boss 词条、护盾预警、苦难律法限时；返回占用后的底部 Y
+fn draw_combat_top_hud(ui:&hudhook::imgui::Ui,combat:&runtime::View)->f32 {
+    use hudhook::imgui::ImColor32;
+    let size=ui.io().display_size;
+    let s=(size[1]/1080.0).clamp(0.65,1.8);
+    let cx=size[0]*0.5;
+    let now=ui.time() as f32;
+    let mut y=(20.0*s).max(size[1]*0.018);
+
+    // 1. Boss 词条：带两侧渐隐暗金衬带，明亮天空下也清晰可读
+    if !combat.boss_affix_list.is_empty() {
+        let font=fancy_text::title_font().map(|f|ui.push_font(f));
+        let px=if font.is_some(){30.0*s}else{26.0*s};
+        let parts:Vec<_>=combat.boss_affix_list.iter().map(|a|(a.name(),fancy_text::affix_style(*a))).collect();
+        let sep=" · ";
+        let sep_w=fancy_text::measure(sep,px);
+        let total_w:f32=parts.iter().map(|(t,_)|fancy_text::measure(t,px)).sum::<f32>()+sep_w*parts.len().saturating_sub(1) as f32;
+        let pad_y=6.0*s;
+        let h=px+pad_y*2.0;
+        let draw=ui.get_foreground_draw_list();
+        draw_tapered_ribbon(&draw,cx,y,y+h,(total_w*0.5+34.0*s).max(120.0*s),84.0*s,168,[204,168,98],135,s);
+        drop(draw);
+        fancy_text::draw_line(fancy_text::Layer::Foreground,cx,y+pad_y-1.0*s,px,&parts,(sep,[168,156,130]),now);
+        if let Some(font)=font {font.pop();}
+        y+=h+8.0*s;
+    } else if let Some(title)=&combat.boss_affixes {
+        let translated=crate::i18n::t(title);
+        let px=22.0*s;
+        let w=fancy_text::measure(&translated,px);
+        let h=px+12.0*s;
+        let draw=ui.get_foreground_draw_list();
+        draw_tapered_ribbon(&draw,cx,y,y+h,(w*0.5+28.0*s).max(100.0*s),68.0*s,168,[204,168,98],130,s);
+        draw_fg_text([cx-w*0.5,y+6.0*s],px,ImColor32::from_rgb(236,198,108),220,&translated);
+        y+=h+8.0*s;
+    }
+
+    // 2. Boss 词条即时预警（如黄金护盾）
+    if let Some((text,warning))=&combat.boss_alert {
+        let translated=crate::i18n::t(text);
+        let pulse=0.5+0.5*(now*if *warning{6.0}else{3.0}).sin();
+        let (accent,fg)=if *warning {([242,138,66],[255,220,184])} else {([236,196,94],[255,240,196])};
+        let h=draw_top_pill(ui,cx,y,s,&translated,accent,fg,pulse,None);
+        y+=h+7.0*s;
+    }
+
+    // 3. 苦难律法限时 / 超时失血倒计时
+    if let Some(left)=combat.law_clock {
+        let urgent=left<=30;
+        let pulse=if left<=0 {0.5+0.5*(now*6.5).sin()} else if urgent {0.4+0.6*(now*4.5).sin()} else {0.0};
+        let (label,digits,accent,fg)=if left>0 {
+            (crate::i18n::t("苦难律法 · 限时"),format!("{:02}:{:02}",left/60,left%60),
+             if urgent {[236,96,76]} else {[206,174,108]},
+             if urgent {[248,186,172]} else {[232,220,192]})
+        } else {
+            let over=-left;
+            (crate::i18n::t("苦难律法 · 超时失血"),format!("+{:02}:{:02}",over/60,over%60),[236,72,62],[252,188,178])
+        };
+        let h=draw_top_pill(ui,cx,y,s,&label,accent,fg,pulse,Some(&digits));
+        y+=h+7.0*s;
+    }
+    y
 }
 
 /// 整合包场地文件不完整的提示：屏幕上方一块醒目的面板（只画不接收输入，任何界面下都能看到）
@@ -274,6 +462,7 @@ impl TowerPreview {
             run: Some(Run::new(42, Class::Vagabond)),
             last_archetype: None,
             last_prompt: 0,
+            status_banner: None,
             resource_alert: None,
         }
     }
@@ -437,6 +626,7 @@ impl ImguiRenderLoop for TowerPreview {
                 self.last_prompt=view.prompt;
                 self.visible=!view.run.as_ref().is_some_and(|run|matches!(run.phase,Phase::Combat{..}));
                 self.map_preview=false;
+                self.status_banner=(!view.status.trim().is_empty()).then_some((view.prompt,std::time::Instant::now()));
             }
             if !map_preview_available(view) {self.map_preview=false;}
             if !ui.io().want_text_input&&!run_screen::active()&&!debug_menu::open()
@@ -463,29 +653,11 @@ impl ImguiRenderLoop for TowerPreview {
         let run_screen=dance_ui::draw(ui)||run_screen::draw(ui,&mut |icon|rewards.icon(icon));
         if options::pressed(ui,Hotkey::Debug) {debug_menu::toggle();}
         self.debug.draw(ui,view.as_ref());
-        if self.visible&&!run_screen&&let Some(combat)=view.as_ref().filter(|v|v.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}))) {
-            let draw=ui.get_foreground_draw_list();
-            let line=|text:&str,y:f32,color:hudhook::imgui::ImColor32| {
-                let x=(ui.io().display_size[0]-ui.calc_text_size(crate::i18n::t(text))[0])*0.5;
-                draw.add_text([x+1.5,y+1.5],hudhook::imgui::ImColor32::from_rgba(0,0,0,200),crate::i18n::t(text));draw.add_text([x,y],color,crate::i18n::t(text));
-            };
-            let mut y=30.0;
-            // Boss 词条：每个词条用自己的颜色与动态效果（与 Boss 身上的光效同色）
-            if !combat.boss_affix_list.is_empty() {
-                let font=fancy_text::title_font().map(|f|ui.push_font(f));
-                let size=if font.is_some(){32.0}else{ui.current_font_size()*1.6};
-                let parts:Vec<_>=combat.boss_affix_list.iter().map(|a|(a.name(),fancy_text::affix_style(*a))).collect();
-                fancy_text::draw_line(fancy_text::Layer::Foreground,ui.io().display_size[0]*0.5,y-2.0,size,&parts,(" · ",[150,140,120]),ui.time() as f32);
-                if let Some(font)=font {font.pop();}
-                y+=size+6.0;
-            } else if let Some(title)=&combat.boss_affixes {line(title,y,hudhook::imgui::ImColor32::from_rgb(232,190,92));y+=24.0;}
-            // 黄金律法的护盾：展开前橙色预警，展开中金色倒计时
-            if let Some((text,warning))=&combat.boss_alert {line(text,y,if *warning{hudhook::imgui::ImColor32::from_rgb(240,140,70)}else{hudhook::imgui::ImColor32::from_rgb(255,226,140)});y+=24.0;}
-            if let Some(left)=combat.law_clock {
-                let (text,color)=if left>0 {(format!("苦难律法 · 限时 {}:{:02}",left/60,left%60),if left<=30{hudhook::imgui::ImColor32::from_rgb(235,110,90)}else{hudhook::imgui::ImColor32::from_rgb(232,214,180)})}
-                    else {(format!("苦难律法 · 已超时 {}:{:02} · 持续失血",-left/60,-left%60),hudhook::imgui::ImColor32::from_rgb(235,80,70))};
-                line(&text,y,color);
-            }
+        // 战斗顶部 HUD（原指南针位置：Boss 词条、护盾预警、苦难律法限时）
+        let hud_visible=native_hud_visible();
+        let mut top_y=(24.0*(ui.io().display_size[1]/1080.0).clamp(0.65,1.8)).max(ui.io().display_size[1]*0.02);
+        if hud_visible&&!run_screen&&!self.map_preview&&let Some(combat)=view.as_ref().filter(|v|v.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}))) {
+            top_y=draw_combat_top_hud(ui,combat);
         }
         let key=format!("UI visible={} snapshot={} capture={} settlement={} view={:?}",self.visible,snapshot.is_some(),input::CAPTURE.load(Ordering::Relaxed),run_screen,view.as_ref().map(|v|(v.ready,v.busy,v.travelling,v.room.is_some(),v.shared_event,v.prompt)));
         if self.diagnostics.due(key.clone(),std::time::Instant::now()){log(key);}
@@ -495,9 +667,20 @@ impl ImguiRenderLoop for TowerPreview {
             if self.resource_alert.is_some_and(|(_,at)|at.elapsed()<std::time::Duration::from_secs(20)) {draw_resource_alert(ui,files);}
         }
         if run_screen {return;}
+        // 右上角双计时器（本局用时 + 本场/上场用时）：非全屏结算/开局页且 HUD 显示时常驻；打开路线图时自动避让右侧边栏
+        let showing_map=self.map_preview&&view.as_ref().is_some_and(|v|map_preview_available(v)&&v.run.is_some())
+            ||(self.visible&&view.as_ref().is_some_and(|v|v.room.is_none()&&!v.shared_event&&!v.travelling
+                &&v.run.as_ref().is_some_and(|r|r.retry_node.is_none()&&!matches!(r.phase,Phase::Combat{..}|Phase::Reward{..})&&!r.contract_pending())));
+        if hud_visible {
+            let map_offset=if showing_map {
+                let sz=ui.io().display_size;
+                let map_scale=(sz[0]/1600.0).min(sz[1]/900.0).clamp(0.65,1.6);
+                236.0*map_scale
+            } else {0.0};
+            run_clock::draw(ui,map_offset);
+        }
         if self.map_preview&&let Some(view)=view.as_ref().filter(|view|map_preview_available(view))&&let Some(run)=&view.run {
             menu_input.show();
-        if !run_screen {run_clock::draw(ui);}
             map_ui::preview(ui,run,view);
             if build_panel::open() {let rewards=&mut self.rewards;build_panel::draw(ui,run,view,&mut |icon|rewards.icon(icon));}
             return;
@@ -505,17 +688,24 @@ impl ImguiRenderLoop for TowerPreview {
         if let Some(view) = &view {
             if let Some(dummy)=&view.dummy {dummy::draw_hud(ui,dummy);}
             starsurge::draw_hud(ui,&mut |icon|rewards.icon(icon),view.ready&&!view.travelling);
+            let travelling_notice=view.travelling||view.run.as_ref().is_some_and(|r|r.retry_node.is_some());
+            let in_live_world=travelling_notice||view.room.is_some()||view.shared_event
+                ||view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}));
+            if hud_visible&&in_live_world&&runtime::PLAYER_READY.load(Ordering::Relaxed)&&!view.status.trim().is_empty() {
+                let persistent=travelling_notice||view.status.contains("传送门")||view.status.contains("等待");
+                let alpha=if persistent {
+                    self.status_banner.map_or(1.0,|(_,at)|(at.elapsed().as_secs_f32()/0.18).min(1.0))
+                } else if let Some((_,at))=self.status_banner {
+                    let e=at.elapsed().as_secs_f32();
+                    if e<0.18 {e/0.18} else if e<5.2 {1.0} else if e<5.9 {(5.9-e)/0.7} else {0.0}
+                } else {0.0};
+                if alpha>0.01 {draw_top_status_banner(ui,top_y,&view.status,alpha);}
+            }
             if view.room.is_some()||view.shared_event {
                 return;
             }
-            if view.travelling||view.run.as_ref().is_some_and(|r|r.retry_node.is_some()) {
+            if travelling_notice {
                 input::CAPTURE.store(false, Ordering::Relaxed);
-                if runtime::PLAYER_READY.load(Ordering::Relaxed) {
-                    let text=crate::i18n::t(&view.status);let x=(ui.io().display_size[0]-ui.calc_text_size(&text)[0])*0.5;
-                    let draw=ui.get_foreground_draw_list();
-                    draw.add_text([x+1.0,81.0],[0.0,0.0,0.0,1.0],&text);
-                    draw.add_text([x,80.0],[1.0,0.88,0.65,1.0],text);
-                }
                 return;
             }
         }

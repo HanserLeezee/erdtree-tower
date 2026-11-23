@@ -337,8 +337,16 @@ static class AffixTextFix {
         return last<0?text:text[(last+2)..];
     }
 
-    // 词条置顶迁移补丁：将 zhocn / zhotw / engus 的词条武器（WeaponCaption）、防具（ProtectorCaption）与词条护符（AccessoryCaption）
-    // 说明统一改为「彩色词条块置顶 + 下方原版背景按行截取」（武器 7 行、防具与护符 12 行），幂等且保留所有其他文本。
+    static string RefreshArmorTagline(string text)=>text
+        .Replace("偏重物理防护，不提供元素减伤","偏重物理防护，元素减伤较低")
+        .Replace("偏重元素防护，不提供物理减伤","偏重元素防护，物理减伤较低")
+        .Replace("偏重物理防護，不提供元素減傷","偏重物理防護，元素減傷較低")
+        .Replace("偏重元素防護，不提供物理減傷","偏重元素防護，物理減傷較低")
+        .Replace("Focused on physical defense; no elemental damage negation.","Focused on physical defense; lower elemental damage negation.")
+        .Replace("Focused on elemental defense; no physical damage negation.","Focused on elemental defense; lower physical damage negation.");
+
+    // 词条置顶迁移补丁：将 zhocn / zhotw / engus 的词条武器（WeaponCaption）、防具（ProtectorInfo/ProtectorCaption）与词条护符（AccessoryCaption）
+    // 说明统一改为「彩色词条块置顶 + 下方原版背景按行截取」（武器 7 行、防具与护符 12 行），并同步刷新防具类型说明，幂等且保留所有其他文本。
     public static void PatchCaptionTop(string input,string output) {
         if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging output required");
         var weapons=new Dictionary<int,int>();
@@ -371,7 +379,7 @@ static class AffixTextFix {
             int wCount=0,aCount=0,tCount=0,changed=0;
             foreach(var file in binder.Files) {
                 var table=Path.GetFileNameWithoutExtension(file.Name).Split("_dlc")[0];
-                if(table is not ("WeaponCaption" or "ProtectorCaption" or "AccessoryCaption"))continue;
+                if(table is not ("WeaponCaption" or "ProtectorInfo" or "ProtectorCaption" or "AccessoryCaption"))continue;
                 var fmg=FMG.Read(file.Bytes);
                 var map=new Dictionary<int,string>();
                 foreach(var entry in fmg.Entries) {
@@ -387,9 +395,12 @@ static class AffixTextFix {
                             updated=FitTop(affix,lore,WeaponCaptionLines,wrapWidth);
                             wCount++;
                         }
+                    } else if(table=="ProtectorInfo"&&armors.ContainsKey(entry.ID)) {
+                        updated=RefreshArmorTagline(text);
                     } else if(table=="ProtectorCaption"&&armors.TryGetValue(entry.ID,out int armorBase)) {
                         if(!protectorInfo.TryGetValue(entry.ID,out var affix)||string.IsNullOrWhiteSpace(affix))
                             throw new Exception($"Missing ProtectorInfo for {lang}/{entry.ID}");
+                        affix=RefreshArmorTagline(affix);
                         string lore=baseArmorLore.GetValueOrDefault(armorBase,"");
                         updated=FitTop(affix,lore,ProtectorCaptionLines,wrapWidth);
                         aCount++;
@@ -421,6 +432,7 @@ static class AffixTextFix {
                 if(actual.Count!=exp.Count)throw new Exception($"FMG entry count changed in {lang}/{file.ID}");
                 foreach(var (id,text) in exp) {
                     if(actual.GetValueOrDefault(id)!=text)throw new Exception($"Roundtrip mismatch in {lang}/{file.ID}/{id}");
+                    if(table=="ProtectorInfo")continue;
                     int limit=table=="WeaponCaption"?WeaponCaptionLines:table=="ProtectorCaption"?ProtectorCaptionLines:AccessoryCaptionLines;
                     bool isTarget=table=="WeaponCaption"?(weapons.ContainsKey(id)||weapons.ContainsKey(id/10000*10000)):table=="ProtectorCaption"?armors.ContainsKey(id):talismans.ContainsKey(id);
                     if(isTarget) {

@@ -30,6 +30,8 @@ pub struct Record {
     pub flask:u8,
     pub memory:u8,
     pub law:Law,
+    #[serde(default,skip_serializing_if="std::ops::Not::not")]
+    pub endless:bool,
     pub debug:bool,
     pub oaths:Vec<Oath>,
     pub embers:Vec<Ember>,
@@ -40,7 +42,7 @@ pub struct Record {
 impl Default for Record {
     fn default()->Self {
         Self{time:0,play_seconds:None,seed:0,whole_seed:true,class:Class::Vagabond,result:Outcome::Ended,act:1,layer:1,nodes:0,battles:0,items:0,flask:0,memory:0,
-            law:Law::default(),debug:false,oaths:vec![],embers:vec![],affixes:vec![],fights:vec![]}
+            law:Law::default(),endless:false,debug:false,oaths:vec![],embers:vec![],affixes:vec![],fights:vec![]}
     }
 }
 impl Record {
@@ -49,7 +51,7 @@ impl Record {
         Self{time,play_seconds:None,seed:run.initial_seed.unwrap_or(run.seed),whole_seed:run.initial_seed.is_some()||run.act==1,class:run.class,
             result:match run.phase {Phase::Won=>Outcome::Won,Phase::Dead=>Outcome::Dead,_=>Outcome::Ended},
             act:run.act,layer:run.reached_layer.max(layer),nodes:run.completed_nodes,battles:run.completed_battles,items:run.claimed_items.len(),
-            flask:run.flask_bonus,memory:run.memory_bonus,law:run.law,debug:run.debug,
+            flask:run.flask_bonus,memory:run.memory_bonus,law:run.law,endless:run.endless,debug:run.debug,
             oaths:run.contract.as_ref().map(|c|c.active()).unwrap_or_default(),embers:run.embers.clone(),affixes,fights}
     }
     pub fn line(&self)->String {serde_json::to_string(self).unwrap_or_default()}

@@ -17,10 +17,10 @@ impl Affix {
         match self {
             Affix::Stalwart=>"韧性翻倍；用重攻击和跳劈更快打出硬直",
             Affix::Bulwark=>"受到的伤害 -25%",
-            Affix::Frenzied=>"攻击 +30%，但受到的伤害 +10%",
+            Affix::Frenzied=>"攻击 +20%，但受到的伤害 +10%",
             Affix::Regenerating=>"连续 3 秒未受伤后，每秒回复 0.3% 最大生命；受伤后重新计时",
             Affix::Rot=>"攻击附带猩红腐败：每次打中你都会积累腐败；备好药",
-            Affix::Envious=>"你喝圣杯瓶后，攻击 +30%，持续 15 秒",
+            Affix::Envious=>"你喝圣杯瓶后，攻击 +20%，持续 15 秒",
             Affix::Proud=>"8 秒没挨打时攻击 +20%，被打中后清除",
             Affix::Golden=>"每 25 秒展开 5 秒金色护盾，受到的伤害 -60%",
             Affix::Reborn=>"生命首次降到 10% 以下时回复至 40%，仅一次",

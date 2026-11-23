@@ -16,18 +16,18 @@ pub struct Score {
 impl Score {
     pub fn of(record:&Record)->Self {
         let won=record.result==Outcome::Won;
-        let act=record.act.clamp(1,3);
-        let floors=if won {3*FLOORS}else{u32::from(act-1)*FLOORS+(record.layer as u32).min(FLOORS)};
+        let act=if record.endless {record.act.max(1)}else{record.act.clamp(1,3)};
+        let floors=if won {u32::from(act)*FLOORS}else{u32::from(act-1)*FLOORS+(record.layer as u32).min(FLOORS)};
         // Boss 按走到第几幕算（战斗记录可能不全，比如更早版本的联机成员），精英按战斗记录
         let bosses=u32::from(act-1)+u32::from(won);
         let elites=record.fights.iter().filter(|f|f.won&&f.kind=="精英").count() as u32;
         Self{law:record.law.score(),won,act,floors,bosses,elites,battles:record.battles}
     }
     pub fn total(&self)->u32 {self.law}
-    /// S 登顶、A 第三幕、B 第二幕、C 第一幕
-    pub fn rank(&self)->char {if self.won {'S'}else{['C','B','A'][usize::from(self.act-1)]}}
+    /// S 登顶（或无尽突破第 3 幕）、A 第三幕、B 第二幕、C 第一幕
+    pub fn rank(&self)->char {if self.won||self.act>3 {'S'}else{['C','B','A'][usize::from(self.act-1)]}}
     /// 比较纪录用：先比评级，再比评分
-    pub fn key(&self)->(u8,u32) {(if self.won {4}else{self.act},self.law)}
+    pub fn key(&self)->(u8,u32) {(if self.won||self.act>3 {4}else{self.act},self.law)}
     /// 旅程统计，按显示顺序：(名称, 数量)
     pub fn lines(&self)->[(&'static str,u32);4] {[("层数",self.floors),("Boss",self.bosses),("精英",self.elites),("战斗",self.battles)]}
 }

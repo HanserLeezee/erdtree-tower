@@ -41,6 +41,8 @@
   "艾尔登": "Elden",
   "偏重物理防护，不提供元素减伤": "Focused on physical defense; no elemental damage negation.",
   "偏重元素防护，不提供物理减伤": "Focused on elemental defense; no physical damage negation.",
+  "偏重物理防护，元素减伤较低": "Focused on physical defense; lower elemental damage negation.",
+  "偏重元素防护，物理减伤较低": "Focused on elemental defense; lower physical damage negation.",
   "物理与元素防护较低，重量较轻": "Lower physical and elemental defense, with lighter weight.",
   "兼顾物理与元素防护": "Balanced physical and elemental defense.",
   "动作精力消耗": "Action stamina costs",

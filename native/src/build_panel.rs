@@ -197,6 +197,16 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, icon: &mut dyn FnMut(u32) -> Option
                 }
             }
             heading(ui, s, "苦难律法", None);
+            if run.endless {
+                let start = ui.cursor_screen_pos();
+                let info = match erdtree_tower::scaling::endless_rates(run.act) {
+                    Some((hp, atk)) => format!("无尽模式 · 第 {} 幕（敌人生命 ×{hp:.2} · 攻击 ×{atk:.2}）", run.act),
+                    None => "无尽模式 · 通关第 3 幕后无限继续攀登".into(),
+                };
+                let y = wrapped(ui, start, content_right(ui), &info, GOLD, 0.88 * s);
+                ui.set_cursor_screen_pos([start[0], y + 6.0 * s]);
+                ui.dummy([0.0, 0.0]);
+            }
             if run.law.is_empty() {empty(ui, s, "未立下苦难律法");}
             else {
                 let start = ui.cursor_screen_pos();

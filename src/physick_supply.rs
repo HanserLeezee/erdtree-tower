@@ -22,13 +22,13 @@ pub struct Receipt {
 }
 impl Supply {
     pub fn valid(&self)->bool {
-        let valid_key=|(act,node):(u8,usize)|(1..=3).contains(&act)&&node<256;
-        u64::from(self.reserve)<=CAPACITY&&(!self.issued||self.reserve>0)&&self.claimed.len()<=768&&self.claimed.iter().copied().all(valid_key)
+        let valid_key=|(act,node):(u8,usize)|(1..=crate::MAX_ENDLESS_ACT).contains(&act)&&node<256;
+        u64::from(self.reserve)<=CAPACITY&&(!self.issued||self.reserve>0)&&self.claimed.len()<=4096&&self.claimed.iter().copied().all(valid_key)
             &&self.claimed.iter().collect::<std::collections::BTreeSet<_>>().len()==self.claimed.len()
             &&self.pending.as_ref().is_none_or(|p|valid_key((p.act,p.node))&&!self.claimed.contains(&(p.act,p.node))&&p.target.is_none_or(|t|(1..=CAPACITY).contains(&t)))
     }
     pub fn queue(&mut self,act:u8,node:usize)->bool {
-        if !(1..=3).contains(&act)||node>=256||self.pending.is_some()||self.claimed.contains(&(act,node)){return false;}
+        if !(1..=crate::MAX_ENDLESS_ACT).contains(&act)||node>=256||self.pending.is_some()||self.claimed.contains(&(act,node)){return false;}
         self.pending=Some(Receipt{act,node,target:None});true
     }
     pub fn prepare(&mut self,count:u64) {

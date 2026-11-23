@@ -306,7 +306,8 @@ fn sidebar(ui:&Ui,run:&Run,view:&View,vitals:&str,origin:[f32;2],extent:[f32;2],
     // ── 本幕与地区 ──
     let theme=crate::scenery::theme(run);let (_,_,accent)=crate::scenery::palette(run);
     let accent=ImColor32::to_rgba_f32s(accent);
-    text(20.0,16.0,&format!("第 {} 幕",run.act.max(1)),MUTED,14.0,0.0);
+    let act_label=if run.endless {format!("第 {} 幕 · 无尽",run.act.max(1))}else{format!("第 {} 幕",run.act.max(1))};
+    text(20.0,16.0,&act_label,if run.endless{GOLD}else{MUTED},14.0,0.0);
     {
         let font=crate::fancy_text::title_font().map(|f|ui.push_font(f));
         ui.set_window_font_scale(if font.is_some(){24.0/32.0}else{1.2}*scale);

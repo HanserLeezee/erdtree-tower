@@ -43,10 +43,10 @@ impl Guards {
         self.scaled=true;Ok(())
     }
     pub fn ready(&self)->bool {self.bound.len()==self.ids.len()}
+    pub fn spawn_requested(&self)->bool {self.requested}
     pub fn map_combat_active(&self)->bool {self.active&&self.combat==enemies::MAP_COMBAT_FLAG}
     pub fn prepare(&mut self,world:&WorldChrMan)->Result<(),String> {
         if self.ready(){return Ok(());}
-    pub fn spawn_requested(&self)->bool {self.requested}
         if !self.reset {self.retire();self.reset=true;return Ok(());}
         if !self.requested {
             if self.combat==enemies::MAP_COMBAT_FLAG {

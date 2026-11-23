@@ -1,7 +1,35 @@
 use eldenring::cs::{CSSessionManager,ChrInsExt,FieldInsHandle,LobbyState,NpcParam,SoloParamRepository,SpEffectParam,WorldChrMan};
 use fromsoftware_shared::FromStatic;
 pub const GROWTH_FIRST:i32=9640000;
+/// 无尽模式第 4 幕起动态写入生命/攻击倍率的常驻敌人效果行（TowerScalingAssets 写入 regulation.bin）
+pub const ENDLESS_EFFECT:i32=GROWTH_FIRST+20;
 const TIER_FIRST:i32=9641000;
+const ACT3_WEAK_TIER:i32=TIER_FIRST+12*10;
+const ACT3_ELITE_TIER:i32=TIER_FIRST+14*10;
+const ACT3_BOSS_TIER:i32=TIER_FIRST+16*10;
+/// 无尽模式第 4 幕起将抽到的 1/2 幕敌人基准档位提升到第 3 幕同定位档位，确保所有池子敌人都有后期强度
+fn promoted_act3_tier(current_tier:i32,npc_id:i32)->Option<i32> {
+    match current_tier {
+        9641020=>Some(if super::enemies::boss_npc(npc_id){ACT3_ELITE_TIER}else{ACT3_WEAK_TIER}),
+        9641030=>Some(ACT3_BOSS_TIER),
+        9641070=>Some(ACT3_WEAK_TIER),
+        9641090=>Some(ACT3_ELITE_TIER),
+        9641100=>Some(ACT3_BOSS_TIER),
+        _=>None,
+    }
+}
+fn sync_endless_effect(act:u8)->bool {
+    let Some((hp,atk))=erdtree_tower::scaling::endless_rates(act) else{return false;};
+    let Ok(params)=(unsafe {SoloParamRepository::instance_mut()}) else{return false;};
+    let Some(row)=params.get_mut::<SpEffectParam>(ENDLESS_EFFECT as u32) else{return false;};
+    row.set_max_hp_rate(hp);
+    row.set_physics_attack_power_rate(atk);
+    row.set_magic_attack_power_rate(atk);
+    row.set_fire_attack_power_rate(atk);
+    row.set_thunder_attack_power_rate(atk);
+    row.set_dark_attack_power_rate(atk);
+    true
+}
 /// Seamless Co-op 2.0.x 运行时写入 SoloParamRepository 的多人缩放 SpEffect 段（复制自原版 7800，spCategory=140, stateInfo=282）：
 /// - 2147200000+ / 2147201000+：普通敌人（mpc 100/200/10000100/10000200）
 /// - 2147202000+：地牢 Boss（mpc 300/10000300/203000..=498000，读取 boss_health/damage/posture_scaling）
@@ -36,19 +64,22 @@ fn coop_extra_players(party_players:usize)->u8 {
 }
 fn merchant_effects(run:&erdtree_tower::Run,node:usize)->Result<Vec<i32>,String> {
     if !run.nodes.get(node).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Shop){return Err("铃珠猎人不在商店节点".into());}
+    let eff_act=run.act.clamp(1,3);
     let tier=include_str!("../../scene-assets/tower-scaling.txt").lines().filter(|s|!s.starts_with('#'))
-        .filter_map(|s|{let p=s.split('|').map(str::parse::<i32>).collect::<Result<Vec<_>,_>>().ok()?;(p.len()==4&&p[0]==i32::from(run.act)).then(||p[3])})
+        .filter_map(|s|{let p=s.split('|').map(str::parse::<i32>).collect::<Result<Vec<_>,_>>().ok()?;(p.len()==4&&p[0]==i32::from(eff_act)).then(||p[3])})
         .next().ok_or("当前幕缺少 Boss 强度档位")?;
     let mut effects=vec![TIER_FIRST+tier*10];
     let step=erdtree_tower::scaling::growth_step(run,node);
     if step>0 {effects.push(GROWTH_FIRST+i32::from(step));}
+    if erdtree_tower::scaling::endless_rates(run.act).is_some() {effects.push(ENDLESS_EFFECT);}
     Ok(effects)
 }
 pub fn merchant(chr:&mut eldenring::cs::ChrIns,run:&erdtree_tower::Run,node:usize)->Result<(),String> {
     let effects=merchant_effects(run,node)?;
+    if erdtree_tower::scaling::endless_rates(run.act).is_some() {sync_endless_effect(run.act);}
     let params=unsafe{SoloParamRepository::instance()}.map_err(|_|"强度参数尚未加载")?;
     if effects.iter().any(|id|params.get::<SpEffectParam>(*id as u32).is_none()){return Err("铃珠猎人强度参数缺失，请更新资源".into());}
-    let old:Vec<_>=chr.special_effect.entries().map(|e|e.param_id).filter(|id|area_effect(*id)||(GROWTH_FIRST+1..=GROWTH_FIRST+11).contains(id)).collect();
+    let old:Vec<_>=chr.special_effect.entries().map(|e|e.param_id).filter(|id|area_effect(*id)||(GROWTH_FIRST+1..=GROWTH_FIRST+11).contains(id)||*id==ENDLESS_EFFECT).collect();
     for id in &old {if !effects.contains(id){chr.remove_speffect(*id);}}
     for id in &effects {if !old.contains(id){chr.apply_speffect(*id,false);}}
     super::log(format!("MERCHANT_SCALING act={} node={node} effects={effects:?}",run.act));
@@ -66,14 +97,29 @@ impl Growth {
     pub fn tick(&mut self,world:&mut WorldChrMan,key:(u64,u8,usize),step:u8,handles:&[FieldInsHandle],party_players:usize) {
         if self.key!=Some(key){*self=Self{key:Some(key),..Default::default()};}
         self.tick_coop_boss(world,handles,party_players);
-        if step==0{return;}
-        if !ready(step){if !self.missing{super::log(format!("TOWER_GROWTH missing effect {}",GROWTH_FIRST+i32::from(step)));self.missing=true;}return;}
+        let endless=erdtree_tower::scaling::endless_rates(key.1).is_some();
+        if step==0&&!endless{return;}
+        if step>0&&!ready(step){if !self.missing{super::log(format!("TOWER_GROWTH missing effect {}",GROWTH_FIRST+i32::from(step)));self.missing=true;}return;}
+        let endless_ready=endless&&sync_endless_effect(key.1);
         for handle in handles {
             if self.applied.contains(handle){continue;}
             let Some(chr)=world.chr_ins_by_handle_mut(handle) else{continue};
             if chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag(){continue;}
-            let id=GROWTH_FIRST+i32::from(step);
-            if !chr.special_effect.entries().any(|e|e.param_id==id) {chr.apply_speffect(id,false);}
+            if endless {
+                let npc_id=chr.npc_param_id;
+                let lower:Vec<_>=chr.special_effect.entries().map(|e|e.param_id).filter_map(|id|promoted_act3_tier(id,npc_id).map(|next|(id,next))).collect();
+                for (old_id,next_id) in lower {
+                    chr.remove_speffect(old_id);
+                    if !chr.special_effect.entries().any(|e|e.param_id==next_id) {chr.apply_speffect(next_id,false);}
+                }
+                if endless_ready&&!chr.special_effect.entries().any(|e|e.param_id==ENDLESS_EFFECT) {
+                    chr.apply_speffect(ENDLESS_EFFECT,false);
+                }
+            }
+            if step>0 {
+                let id=GROWTH_FIRST+i32::from(step);
+                if !chr.special_effect.entries().any(|e|e.param_id==id) {chr.apply_speffect(id,false);}
+            }
             self.applied.push(*handle);
         }
     }
@@ -154,5 +200,23 @@ mod tests {
         assert!(has_coop_scaling([2_147_203_000]));
         assert!(has_coop_scaling([7820]));
         assert!(has_coop_scaling([7871]));
+    }
+    #[test]
+    fn endless_scaling_promotes_act1_act2_tiers_and_appends_endless_effect() {
+        assert_eq!(promoted_act3_tier(9641020,0),Some(9641120));
+        assert_eq!(promoted_act3_tier(9641020,950000001),Some(9641140));
+        assert_eq!(promoted_act3_tier(9641030,0),Some(9641160));
+        assert_eq!(promoted_act3_tier(9641070,0),Some(9641120));
+        assert_eq!(promoted_act3_tier(9641090,0),Some(9641140));
+        assert_eq!(promoted_act3_tier(9641100,0),Some(9641160));
+        assert_eq!(promoted_act3_tier(9641120,0),None);
+        assert_eq!(promoted_act3_tier(9641160,0),None);
+        let mut run=erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai);
+        run.endless=true;
+        run.act=5;
+        let shop=run.nodes.iter().position(|n|n.kind==erdtree_tower::NodeKind::Shop).unwrap();
+        let effects=merchant_effects(&run,shop).unwrap();
+        assert_eq!(effects[0],TIER_FIRST+160);
+        assert!(effects.contains(&ENDLESS_EFFECT));
     }
 }

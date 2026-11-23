@@ -26,7 +26,7 @@ static class AffixQualityAssets {
         }
         return result;
     }
-    static Dictionary<int,Values> V2(Dictionary<int,PARAM.Row> rows,int id,int baseId,int tier,int profile,double attackStep,double scalingStep) {
+    static Dictionary<int,Values> V2(Dictionary<int,PARAM.Row> rows,Dictionary<int,PARAM.Row> corrections,Dictionary<int,PARAM.Row> reinforce,int id,int baseId,int tier,int profile,double attackStep,double scalingStep,bool balanced) {
         var result=new Dictionary<int,Values>();
         ulong seed=Mix((ulong)baseId^((ulong)tier<<32)^((ulong)profile<<40)^0xaff22026UL);
         double roll=(Mix(seed^43)%10001)/10000.0;var source=rows[baseId];int mask=AdvancedAffixAssets.Mask(source,seed,profile);
@@ -36,12 +36,18 @@ static class AffixQualityAssets {
         foreach(var original in rows.Values.Where(r=>r.ID>=baseId&&r.ID<baseId+10000)) {
             var attack=Damage.Select(e=>Math.Clamp((int)Math.Round(I(original,"attackBase"+e)*damageRate),0,ushort.MaxValue)).ToArray();
             if(original.ID==baseId&&mode!=0) {
-                int total=(int)Math.Round(Damage.Sum(e=>I(original,"attackBase"+e))*damageRate*1.1);
+                int total=(int)Math.Round(Damage.Sum(e=>I(original,"attackBase"+e))*damageRate*(balanced?1.0:1.1));
                 int physical=(int)Math.Round(total*(Mix(seed^53)%100<25?0:0.55));
                 attack=new int[5];attack[0]=Math.Clamp(physical,0,ushort.MaxValue);attack[mode]=Math.Clamp(total-physical,0,ushort.MaxValue);
             }
-            double budget=Math.Max(60,Scaling.Sum(k=>F(original,k)))*(0.95+roll*0.1+tier*scalingStep);
-            var scaling=Enumerable.Range(0,5).Select(i=>(mask&(1<<i))==0?0:Math.Round(budget*(70+Mix(seed^(ulong)(200+i))%61)/totalWeight,2)).ToArray();
+            double baseBudget=balanced?AdvancedAffixAssets.EffectiveScalingBudget(original,corrections):Math.Max(60,Scaling.Sum(k=>F(original,k)));
+            double budget=baseBudget*(0.95+roll*0.1+tier*scalingStep);
+            var scaling=Enumerable.Range(0,5).Select(i=>{
+                if((mask&(1<<i))==0)return 0.0;
+                double v=budget*(70+Mix(seed^(ulong)(200+i))%61)/totalWeight;
+                if(balanced)v=AdvancedAffixAssets.CapSingleStatScaling(v,i,original,reinforce);
+                return Math.Round(v,2);
+            }).ToArray();
             result[id+original.ID-baseId]=new(attack,scaling);
         }
         return result;
@@ -51,23 +57,33 @@ static class AffixQualityAssets {
         if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging output required");
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
         var file=reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="EquipParamWeapon");
-        var weapons=PARAM.Read(file.Bytes);weapons.ApplyParamdef(PARAMDEF.XmlDeserialize("work/SoulsRandomizers/diste/Defs/EquipParamWeapon.xml"));
+        var defs=Environment.GetEnvironmentVariable("TOWER_PARAMDEFS")??"work/SoulsRandomizers/diste/Defs";
+        var weapons=PARAM.Read(file.Bytes);weapons.ApplyParamdef(PARAMDEF.XmlDeserialize(Path.Combine(defs,"EquipParamWeapon.xml")));
         var original=PARAM.Read(file.Bytes);original.ApplyParamdef(weapons.AppliedParamdef);
+        var corrections=PARAM.Read(reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="AttackElementCorrectParam").Bytes);
+        corrections.ApplyParamdef(PARAMDEF.XmlDeserialize(Path.Combine(defs,"AttackElementCorrectParam.xml")));
+        var correctionRows=corrections.Rows.ToDictionary(r=>r.ID);
+        var reinforce=PARAM.Read(reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="ReinforceParamWeapon").Bytes);
+        reinforce.ApplyParamdef(PARAMDEF.XmlDeserialize(Path.Combine(defs,"ReinforceParamWeapon.xml")));
+        var reinforceRows=reinforce.Rows.ToDictionary(r=>r.ID);
         var rows=weapons.Rows.ToDictionary(r=>r.ID);
         var vanilla=rows.Where(p=>p.Key<100000000).ToDictionary(p=>p.Key,p=>p.Value);
         var v1=File.ReadAllLines(Path.Combine(input,"affix-catalog.txt")).Select(l=>l.Split('|')).Where(p=>p[0]=="weapon").ToArray();
         var v2=File.ReadAllLines(Path.Combine(input,"affix-v2-catalog.txt")).Select(l=>l.Split('|')).Where(p=>p[0]=="weapon").ToArray();
-        // (变体编号, 旧值, 新值)
-        var plan=new List<(int variant,Dictionary<int,Values> old,Dictionary<int,Values> next)>();
+        // (变体编号, 可接受的旧值列表, 新值)
+        var plan=new List<(int variant,Dictionary<int,Values>[] acceptedOld,Dictionary<int,Values> next)>();
         foreach(var p in v1){int id=int.Parse(p[1]),baseId=int.Parse(p[2]),tier=int.Parse(p[3]);
-            plan.Add((id,V1(weapons,vanilla,id,baseId,tier,OldAttack,OldScalingV1),V1(weapons,vanilla,id,baseId,tier,AttackStep,ScalingStep)));}
+            plan.Add((id,new[]{V1(weapons,vanilla,id,baseId,tier,OldAttack,OldScalingV1)},V1(weapons,vanilla,id,baseId,tier,AttackStep,ScalingStep)));}
         foreach(var p in v2){int id=int.Parse(p[1]),baseId=int.Parse(p[2]),tier=int.Parse(p[3]),profile=int.Parse(p[5]);
-            plan.Add((id,V2(vanilla,id,baseId,tier,profile,OldAttack,OldScalingV2),V2(vanilla,id,baseId,tier,profile,AttackStep,ScalingStep)));}
-        // 当前数值必须等于旧公式（首次运行）或新公式（已经运行过）
+            plan.Add((id,new[]{
+                V2(vanilla,correctionRows,reinforceRows,id,baseId,tier,profile,OldAttack,OldScalingV2,false),
+                V2(vanilla,correctionRows,reinforceRows,id,baseId,tier,profile,AttackStep,ScalingStep,false)
+            },V2(vanilla,correctionRows,reinforceRows,id,baseId,tier,profile,AttackStep,ScalingStep,true)));}
+        // 当前数值必须等于旧公式或新公式
         var (old,current,other)=(0,0,0);var strays=new List<int>();
-        foreach(var (_,before,after) in plan)foreach(var (id,value) in before) {
+        foreach(var (_,acceptedOld,after) in plan)foreach(var (id,value) in after) {
             if(!rows.TryGetValue(id,out var row))throw new Exception($"Affix weapon row missing: {id}");
-            if(Matches(row,after[id]))current++;else if(Matches(row,value))old++;else{other++;if(strays.Count<10)strays.Add(id);}
+            if(Matches(row,value))current++;else if(acceptedOld.Any(m=>Matches(row,m[id])))old++;else{other++;if(strays.Count<10)strays.Add(id);}
         }
         Console.WriteLine($"Affix weapon rows: {old} at the old quality steps, {current} already at the new steps, {other} unexplained");
         if(other>0)throw new Exception("Rows differ from both formulas, refusing to rewrite: "+string.Join(",",strays));

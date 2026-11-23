@@ -43,7 +43,11 @@ pub const THEMES:[Theme;12]=[
 /// 这一幕的主题（按这一幕的种子从本幕的主题里选；DLC 主题只在 DLC 完整模式下参与）
 pub fn for_act(seed:u64,act:u8)->&'static Theme {for_act_with(seed,act,crate::dlc::mode()==crate::dlc::Mode::Full)}
 pub fn for_act_with(seed:u64,act:u8,dlc:bool)->&'static Theme {
-    let options:Vec<&Theme>=THEMES.iter().filter(|t|t.act==act.clamp(1,3)&&(dlc||!t.dlc)).collect();
+    let options:Vec<&Theme>=if act<=3 {
+        THEMES.iter().filter(|t|t.act==act.max(1)&&(dlc||!t.dlc)).collect()
+    } else {
+        THEMES.iter().filter(|t|dlc||!t.dlc).collect()
+    };
     options[(crate::mix(seed^0x7468656d65^u64::from(act)) % options.len() as u64) as usize]
 }
 pub fn for_run(run:&crate::Run)->&'static Theme {for_act(run.seed,run.act)}

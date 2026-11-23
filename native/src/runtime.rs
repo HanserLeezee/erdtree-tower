@@ -779,11 +779,11 @@ fn apply_party_order(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan
             }
             Ok(())
         },
-        Order::Law{seed,law,..}=>{
+        Order::Law{seed,law,endless,..}=>{
             let run=state.view.run.as_ref().ok_or("律法同步时旅程尚未开启")?;
             if run.seed!=seed{return Err("律法同步路线不一致".into());}
-            if run.law==law{return Ok(());}
-            let mut next=run.clone();next.set_law(law)?;
+            if run.law==law&&run.endless==endless{return Ok(());}
+            let mut next=run.clone();next.set_law(law)?;next.set_endless(endless)?;
             if let Some(flasks)=state.flasks.as_mut() {
                 let data=unsafe {world.main_player.as_mut().ok_or("律法同步时角色未加载")?.player_game_data.as_mut()};
                 flasks.set_bonus(data,next.class,next.flask_bonus,law.flask_cut())?;
@@ -791,7 +791,7 @@ fn apply_party_order(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan
                 flasks.stamp(&mut next);next.flasks=next.flasks.min(next.flask_limit);next.clamp_flask_blue();
             }
             record_checked(&next)?;state.view.run=Some(next);
-            report(state,format!("已同步房主苦难律法：{} 分，律法码 {}",law.score(),law.code()));Ok(())
+            report(state,format!("已同步房主苦难律法：{} 分，律法码 {}{}",law.score(),law.code(),if endless{"（无尽模式）"}else{""}));Ok(())
         },
         Order::ForceEnd=>{
             super::log("HOME_SYNC received host force end; scheduling terminal settlement");
@@ -1730,10 +1730,6 @@ pub fn tick() {
         if let Ok(mut ui)=UI.lock(){ui.publish(view,owner);}
     }
 }
-fn tick_locked() {
-    super::star_stream::clear();
-    super::spirits::begin_frame();
-    let Ok(mut state) = STATE.try_lock() else {
 fn tick_clock(state:&Runtime) {
     let owner=state.identity.or_else(||state.hub.as_ref().map(|h|h.owner));
     let active=state.view.run.as_ref().filter(|r|!matches!(r.phase,Phase::Won|Phase::Dead)
@@ -1752,6 +1748,10 @@ fn tick_clock(state:&Runtime) {
     });
     super::run_clock::tick(owner.zip(active),fight);
 }
+fn tick_locked() {
+    super::star_stream::clear();
+    super::spirits::begin_frame();
+    let Ok(mut state) = STATE.try_lock() else {
         return;
     };
     if state.departure.as_mut().is_some_and(|departure|departure.tick()){state.departure=None;}
@@ -2774,8 +2774,8 @@ fn tick_clock(state:&Runtime) {
         }
         let entered=state.party.as_mut().is_some_and(|p|touched&&!p.rewards&&!std::mem::replace(&mut p.portal,true));
         let portal_used=state.party.as_ref().map_or(touched,|p|p.rewards);
-        // 最后一幕的 Boss：没有三选一，传送门直接结束旅程
-        let last=matches!(next.phase,Phase::Combat{id} if next.act>=3&&next.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Boss));
+        // 最后一幕的 Boss：普通模式没有三选一，传送门直接结束旅程；无尽模式第 3 幕起继续领奖进入下一幕
+        let last=matches!(next.phase,Phase::Combat{id} if (next.act>=3&&!next.endless||next.act>=erdtree_tower::MAX_ENDLESS_ACT)&&next.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Boss));
         if entered {report(&mut state,if last{"已进入传送门，等待全部队友进入后一起结束旅程。"}else{"已进入传送门，等待全部队友进入后一起领取奖励。"});}
         match state.reward_portal.poll(started.elapsed(), player_dead, portal_used) {
             ResultState::Waiting => {
@@ -2971,8 +2971,8 @@ fn tick_clock(state:&Runtime) {
                 let bosses:Vec<_>=pending.foes.iter().filter(|f|f.spec.bar>0).filter_map(|f|Some((f.fight.handle()?,f.spec.name))).collect();
                 runtime.boss_guard.tick(world,(run.seed,run.act,id),&bosses,authority);
             }
-            // 第三幕双王共命：超时复生（屏幕上不显示提示）
-            if run.nodes.get(id).is_some_and(|n|super::enemies::dual(n.kind,run.act))&&pending.foes.len()==2&&pending.foes.iter().all(|f|f.spec.bar>0) {
+            // 第三幕双王共命（含无尽模式抽到的第三幕双王）：超时复生（屏幕上不显示提示）
+            if pending.foes.len()==2&&pending.foes.iter().all(|f|super::enemies::dual(f.spec.kind,f.spec.act)&&f.spec.bar>0) {
                 // 联机用预置实体，死了不能重新生成：只有单人复生
                 let revive=!pending.networked;
                 let foes=[0,1].map(|i|(pending.foes[i].spec.name,pending.foes[i].fight.handle()));

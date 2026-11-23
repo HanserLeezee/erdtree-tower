@@ -9,7 +9,7 @@ use erdtree_tower::{journal::{Outcome,Record},legacy::Gain};
 static SCREEN:Mutex<VecDeque<Screen>>=Mutex::new(VecDeque::new());
 static PENDING:Mutex<Option<(Record,Option<Gain>)>>=Mutex::new(None);
 static SEED:Mutex<Option<u64>>=Mutex::new(None);
-static LAW_START:Mutex<Option<(Option<u64>,Law,Class)>>=Mutex::new(None);
+static LAW_START:Mutex<Option<(Option<u64>,Law,Class,bool)>>=Mutex::new(None);
 /// 客机开局：选完职业后等待房主的苦难律法同步。
 static CLASS_START:Mutex<Option<Class>>=Mutex::new(None);
 static ACTIVE:AtomicBool=AtomicBool::new(false);
@@ -68,10 +68,11 @@ pub fn class_entry(seed:Option<u64>,law:bool,current:Class) {
 }
 fn law_screen(seed:Option<u64>,class:Class)->Screen {
     let mut screen=crate::law_ui::LawScreen::new(Law::default());screen.seed=seed;
+    screen.endless_unlocked=erdtree_tower::endless_unlocked(&crate::run_log::records());
     let record=crate::legacy::owner().and_then(|owner|crate::law::best(owner,class)).map(|best|(best,crate::map_ui::class_name(class).to_owned()));
     Screen::Law{screen,seed,record,class}
 }
-pub fn take_law_start()->Option<(Option<u64>,Law,Class)> {LAW_START.lock().ok()?.take()}
+pub fn take_law_start()->Option<(Option<u64>,Law,Class,bool)> {LAW_START.lock().ok()?.take()}
 pub fn take_class_start()->Option<Class> {CLASS_START.lock().ok()?.take()}
 fn parse_seed(text:&str)->Result<u64,&'static str> {
     let text=text.trim();
@@ -84,7 +85,7 @@ pub fn draw(ui:&Ui,icon:&mut dyn FnMut(u32)->Option<TextureId>)->bool {
     let mut next=None;
     let done=match current {
         Screen::Law{screen:law,seed,record,class}=>match crate::law_ui::draw(ui,law,record.as_ref().map(|(best,class)|(*best,class.as_str()))) {
-            Some(crate::law_ui::LawAction::Start(law))=>{if let Ok(mut start)=LAW_START.lock(){*start=Some((*seed,law,*class));}true},
+            Some(crate::law_ui::LawAction::Start(law,endless))=>{if let Ok(mut start)=LAW_START.lock(){*start=Some((*seed,law,*class,endless));}true},
             // 返回：回到选择职业
             Some(crate::law_ui::LawAction::Back)=>{next=Some(Screen::Class{screen:crate::class_ui::ClassScreen::new(Class::PLAYABLE.iter().position(|c|c==class).unwrap_or(0)),seed:*seed,law:true});true},
             Some(crate::law_ui::LawAction::Archive)=>{next=Some(Screen::Archive(Box::new(crate::archive_ui::Archive::new(crate::run_log::records()))));false},
@@ -556,9 +557,10 @@ fn summary_page(ui:&Ui,record:&Record,gain:Option<Gain>,focus:&mut usize,from_ar
             }
         }
         // 结果一行：逐字打出
-        let mut status=format!("{}  ·  {}  ·  第{}幕 第{}层",if won{"登顶成功"}else if dead{"旅程终结"}else{"暂离结算"},crate::map_ui::class_name(record.class),
-            ["一","二","三"][usize::from(record.act.clamp(1,3)-1)],record.layer);
-        if won {status=format!("登顶成功  ·  {}  ·  三幕全部通关",crate::map_ui::class_name(record.class));}
+        let act_text=if record.act<=3 {format!("第{}幕",["一","二","三"][usize::from(record.act.max(1)-1)])}else{format!("第 {} 幕",record.act)};
+        let mode_tag=if record.endless {"无尽模式 · "}else{""};
+        let mut status=format!("{}{}  ·  {}  ·  {} 第{}层",mode_tag,if won{"登顶成功"}else if dead{"旅程终结"}else{"暂离结算"},crate::map_ui::class_name(record.class),act_text,record.layer);
+        if won&&!record.endless {status=format!("登顶成功  ·  {}  ·  三幕全部通关",crate::map_ui::class_name(record.class));}
         if let Some(seconds)=record.play_seconds {
             status.push_str(&format!("  ·  {} {}",crate::i18n::t("本局用时"),crate::run_clock::format_time(seconds)));
         }

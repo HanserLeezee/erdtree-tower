@@ -20,8 +20,8 @@ pub struct Bells {
 impl Bells {
     pub fn valid(&self)->bool {
         self.receipts.len()<=MAX_BELLS&&self.counts.iter().map(|&n|n as usize).sum::<usize>()==self.receipts.len()
-            &&self.receipts.iter().enumerate().all(|(i,p)|(1..=3).contains(&p.0)&&!self.receipts[..i].contains(p))
-            &&self.challenge.is_none_or(|p|(1..=3).contains(&p.0)&&!self.receipts.contains(&p))
+            &&self.receipts.iter().enumerate().all(|(i,p)|(1..=crate::MAX_ENDLESS_ACT).contains(&p.0)&&!self.receipts[..i].contains(p))
+            &&self.challenge.is_none_or(|p|(1..=crate::MAX_ENDLESS_ACT).contains(&p.0)&&!self.receipts.contains(&p))
     }
     pub fn stock_count(&self)->usize {BASE_STOCK+self.receipts.len()*5}
     pub fn down(&self,act:u8,node:usize)->bool {self.challenge==Some((act,node))||self.receipts.contains(&(act,node))}

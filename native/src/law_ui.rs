@@ -4,10 +4,10 @@
 use hudhook::imgui::{Condition,DrawListMut,ImColor32,Key,Ui,WindowFlags};
 use erdtree_tower::law::{BRANCHES,GRADES,Law,NODES};
 
-pub enum LawAction {Start(Law),Back,Archive}
+pub enum LawAction {Start(Law,bool),Back,Archive}
 /// shown：分数显示值（追着真实分数滚动）；flash：刚选中的节点与时间（卡片闪一下、列表里那一行滑入）
-pub struct LawScreen {pub law:Law,pub seed:Option<u64>,focus:usize,opened:Option<f64>,copied:Option<f64>,shown:Option<f32>,flash:Option<(usize,f64)>}
-impl LawScreen {pub fn new(law:Law)->Self {Self{law,seed:None,focus:0,opened:None,copied:None,shown:None,flash:None}}}
+pub struct LawScreen {pub law:Law,pub endless:bool,pub endless_unlocked:bool,pub seed:Option<u64>,focus:usize,opened:Option<f64>,copied:Option<f64>,shown:Option<f32>,flash:Option<(usize,f64)>}
+impl LawScreen {pub fn new(law:Law)->Self {Self{law,endless:false,endless_unlocked:false,seed:None,focus:0,opened:None,copied:None,shown:None,flash:None}}}
 
 const AMBER:[f32;4]=[0.91,0.71,0.29,1.0];const WHITE:[f32;4]=[0.93,0.92,0.88,1.0];const MUTED:[f32;4]=[0.58,0.57,0.53,1.0];
 const DIM:[f32;4]=[0.36,0.35,0.33,1.0];const INK:[f32;4]=[0.07,0.07,0.06,1.0];
@@ -102,8 +102,12 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,record:Option<(u32,&str)>)->Option<LawA
     if screen.focus!=before {crate::sfx::play("hover");}
     if key(Key::GamepadFaceDown){toggle(screen,screen.focus);}
     if key(Key::GamepadFaceUp)&&!screen.law.is_empty(){screen.law=Law::default();crate::sfx::play("close");}
+    if screen.endless_unlocked&&(key(Key::Tab)||key(Key::GamepadR1)) {
+        screen.endless=!screen.endless;
+        crate::sfx::play(if screen.endless {"confirm"} else {"close"});
+    }
     if ui.io().key_ctrl&&key(Key::V) {if let Some(law)=ui.clipboard_text().and_then(|text|Law::parse(&text)){screen.law=law;crate::sfx::play("confirm");}}
-    let mut action=if key(Key::Enter)||key(Key::GamepadFaceLeft){Some(LawAction::Start(screen.law))}else if key(Key::Escape)||key(Key::GamepadFaceRight){Some(LawAction::Back)}
+    let mut action=if key(Key::Enter)||key(Key::GamepadFaceLeft){Some(LawAction::Start(screen.law,screen.endless&&screen.endless_unlocked))}else if key(Key::Escape)||key(Key::GamepadFaceRight){Some(LawAction::Back)}
         else if crate::options::pressed(ui,erdtree_tower::options::Hotkey::Archive)||key(Key::GamepadBack){Some(LawAction::Archive)}else{None};
     let score=screen.law.score();
     let shown=screen.shown.map_or(score as f32,|v|v+(score as f32-v)*(1.0-(-dt*12.0).exp()));
@@ -149,6 +153,40 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,record:Option<(u32,&str)>)->Option<LawA
         let (archive,hover)=hit("##law-archive",[174.0,26.0],[380.0,72.0]);if archive {action=Some(LawAction::Archive);}
         let w=badge(178.0,49.0,archive_key,crate::pad::Tone::Light,head);
         text(190.0+w,37.0,"旅程档案",fade(if hover{AMBER}else{WHITE},head),20.0,0.0);
+        // 无尽模式开关（通关一次 280 分以上苦难律法解锁）
+        {
+            let draw=ui.get_window_draw_list();
+            draw.add_line(p(390.0,34.0),p(390.0,64.0),col(WHITE,0.18*head)).thickness(s).build();
+            drop(draw);
+            let (clicked,ehover)=hit("##law-endless",[404.0,28.0],[660.0,70.0]);
+            if clicked&&screen.endless_unlocked {
+                screen.endless=!screen.endless;
+                crate::sfx::play(if screen.endless {"confirm"} else {"close"});
+            }
+            let on=screen.endless&&screen.endless_unlocked;
+            let draw=ui.get_window_draw_list();
+            if on {
+                draw.add_rect(p(404.0,28.0),p(660.0,70.0),col(AMBER,head)).filled(true).build();
+                if ehover {draw.add_rect(p(404.0,28.0),p(660.0,70.0),col([1.0,0.86,0.5,1.0],0.4*head)).filled(true).build();}
+            } else {
+                let bg=if screen.endless_unlocked {28} else {18};
+                draw.add_rect(p(404.0,28.0),p(660.0,70.0),ImColor32::from_rgba(bg,bg,bg,(225.0*head) as u8)).filled(true).build();
+                if ehover&&screen.endless_unlocked {draw.add_rect(p(404.0,28.0),p(660.0,70.0),col(WHITE,0.08*head)).filled(true).build();}
+                draw.add_rect(p(404.0,28.0),p(660.0,70.0),col(if screen.endless_unlocked&&ehover{AMBER}else{WHITE},if screen.endless_unlocked{0.34}else{0.14}*head)).thickness(s).build();
+            }
+            drop(draw);
+            let label=if on {"无尽模式 · 已开启"}else if screen.endless_unlocked {"无尽模式 · 关闭"}else{"无尽模式 · 未解锁"};
+            let c=if on {INK}else if screen.endless_unlocked {if ehover{AMBER}else{WHITE}}else{DIM};
+            text(532.0,38.0,label,fade(c,head),18.0,0.5);
+            if ehover {
+                ui.set_window_font_scale(s);
+                ui.tooltip_text(crate::i18n::t(if screen.endless_unlocked {
+                    "开启后第 3 幕 Boss 战后无限继续攀登，每幕从 1–3 幕池中随机出怪并持续提升强度（按 Tab / RB 切换）"
+                } else {
+                    "通关一次 280 分以上苦难律法解锁无尽模式"
+                }));
+            }
+        }
         micro(800.0,18.0,"CONTINGENCY",fade(MUTED,head),12.0,0.5);
         text(800.0,34.0+(1.0-head)*8.0,"苦难律法",fade(WHITE,head),44.0,0.5);
         {let draw=ui.get_window_draw_list();let half=22.0*ease(t,0.15,0.35);draw.add_rect(p(800.0-half,94.0),p(800.0+half,99.0),col(AMBER,head)).filled(true).build();}
@@ -332,7 +370,7 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,record:Option<(u32,&str)>)->Option<LawA
         let next=GRADES.iter().find(|(min,_)|score<*min);
         text(bx+bw*0.5,846.0,&next.map_or("已达最高评级".to_string(),|(min,name)|format!("距「{name}」还差 {} 分",min-score)),fade(MUTED,foot),15.0,0.5);
         // 开始旅程：琥珀色实心按钮，悬停时从左往右铺一层亮色
-        let (clicked,hover)=hit("##law-start",[1290.0,780.0],[1556.0,852.0]);if clicked {action=Some(LawAction::Start(screen.law));}
+        let (clicked,hover)=hit("##law-start",[1290.0,780.0],[1556.0,852.0]);if clicked {action=Some(LawAction::Start(screen.law,screen.endless&&screen.endless_unlocked));}
         {
             let draw=ui.get_window_draw_list();
             draw.add_rect(p(1290.0,780.0),p(1556.0,852.0),col(AMBER,foot)).filled(true).build();

@@ -39,10 +39,10 @@
   "迅猛的": "Swift",
   "韧性翻倍；用重攻击和跳劈更快打出硬直": "Poise is doubled. Heavy and jump attacks stagger more effectively.",
   "受到的伤害 -25%": "Damage taken -25%.",
-  "攻击 +30%，但受到的伤害 +10%": "Attack +30%, but damage taken +10%.",
+  "攻击 +20%，但受到的伤害 +10%": "Attack +20%, but damage taken +10%.",
   "连续 3 秒未受伤后，每秒回复 0.3% 最大生命；受伤后重新计时": "After 3 seconds without taking damage, recovers 0.3% max HP per second. Taking damage restarts the delay.",
   "攻击附带猩红腐败：每次打中你都会积累腐败；备好药": "Attacks inflict scarlet rot buildup. Keep remedies ready.",
-  "你喝圣杯瓶后，攻击 +30%，持续 15 秒": "Gains +30% attack for 15s after you drink a flask.",
+  "你喝圣杯瓶后，攻击 +20%，持续 15 秒": "Gains +20% attack for 15s after you drink a flask.",
   "8 秒没挨打时攻击 +20%，被打中后清除": "Gains +20% attack after 8s without taking a hit. Removed when hit.",
   "每 25 秒展开 5 秒金色护盾，受到的伤害 -60%": "Every 25s, gains a golden shield for 5s: damage taken -60%.",
   "生命首次降到 10% 以下时回复至 40%，仅一次": "Once only: when HP first drops below 10%, recovers to 40%.",
@@ -300,5 +300,6 @@
   "登顶一次后解锁防具幻化": "Complete one ascent to unlock armor transmog.",
   "该外观不属于此防具部位": "This appearance does not belong to that armor slot.",
   "适应的": "Adaptive",
-  "受到单一类型伤害后，下次同类伤害减免增加 10%，最多 50%；换类型重计，混合伤害不受影响且不改变适应": "After a single-type hit, resistance to the next hit of that type increases by 10%, up to 50%. Switching types resets resistance. Mixed damage bypasses resistance and leaves it unchanged."
+  "受到单一类型伤害后，下次同类伤害减免增加 10%，最多 50%；换类型重计，混合伤害不受影响且不改变适应": "After a single-type hit, resistance to the next hit of that type increases by 10%, up to 50%. Switching types resets resistance. Mixed damage bypasses resistance and leaves it unchanged.",
+  "无尽模式只能在开局时设置": "Endless Mode can only be configured at the start of a run."
 }

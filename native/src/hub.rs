@@ -168,6 +168,7 @@ pub struct Hub {
     /// 刚开局的旅程用的固定种子（见 take_fixed_seed）
     fixed_seed:Option<u64>,
     law:erdtree_tower::law::Law,
+    endless:bool,
     settled:bool,
     recovery_return:bool,
 }
@@ -189,9 +190,9 @@ impl Hub {
         let reset=resume.as_ref().is_none_or(|r| matches!(r.phase,Phase::Dead|Phase::Won)) || path(owner,"reset").exists();
         let paused=!reset&&path(owner,"paused").exists();
         let settled=resume.as_ref().is_some_and(|r|matches!(r.phase,Phase::Dead|Phase::Won));
-        Ok(Self {active:true,paused,owner,room:None,clock:Instant::now(),warp:WarpGate::default(),reset,start:false,chosen,resume,seed:None,fixed_seed:None,law:Default::default(),settled,recovery_return:false})
+        Ok(Self {active:true,paused,owner,room:None,clock:Instant::now(),warp:WarpGate::default(),reset,start:false,chosen,resume,seed:None,fixed_seed:None,law:Default::default(),endless:false,settled,recovery_return:false})
     }
-    pub fn finish(&mut self) { self.active=true;self.paused=false;self.settled=true;self.reset=true;self.start=false;self.resume=None;self.seed=None;self.law=Default::default();self.warp=WarpGate::default();self.recovery_return=false; }
+    pub fn finish(&mut self) { self.active=true;self.paused=false;self.settled=true;self.reset=true;self.start=false;self.resume=None;self.seed=None;self.law=Default::default();self.endless=false;self.warp=WarpGate::default();self.recovery_return=false; }
     pub fn suspended_run(&self)->Option<&Run> {self.resume.as_ref().filter(|_|self.paused)}
     pub fn reconnected(&mut self,world:&mut WorldChrMan) {
         if let Some(room)=self.room.take(){room.retire(world);}
@@ -204,16 +205,16 @@ impl Hub {
     /// 选职业界面默认选中上次的职业
     fn current_class(&self)->Class {super::class_from_archetype(self.chosen).unwrap_or(Class::PLAYABLE[0])}
     /// 选定职业后开局：重置为该职业的出身再开始旅程
-    fn begin(&mut self,class:Class,seed:Option<u64>,law:erdtree_tower::law::Law) {
-        self.chosen=class.archetype();self.seed=seed;self.law=law;self.reset=true;self.start=true;
-        super::log(format!("Hub start: class={class:?} seeded={} law={}",seed.is_some(),law.code()));
+    fn begin(&mut self,class:Class,seed:Option<u64>,law:erdtree_tower::law::Law,endless:bool) {
+        self.chosen=class.archetype();self.seed=seed;self.law=law;self.endless=endless;self.reset=true;self.start=true;
+        super::log(format!("Hub start: class={class:?} seeded={} law={} endless={endless}",seed.is_some(),law.code()));
     }
     /// 刚开局的旅程是否用了固定种子（联机房主据此把队伍种子换成它）；取一次就清掉
     pub fn take_fixed_seed(&mut self)->Option<u64> {self.fixed_seed.take()}
     pub fn ready_for_party_restart(&self)->bool {self.active&&!self.reset&&!self.start&&matches!(self.warp,WarpGate::Ready)}
     pub fn reopen_for_party(&mut self,world:&mut WorldChrMan) {
         if let Some(room)=self.room.take(){room.retire(world);}
-        self.active=true;self.start=false;self.seed=None;self.law=Default::default();self.resume=None;
+        self.active=true;self.start=false;self.seed=None;self.law=Default::default();self.endless=false;self.resume=None;
     }
     pub fn settling(&self)->bool {self.active&&self.settled}
     pub fn view(&self)->super::rooms::RoomView {
@@ -306,7 +307,8 @@ impl Hub {
             let mut run=Run::new_personal(seed,class,reward_seed);run.enable_contracts();
             super::run_clock::new_run(self.owner,&run);
             run.set_law(std::mem::take(&mut self.law))?;
-            if !run.law.is_empty() {super::log(format!("TOWER_LAW start code={} score={}",run.law.code(),run.law.score()));}
+            run.set_endless(std::mem::take(&mut self.endless))?;
+            if !run.law.is_empty()||run.endless {super::log(format!("TOWER_LAW start code={} score={} endless={}",run.law.code(),run.law.score(),run.endless));}
             run.set_start_talisman(talisman)?;
             run.weapon_preferences=super::legacy::load(self.owner).training.preferences();
             return Ok(Some(run));
@@ -322,11 +324,11 @@ impl Hub {
             if seeded_start_allowed() {super::run_screen::class_entry(Some(seed),true,self.current_class());}else{room.notice(9500105)?;}
             return Ok(None);
         }
-        if let Some((seed,law,class))=super::run_screen::take_law_start() {
-            if law_start_allowed()&&(seed.is_none()||seeded_start_allowed()) {self.begin(class,seed,law);}else{room.notice(9500105)?;}
+        if let Some((seed,law,class,endless))=super::run_screen::take_law_start() {
+            if law_start_allowed()&&(seed.is_none()||seeded_start_allowed()) {self.begin(class,seed,law,endless);}else{room.notice(9500105)?;}
             return Ok(None);
         }
-        if let Some(class)=super::run_screen::take_class_start() {self.begin(class,None,Default::default());return Ok(None);}
+        if let Some(class)=super::run_screen::take_class_start() {self.begin(class,None,Default::default(),false);return Ok(None);}
         if super::run_screen::active(){return Ok(None);}
         room.poll(world,game)?;
         if let Some((npc,choice))=room.hub_choice() {
