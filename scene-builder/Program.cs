@@ -1,5 +1,9 @@
 using SoulsFormats;
 using System.Numerics;
+if(args.Length==4&&args[3]=="hub-native-bgm") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    MusicAssets.RestoreHub(args[2],args[1]);return;
+}
 if(args.Length==4&&args[3]=="enemy-name-fix") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     EnemyNameFix.Build(args[2],args[1]);return;

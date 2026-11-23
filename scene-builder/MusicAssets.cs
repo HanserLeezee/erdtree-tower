@@ -3,6 +3,7 @@ using System.Text.Json;
 
 static class MusicAssets {
     const uint FlagBase=45020400,EventBase=95050000;
+    const string Hub="m11_10_00_00";
     static string[][] Tracks(string directory)=>File.ReadAllLines(Path.Combine(directory,"bgm-catalog.txt")).Select(l=>l.Split('|')).ToArray();
     static string[] Maps(string directory)=>File.ReadAllLines(Path.Combine(directory,"bgm-maps.txt"));
     static EMEVD.Event TrackEvent(int index,int track) {
@@ -16,6 +17,29 @@ static class MusicAssets {
     static string Signature(EMEVD.Event e)=>JsonSerializer.Serialize(new{e.ID,e.RestBehavior,instructions=e.Instructions.Select(i=>new{i.Bank,i.ID,data=Convert.ToHexString(i.ArgData)}),e.Parameters});
     static bool OwnEvent(long id,int count)=>id>=EventBase&&id<EventBase+count;
     static bool OwnInit(EMEVD.Instruction i,int count)=>i.Bank==2000&&i.ID==0&&i.ArgData.Length>=8&&OwnEvent(BitConverter.ToUInt32(i.ArgData,4),count);
+    public static void RestoreHub(string input,string output) {
+        var tracks=Tracks(input);
+        var relative=Path.Combine("event",Hub+".emevd.dcx");
+        var file=EMEVD.Read(Path.Combine(input,relative));
+        foreach(var ev in file.Events.Where(e=>OwnEvent(e.ID,tracks.Length))) {
+            int i=(int)(ev.ID-EventBase);
+            if(Signature(ev)!=Signature(TrackEvent(i,int.Parse(tracks[i][1]))))throw new Exception($"Unrecognized hub event {ev.ID}");
+        }
+        var init=file.Events.Single(e=>e.ID==0);
+        if(init.Parameters.Count!=0)throw new Exception("Parameterized hub constructor");
+        init.Instructions.RemoveAll(i=>OwnInit(i,tracks.Length));
+        file.Events.RemoveAll(e=>OwnEvent(e.ID,tracks.Length));
+        var path=Path.Combine(output,relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        file.Write(path);
+        var check=EMEVD.Read(path);
+        if(!file.Events.Select(Signature).SequenceEqual(check.Events.Select(Signature)))throw new Exception("Hub event roundtrip mismatch");
+        VerifyHub(check,tracks.Length);
+    }
+    static void VerifyHub(EMEVD file,int count) {
+        if(file.Events.Any(e=>OwnEvent(e.ID,count)||e.Instructions.Any(i=>OwnInit(i,count))))
+            throw new Exception("Tower music still installed in Roundtable Hold");
+    }
     public static void Patch(string input,string output) {
         var tracks=Tracks(input);
         if(tracks.Length!=100||tracks.Select(t=>t[1]).Distinct().Count()!=100||tracks.Select(t=>t[2]).Distinct().Count()!=100)throw new Exception("Music catalog must contain 100 unique mappings");
@@ -27,6 +51,7 @@ static class MusicAssets {
         foreach(var row in tracks)if((string)table.Rows.Single(r=>r.ID==int.Parse(row[1]))["ParamStr"].Value!=row[2])throw new Exception("Soundtrack mapping differs from installed game");
         Directory.CreateDirectory(Path.Combine(output,"event"));
         foreach(var map in Maps(input)) {
+            if(map==Hub){RestoreHub(input,output);continue;}
             var path=Path.Combine(input,"event",map+".emevd.dcx");var file=EMEVD.Read(path);
             foreach(var ev in file.Events.Where(e=>OwnEvent(e.ID,tracks.Length))) {
                 int index=(int)(ev.ID-EventBase);
@@ -84,6 +109,7 @@ static class MusicAssets {
         var tracks=Tracks(directory);
         foreach(var map in Maps(directory)) {
             var file=EMEVD.Read(Path.Combine(directory,"event",map+".emevd.dcx"));
+            if(map==Hub){VerifyHub(file,tracks.Length);continue;}
             var init=file.Events.Single(e=>e.ID==0);
             var startup=init.Instructions.TakeWhile(i=>i.Bank>=2000).ToArray();
             for(int i=0;i<tracks.Length;i++) {

@@ -30,7 +30,7 @@ impl Drop for Frame {
         static PLAYBACK:Mutex<Playback>=Mutex::new(Playback{initialized:false,current:None,pending:None});
         static CLOCK:LazyLock<Instant>=LazyLock::new(Instant::now);
         let Ok(mut playback)=PLAYBACK.try_lock() else{return;};
-        if playback.current.is_some_and(|id|!super::native_talk::flag(id).unwrap_or(false)){playback.current=None;}
+        if playback.current.is_some_and(|id|matches!(super::native_talk::flag(id),Ok(false))){playback.current=None;}
         let result=playback.sync(CLOCK.elapsed(),self.track.map(|t|t.flag),|id,on| {
             super::native_talk::set_flag(id,on)?;
             if super::native_talk::flag(id)?!=on{return Err("音乐选择标记未生效".into());}Ok(())
@@ -44,7 +44,7 @@ impl Drop for Frame {
 }
 pub fn selection(run:Option<&Run>,block:i32,alive:bool,warping:bool,travelling:bool,combat:bool,wave:u8)->Option<&'static Track> {
     if !alive||warping||travelling||!music::supported(block){return None;}
-    if block==super::hub::BLOCK{return Some(music::hub());}
+    if block==super::hub::BLOCK{return None;}
     let run=run?;
     let id=match run.phase {
         Phase::Combat{id}=>{if !combat{return None;}id},
@@ -101,8 +101,9 @@ mod tests {
     fn level_contexts_choose_combat_ambient_and_challenge_music_safely() {
         use erdtree_tower::{Class,NodeKind,music::Pool};
         let mut run=Run::new(42,Class::Vagabond);let block=0x2d020000;
-        assert_eq!(selection(None,super::super::hub::BLOCK,true,false,false,false,0).unwrap().id,music::hub().id);
+        assert!(selection(None,super::super::hub::BLOCK,true,false,false,false,0).is_none());
         run.phase=Phase::Combat{id:0};
+        assert!(selection(Some(&run),super::super::hub::BLOCK,true,false,false,true,0).is_none());
         assert!(selection(Some(&run),block,true,false,false,false,0).is_none());
         assert_eq!(selection(Some(&run),block,true,false,false,true,0).unwrap().pool,Pool::Battle);
         for (alive,warp,travel) in [(false,false,false),(true,true,false),(true,false,true)] {assert!(selection(Some(&run),block,alive,warp,travel,true,0).is_none());}
