@@ -1724,6 +1724,7 @@ pub fn tick() {
         let ready=state.view.ready&&!state.view.travelling;
         state.ember_notice.tick(scope,ready);
         let mut view=state.view.clone();let owner=state.identity;
+        tick_clock(&state);
         view.latencies=state.party.as_ref().map_or_else(Vec::new,|p|p.latencies());
         drop(state);
         if let Ok(mut ui)=UI.lock(){ui.publish(view,owner);}
@@ -1733,6 +1734,24 @@ fn tick_locked() {
     super::star_stream::clear();
     super::spirits::begin_frame();
     let Ok(mut state) = STATE.try_lock() else {
+fn tick_clock(state:&Runtime) {
+    let owner=state.identity.or_else(||state.hub.as_ref().map(|h|h.owner));
+    let active=state.view.run.as_ref().filter(|r|!matches!(r.phase,Phase::Won|Phase::Dead)
+        && !state.hub.as_ref().is_some_and(|h|h.active) && PLAYER_READY.load(std::sync::atomic::Ordering::Relaxed));
+    let fight=active.and_then(|run|{
+        let node=state.pending.as_ref().filter(|p|!p.completed && p.foes.iter().any(|f|f.requested.is_some()||f.fight.handle().is_some()))
+            .and_then(|p|match p.next_run.phase {Phase::Combat{id}=>Some((id,0)),Phase::Node{id}=>Some((id,1+u64::from(run.regional_event.guard_slot.unwrap_or(0)))),_=>None});
+        if node.is_some(){return node;}
+        if let Some(p)=&state.party {
+            if !p.host() && p.spawn && !p.victory && !p.defeated && let Phase::Combat{id}=run.phase {return Some((id,0));}
+            if p.event.done.is_none() && let Some(scene)=&state.party_scene && scene.guards.as_ref().is_some_and(|g|g.spawn_requested())
+                && let Some(erdtree_tower::party_events::Kind::Guards(slot))=p.event.job.map(|j|j.kind)
+                && let Phase::Node{id}=scene.run.phase {return Some((id,1+u64::from(slot)));}
+        }
+        state.room.as_ref().filter(|r|r.hunter_defeated_at.is_none()&&r.hunter.as_ref().is_some_and(|g|g.spawn_requested())).map(|r|(r.node,4))
+    });
+    super::run_clock::tick(owner.zip(active),fight);
+}
         return;
     };
     if state.departure.as_mut().is_some_and(|departure|departure.tick()){state.departure=None;}

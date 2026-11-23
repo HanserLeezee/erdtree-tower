@@ -75,6 +75,7 @@ mod embers;
 mod debug_menu;
 mod gesture_trace;
 mod run_log;
+mod run_clock;
 mod build_panel;
 mod archive_ui;
 mod cosmetic_unlocks;
@@ -496,6 +497,7 @@ impl ImguiRenderLoop for TowerPreview {
         if run_screen {return;}
         if self.map_preview&&let Some(view)=view.as_ref().filter(|view|map_preview_available(view))&&let Some(run)=&view.run {
             menu_input.show();
+        if !run_screen {run_clock::draw(ui);}
             map_ui::preview(ui,run,view);
             if build_panel::open() {let rewards=&mut self.rewards;build_panel::draw(ui,run,view,&mut |icon|rewards.icon(icon));}
             return;

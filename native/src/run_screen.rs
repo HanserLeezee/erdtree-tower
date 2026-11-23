@@ -559,6 +559,9 @@ fn summary_page(ui:&Ui,record:&Record,gain:Option<Gain>,focus:&mut usize,from_ar
         let mut status=format!("{}  ·  {}  ·  第{}幕 第{}层",if won{"登顶成功"}else if dead{"旅程终结"}else{"暂离结算"},crate::map_ui::class_name(record.class),
             ["一","二","三"][usize::from(record.act.clamp(1,3)-1)],record.layer);
         if won {status=format!("登顶成功  ·  {}  ·  三幕全部通关",crate::map_ui::class_name(record.class));}
+        if let Some(seconds)=record.play_seconds {
+            status.push_str(&format!("  ·  {} {}",crate::i18n::t("本局用时"),crate::run_clock::format_time(seconds)));
+        }
         let status_y=number_top+height+30.0;
         let tag_width=if fresh {measure("新纪录",1.0)+48.0} else {best.filter(|_|!from_archive).map_or(0.0,|best|measure(&format!("历史最高 {} · {}",best.rank(),best.total()),0.95)+24.0)};
         let status_scale=1.3*((840.0-tag_width)/measure(&status,1.3).max(1.0)).min(1.0);

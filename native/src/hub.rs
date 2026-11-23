@@ -304,6 +304,7 @@ impl Hub {
             // 随机开局仍另取随机数（联机开局后 align_party_start 换成队伍种子，奖励随机数保持各人自己的）
             let reward_seed=match fixed {Some(seed)=>seed,None=>super::party::random_entropy()?};
             let mut run=Run::new_personal(seed,class,reward_seed);run.enable_contracts();
+            super::run_clock::new_run(self.owner,&run);
             run.set_law(std::mem::take(&mut self.law))?;
             if !run.law.is_empty() {super::log(format!("TOWER_LAW start code={} score={}",run.law.code(),run.law.score()));}
             run.set_start_talisman(talisman)?;

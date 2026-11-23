@@ -16,6 +16,7 @@ pub enum Outcome {Won,Dead,#[default] Ended}
 pub struct Record {
     /// 结束时间（Unix 秒）
     pub time:u64,
+    pub play_seconds:Option<u64>,
     pub seed:u64,
     /// true 时 seed 是整局种子，否则是本幕种子（读档继续的旧旅程）
     pub whole_seed:bool,
@@ -38,14 +39,14 @@ pub struct Record {
 }
 impl Default for Record {
     fn default()->Self {
-        Self{time:0,seed:0,whole_seed:true,class:Class::Vagabond,result:Outcome::Ended,act:1,layer:1,nodes:0,battles:0,items:0,flask:0,memory:0,
+        Self{time:0,play_seconds:None,seed:0,whole_seed:true,class:Class::Vagabond,result:Outcome::Ended,act:1,layer:1,nodes:0,battles:0,items:0,flask:0,memory:0,
             law:Law::default(),debug:false,oaths:vec![],embers:vec![],affixes:vec![],fights:vec![]}
     }
 }
 impl Record {
     pub fn new(run:&Run,fights:Vec<Fight>,affixes:Vec<String>,time:u64)->Self {
         let layer=run.visited.last().and_then(|&id|run.nodes.get(id)).map_or(1,|node|node.layer+1);
-        Self{time,seed:run.initial_seed.unwrap_or(run.seed),whole_seed:run.initial_seed.is_some()||run.act==1,class:run.class,
+        Self{time,play_seconds:None,seed:run.initial_seed.unwrap_or(run.seed),whole_seed:run.initial_seed.is_some()||run.act==1,class:run.class,
             result:match run.phase {Phase::Won=>Outcome::Won,Phase::Dead=>Outcome::Dead,_=>Outcome::Ended},
             act:run.act,layer:run.reached_layer.max(layer),nodes:run.completed_nodes,battles:run.completed_battles,items:run.claimed_items.len(),
             flask:run.flask_bonus,memory:run.memory_bonus,law:run.law,debug:run.debug,

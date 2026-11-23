@@ -1,4 +1,7 @@
 {
+  "本场用时": "Encounter",
+  "上场用时": "Last encounter",
+  "本局用时": "Run time",
   "选择": "Select",
   "确认": "Confirm",
   "重新选择": "Choose Again",

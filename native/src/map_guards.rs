@@ -46,6 +46,7 @@ impl Guards {
     pub fn map_combat_active(&self)->bool {self.active&&self.combat==enemies::MAP_COMBAT_FLAG}
     pub fn prepare(&mut self,world:&WorldChrMan)->Result<(),String> {
         if self.ready(){return Ok(());}
+    pub fn spawn_requested(&self)->bool {self.requested}
         if !self.reset {self.retire();self.reset=true;return Ok(());}
         if !self.requested {
             if self.combat==enemies::MAP_COMBAT_FLAG {

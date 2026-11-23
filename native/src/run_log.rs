@@ -36,7 +36,8 @@ fn affixes(run:&Run)->Vec<String> {
 /// 整局结束：生成结算记录并追加到 tower-runs.jsonl（一行一局），按角色存档给这一局的职业加熟练度，一并返回给结算页
 pub fn finish(run:&Run,fights:Vec<Fight>,owner:Option<(u32,i32)>)->(Record,Option<erdtree_tower::legacy::Gain>) {
     let time=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|t|t.as_secs());
-    let record=Record::new(run,fights,affixes(run),time);
+    let mut record=Record::new(run,fights,affixes(run),time);
+    record.play_seconds=owner.and_then(|owner|super::run_clock::total(owner,run));
     let result=std::fs::OpenOptions::new().create(true).append(true).open(archive_path()).and_then(|mut f|writeln!(f,"{}",record.line()));
     match result {Ok(())=>super::transmog::recorded(&record),Err(error)=>super::log(format!("Run archive write failed: {error}"))}
     let gain=owner.and_then(|owner|super::legacy::award(owner,&record));
