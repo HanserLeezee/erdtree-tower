@@ -87,6 +87,8 @@ if(args.Length==4&&args[3]=="tent-patch") {TentAssets.Patch(args[2],args[1],args
 if(args.Length==4&&args[3]=="capture-patch") {CaptureAssets.Patch(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="glintblade-patch") {TentAssets.PatchGlintblade(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="mind-patch") {MindAssets.Patch(args[2],args[1],args[0]);return;}
+if(args.Length==4&&args[3]=="phalanx-patch") {PhalanxAssets.Patch(args[2],args[1],args[0]);return;}
+if(args.Length==4&&args[3]=="heavycast-patch") {HeavyCastAssets.Patch(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="talisman-passive-build") {TalismanPassiveAssets.Build(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="patches-event-patch") {PatchesEventAssets.Patch(args[2],args[1],args[0]);return;}
 if(args.Length==4&&args[3]=="patches-event-inspect") {Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));PatchesEventAssets.Inspect(args[2]);return;}

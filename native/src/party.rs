@@ -86,6 +86,10 @@ impl EventSync {
         self.job.is_some_and(|j|matches!(j.kind,erdtree_tower::party_events::Kind::Guards(_))
             &&self.bound==Some(j.wave)&&self.applied!=Some(j.wave))&&self.hunting&&self.done.is_none()&&!self.aborted
     }
+    pub fn scarabs_active(&self)->bool {
+        self.job.is_some_and(|j|matches!(j.kind,erdtree_tower::party_events::Kind::Scarabs(_))
+            &&self.bound==Some(j.wave)&&self.applied!=Some(j.wave))&&self.hunting&&self.done.is_none()&&!self.aborted
+    }
 }
 
 #[cfg(test)]

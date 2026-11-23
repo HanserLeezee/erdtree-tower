@@ -14,7 +14,7 @@ static class EmberAssets {
     const float ResonanceAttack=1.4f;
     // 战技的精粹（与 src/embers.rs 的 ARTS_* 一致）：战技造成的伤害 ×1.25（复制原版只对战技生效的增伤 312310，与战技伤害词条同一模板）、战技专注消耗 ×0.5；持有即常驻
     const float ArtsAttack=1.25f,ArtsCost=0.5f;
-    const float ExecutionSeconds=10f,ExecutionStamina=0.5f,RevengeRate=1.3f,FrenzyStep=0.02f,CommandAttack=1.2f,CommandCut=0.8f;
+    const float ExecutionSeconds=10f,ExecutionStamina=0.5f,RevengeRate=1.3f,FrenzyStep=0.02f,CommandAttack=1.35f,CommandCut=0.75f;
     const int Buildup=40,FrenzyStacks=40,FlashVfx=1605000;
     // 叠层余烬（与 src/embers.rs 的常量一致）
     const float HarvestStep=0.01f;
@@ -83,7 +83,7 @@ static class EmberAssets {
         // 前 8 层编号保留；新增层使用 +100 至 +131，避开其他余烬效果。
         for(int stack=1;stack<=FrenzyStacks;stack++)rows.Add(Player(p,(stack<=8?First+30+stack:First+100+stack-9),$"Tower ember frenzy {stack}",1f+FrenzyStep*stack,-1f));
         var flash=Enemy(p,First+40,"Tower ember flash",1f);Set(flash,"vfxId",FlashVfx);rows.Add(flash);
-        // 灵唤铃的号令：挂在召唤物身上，伤害 +20%、受到的伤害 -20%（沿用敌人侧的中性模板）
+        // 孤王的契约（原灵唤铃的号令）：仅场上 1 组本机召唤物时挂在召唤物身上，伤害 +35%、受到的伤害 -25%（持续回血由运行时处理）
         var command=Enemy(p,First+50,"Tower ember spirit command",-1f);
         foreach(var element in new[]{"physics","magic","fire","thunder","dark"})Set(command,element+"AttackPowerRate",CommandAttack);
         foreach(var cut in new[]{"slash","blow","thrust","neutral","magic","fire","thunder","dark"})Set(command,cut+"DamageCutRate",CommandCut);

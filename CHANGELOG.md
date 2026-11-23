@@ -1,5 +1,41 @@
 # 更新记录
 
+## 2026-11-22 联机与骨灰修复
+
+- **新增星辉术士 / 祷誓者专属余烬「重咏之威」（史诗）**：
+  - 施放魔法或祷告时，按法术/祷告基础专注消耗每 `1` 点提供 `+1.5%` 法术与祷告伤害（最高计 `100` 点即 `+150%`；例如 48 专注的猩红艾奥尼亚/米凯拉的光 `+72%`，62 专注的龙王凋亡 `+93%`），且与省蓝效果（祷誓者被动、辉石的余韵）完全兼容不衰减。
+  - 通过两行轮换的法术/祷告专属效果 `SpEffectParam[9670045/9670046]`（复制 `330010` 保持 `wepParamChange=3` 不影响近战武器，同时开启 `magParamChange=1` 与 `miracleParamChange=1`）实时改写倍率，施法时短暂锁存 2.5 秒避免切法术丢在飞弹体加成；同步写入 `regulation.bin` 及显示物品 `9900043`（复用 `65023` 原生图标），补充专属徽记 `990043.rgba`、中/英文本与启动器离线图鉴。
+- **余烬「灵唤铃的号令」重做为「孤王的契约」**：
+  - 保留原有编号与史诗品质（旧存档兼容），效果由单纯常驻 `+20%` 增伤 / `-20%` 减伤重做为：**当场上仅有 1 组本机召唤物时，召唤物伤害 `+35%`、受到的伤害 `-25%`（`SpEffectParam[9670050]` 同步更新写入 `regulation.bin`），且每秒回复 `2%` 最大生命**；使用「双生的灵唤铃」召出第 2 组本机召唤物时立即摘除增益与回血，待其余组阵亡回落至 1 组时自动重新生效。同步更新中/英文本与启动器离线图鉴。
+- **新增星辉术士专属余烬「卡利亚剑阵」（史诗）**：
+  - 普攻命中敌人时回复 `5%` 最大专注（至少 `4` 点），并有 `30%` 概率召唤原版「卡利亚圆阵」（9 把魔力辉剑自动索敌追击），剑阵内置冷却 `12` 秒。
+  - 通过 `SpEffectParam[9670044]` → `BehaviorParam_PC[9670044]` → `Bullet[10430100]` 原生触发（不依赖事先施法或手持法杖，单人/联机均可用），同步写入 [regulation.bin](scene-assets/regulation.bin) 及拾取显示行 `9900042`（复用 `65040` 原生图标），补充专属 160×160 奖励徽记 `990042.rgba`、中/英文本与启动器离线图鉴（原生拾取弹窗标题 `item_dlc02.msgbnd.dcx` 需在 Windows 端补跑 `phalanx-patch` 写入）。
+- **修复骨灰缺少白色半透明灵体特效**（`scene-builder/SpiritVisualAssets.cs` 与 `scene-assets/regulation.bin`）：
+  - 原先 `SpiritVisualAssets` 使用了超出原版 `1..999` 编号段的 7 位 `PhantomParam` 编号 `9681000`，且 `alpha=0.85`、`diffMulColorA=0.9` 偏实心。现改用未占用的三位编号 **`205`** 并移除旧 `9681000` 行，将 `VFX[57000]`、全部 98 个自制骨灰 `phantomShaderId` 以及 4 个继承视觉覆盖效果统一指向 `205`，调校为明显的白色半透明灵体参数（`alpha=0.55`、`diffMulColorA=0.55`、冰白边缘 `235/245/255`、`glowScale=1.8`），原版与自制骨灰通用。
+- **自制骨灰联机防闪退加固（两层防护 + 同场软上限）**：
+  - **数据层深度对齐**（`scene-builder/SpiritNetAssets.cs` 与 `scene-assets/regulation.bin`）：除原有的 5 项联机字段外，把全部 98 个自制骨灰的 `NpcParam`（`isSoulGetByBoss`、`disableRespawn`、`sleepCollectorItemLotId_map`、`nameId`）与 `NpcThinkParam`（`backToHomeStuckAct`、`enableNaviFlg_Ladder`、`BackHome_LookTargetTime`、`BackHome_LookTargetDist`、`nonBattleActLife`）全部对齐到原版友军模板 `121000000`，消除 Boss 魂结算、卡死强制回出生点（`backToHomeStuckAct=1`）、爬梯导航、掉落表等从敌人表继承来的隐患。
+  - **运行时离场与切图防撞车**（`native/src/spirits/dismissal.rs`、`native/src/spirits.rs`、`native/src/runtime.rs`）：
+    - 收紧卡死骨灰强制清理超时：`dismissal.rs` 兜底窗口由原来的 `5s + delay`（约 8 秒）收紧到 `1.5s + min(delay, 1.5s)`（最长 3 秒，与 1.5 秒淡出衔接），减少切图/领奖时僵死自制骨灰滞留时间。
+    - 切图/暂退前主动清场与日志取证：传送战斗房、服务房、试炼、暂退回大赐福及传送门结算前调用 `spirits::prepare_warp` / `spirits::log_remaining`，记录场上残留的本机与远程骨灰，关闭召唤点 hook 并立即走原生按主清理 `0x4bba80`；暂退快照在仍有本机召唤组滞留时等待清理完成。
+    - `summon_buddy_chr_set` 同场软上限：使用「双生的灵唤铃」多召时，联机限制在 `min(capacity - 4, 8)`，单人限制在 `min(capacity - 2, 24)`，给引擎和队友预留槽位余量，触达上限时给出提示，待部分召唤物阵亡或离场后自动恢复继续召唤。
+- **双生的灵唤铃修复并重做（重新启用）**：
+  - 取消退役状态，效果重做为**每场战斗可召唤任意数量骨灰同时在场**，胜利时对各组分别判断存活并返还骨灰（实际并发上限受游戏 `summon_buddy_chr_set` 实体槽位限制）。
+  - 修复 `Spirits::poll` 在 `SUMMONED_FLAG` 为真时提前返回导致 `BOUND` 被 `begin_frame` 清零、`replacement_clear` 误放行旧组清除的问题，并在 `request` 阶段同步清掉 `player_has_alive_summon`，移除只能多召一次的 `SECOND_ACCEPTED` / `twin_reopened` 限制。
+  - 修复 `spirits::refund::pump` 一次提交超过 2 种返还骨灰时触发 `items::give` 2 条上限报错的问题，改为按每批 2 种分批发放并各自记录确认目标。
+  - 同步更新中/英余烬文本与启动器离线图鉴（原生拾取弹窗文本 `item_dlc02.msgbnd.dcx` 需在 Windows 端重新打包）。
+- **余烬「灵魂收容」改为仅本机召唤物击杀叠层**：玩家本人击杀不再叠层；优先按敌人 `last_hit_by` 判定是否为本机召唤物，若为空则按最近弹体归属（召唤物 / 玩家 / 队友）和最近距离兜底。同步更新中/英文本与启动器离线图鉴。
+- **余烬「米凯拉之刃」吸血 8% → 6%**：调整 `src/embers.rs` 的 `LIFESTEAL_PERCENT`（游戏内余烬卡片、英文/繁体模板与启动器离线图鉴同步更新；原生背包里的余烬关键道具说明需在 Windows 端重建文本包同步）。
+
+- **余烬与 Boss 荆棘只认本机召唤物**：`spirits::local_handles` / `local_living_handles` 按 `owner` 与 `!is_remote` 过滤 `SummonBuddyManager.groups`，替换 `embers.rs` 与 `boss_affixes.rs` 里遍历 `summon_buddy_chr_set` 的全部逻辑。队友的远程召唤物不再误触发本机的灵魂共鸣、灵魂收容、灵骸迸裂、击杀/命中归属或 Boss 荆棘反伤；仿身泪滴的替身、灵唤铃的号令、众灵的盛宴只作用在本机召唤物上，号令与盛宴同时覆盖全部在场的本机召唤物。
+- **修复骨灰返还后永久卡住暂退保存**：`refund::pump` 确认全部返还到账后清空 `state.ash_refunds`（之前只清了 `ash_guard`，导致单人暂退与联机全队暂退持续报“等待当前交易、领奖或传送完成”）。暂退回大赐福时同步清理骨灰返还状态。
+- **补齐联机客机铃珠猎人与联机粪金龟的骨灰返还**：客机在 `sync_merchant_reward` 收到 `phase == 3` 结算时调用 `keep_summoned_ash` 并请求召唤物离场；`tick_party_scarabs` 结算时同样调用 `keep_summoned_ash` 并请求离场；`ash_fighting` 纳入 `EventSync::scarabs_active()`，铃珠猎人击败后的 8 秒尸体停留期不再拖延返还。
+- **修复双生的灵唤铃、召唤师再召唤与连战骨灰追踪边界**：
+  - 开战前已召唤第一只骨灰时，`SpiritTwin` 不再要求 `SUMMONED_FLAG` 为 `true` 才重开召唤点。
+  - 召唤师「群灵」在本机召唤物全部阵亡且 `RESUMMON_ARMED` 时，同步在 `clear_frame` 与 `request` 清掉残留的 `player_has_alive_summon`，避免被原版或联机残留状态拒绝再召唤。
+  - 被拒召唤的骨灰退还（`TWIN_REFUND`）改走 `spirits::refund::refund_rejected`，按账本实时库存与已接受使用次数核算，支持战中捕灵壶/商店新拿到的骨灰，也避免 2 份同种骨灰未扣减时多退，并防止退回的骨灰被账本误计为新获得。
+  - 上一场已冻结的返还（`ash_guard.is_some()`）在非传送、角色存活时继续推进发放，不再被快速进入下一场的 `ash_fighting` 卡死并阻塞新一场的骨灰追踪。
+- **铃珠猎人与粪金龟狩猎开放召唤点**：`summon_scope` 扩展覆盖单人/联机商店铃珠猎人与单人/联机粪金龟狩猎（仍遵守苦难律法「孤狼」）。
+
 ## 2026-11-19 舞会：上手更容易
 
 - 普通难度每句拉长到 8 拍（122 BPM 约 4 秒一句，句数减半）；困难保持原来的 4 拍一句。

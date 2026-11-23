@@ -13,7 +13,7 @@ from PIL import Image
 FIRST, SIZE = 990000, 160
 ATLASES = [("emblems.png", 4, 3, ["无声处刑", "鲜血君王的赐福", "永冻吐息", "死诞之焰", "米凯拉之刃", "荷莱·露的再起",
                                   "古龙之心", "以血还血", "癫火狂热", "圣杯余响", "噬神之蛇的饱食", "荆棘之躯"]),
-           ("emblems-summon.png", 2, 2, ["仿身泪滴的替身", "灵骸迸裂", "众灵的盛宴", "灵唤铃的号令"]),
+           ("emblems-summon.png", 2, 2, ["仿身泪滴的替身", "灵骸迸裂", "众灵的盛宴", "孤王的契约"]),
            ("emblems-twin.png", 1, 1, ["双生的灵唤铃"]),
            ("emblems-stack.png", 2, 2, ["噬魂者", "处刑之链", "屠神者", "灵魂收容"]),
            ("emblems-mage.png", 2, 2, ["托普斯的力场", "亚兹勒的冥想", "辉石的余韵", "蕾娜拉的满月"]),
@@ -30,7 +30,9 @@ ATLASES = [("emblems.png", 4, 3, ["无声处刑", "鲜血君王的赐福", "永�
            ("emblems-battlemage.png", 1, 1, ["战斗法师"]),
            # 以下按 Ember::index 指定起点（990036 是已移除的疾行者的轻羽）
            ("emblems-frostshackle.png", 1, 1, ["寒霜枷锁"], 990037),
-           ("emblems-late.png", 2, 2, ["帐篷", "捕灵壶", "魔力辉剑", "由心及物"], 990038)]
+           ("emblems-late.png", 2, 2, ["帐篷", "捕灵壶", "魔力辉剑", "由心及物"], 990038),
+           ("emblems-phalanx.png", 1, 1, ["卡利亚剑阵"], 990042),
+           ("emblems-heavycast.png", 1, 1, ["重咏之威"], 990043)]
 
 assets = Path(sys.argv[1])
 destination = assets / "reward-icons"

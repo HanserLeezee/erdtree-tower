@@ -16,18 +16,69 @@ static REGISTER:AtomicUsize=AtomicUsize::new(0);
 static BOUND:AtomicUsize=AtomicUsize::new(0);
 pub fn begin_frame(){ACTIVE.store(false,Ordering::Release);BOUND.store(0,Ordering::Release);TWIN_ARMED.store(false,Ordering::Release);}
 pub fn set_active(active:bool){ACTIVE.store(active,Ordering::Release);if !active {BOUND.store(0,Ordering::Release);RESUMMON_ARMED.store(false,Ordering::Release);reset_twin();}}
-/// 双生的灵唤铃（余烬，单人与联机）：第一只召唤物在场时重新开放召唤点，再召唤一次。房主走 Pending 的召唤点、成员走 party_spirits，都经过 Spirits::poll。
-/// 原版只记一个“当前召唤”，场上有召唤物时不让用骨灰，所以在“使用前检查”的阶段把“有存活召唤物”暂时清掉（ARMED）。
-/// 第二次请求接受后，仅跳过更新函数中新召唤替换旧组的那一次清除。
+/// 双生的灵唤铃（余烬，单人与联机）：允许在同一场战斗中召唤任意数量的骨灰同时在场。房主走 Pending 的召唤点、成员走 party_spirits，都经过 Spirits::poll。
+/// 原版只记一个“当前召唤”，场上有召唤物时不让用骨灰，所以在“使用前检查”和请求阶段把“有存活召唤物”暂时清掉（ARMED）。
+/// 每次请求接受后，仅跳过更新函数中新召唤替换旧组的那一次清除（0x4b8a90 -> 0x4bba80），让新旧召唤物共存。
 static TWIN:AtomicBool=AtomicBool::new(false);
 static TWIN_ARMED:AtomicBool=AtomicBool::new(false);
-static SECOND_ACCEPTED:AtomicBool=AtomicBool::new(false);
+static PARTY:AtomicBool=AtomicBool::new(false);
+static CAP_NOTICED:AtomicBool=AtomicBool::new(false);
+static CAP_NOTICE:Mutex<Option<String>>=Mutex::new(None);
 static REPLACE_ORIGINAL:AtomicUsize=AtomicUsize::new(0);
 static REPLACE_CALLER:AtomicUsize=AtomicUsize::new(0);
 static REPLACE_READY:AtomicBool=AtomicBool::new(false);
 static REPLACEMENT:Mutex<Option<(usize,i32)>>=Mutex::new(None);
+const PARTY_SUMMON_SOFT_CAP:usize=8;
+const SOLO_SUMMON_SOFT_CAP:usize=24;
+pub fn set_party(party:bool){PARTY.store(party,Ordering::Release);}
+pub fn take_cap_notice()->Option<String>{CAP_NOTICE.lock().ok().and_then(|mut g|g.take())}
+fn summon_slot_budget(capacity:usize,party:bool)->usize {
+    if party {capacity.saturating_sub(4).min(PARTY_SUMMON_SOFT_CAP)}
+    else {capacity.saturating_sub(2).min(SOLO_SUMMON_SOFT_CAP)}
+}
+fn summon_capacity_ok(used:usize,capacity:usize,party:bool)->bool {
+    capacity==0||used<summon_slot_budget(capacity,party)
+}
+fn pool_usage(manager:&eldenring::cs::SummonBuddyManager)->(usize,usize) {
+    let chr_set=unsafe {manager.chr_set.as_ref()};
+    let capacity=chr_set.capacity as usize;
+    let occupied=chr_set.characters().count();
+    let grouped=manager.groups.iter().flat_map(|pair|pair.second.iter()).count();
+    (occupied.max(grouped),capacity)
+}
+pub fn has_local_groups(world:&WorldChrMan)->bool {
+    let Some(owner)=world.main_player.as_ref().map(|p|unsafe {p.player_game_data.as_ref()}.character_event_id as i32) else{return false;};
+    world.summon_buddy_manager.groups.iter().filter(|pair|pair.first==owner)
+        .flat_map(|pair|pair.second.iter()).any(|group|!group.is_remote)
+}
+/// 切图 / 传送门 / 暂退前记录场上残留的本机与远程骨灰，并立即清理本机残留召唤组，避免地图卸载与骨灰销毁撞车。
+pub fn log_remaining(world:&WorldChrMan,reason:&str) {
+    let entries:Vec<_>=world.summon_buddy_manager.groups.iter().flat_map(|pair| {
+        let owner=pair.first;
+        pair.second.iter().map(move |group| {
+            let chr=unsafe {group.chr_ins.as_ref()};
+            format!("owner={owner} buddy={} npc={} remote={} hp={}/{} dismiss={} delay={:.2}",
+                group.buddy_param_id,chr.npc_param_id,group.is_remote,chr.modules.data.hp,chr.modules.data.max_hp,group.disappear_requested,group.disappear_delay_sec)
+        })
+    }).collect();
+    if !entries.is_empty() {
+        let (used,capacity)=pool_usage(&world.summon_buddy_manager);
+        super::log(format!("ASH_SAFETY {reason}: pool={used}/{capacity} active_goods={} pending={} entries=[{}]",
+            world.summon_buddy_manager.active_summon_goods_id,world.summon_buddy_manager.request_summon_speffect_id,entries.join("; ")));
+    }
+}
+pub fn prepare_warp(world:&mut WorldChrMan,reason:&str) {
+    set_active(false);
+    log_remaining(world,reason);
+    world.summon_buddy_manager.disappear_requested=true;
+    if !REPLACE_READY.load(Ordering::Acquire) {return;}
+    let Some(owner)=world.main_player.as_ref().map(|p|unsafe {p.player_game_data.as_ref()}.character_event_id as i32) else{return;};
+    let manager: *mut u8 = std::ptr::from_mut(&mut *world.summon_buddy_manager).cast();
+    unsafe {dismissal::clear_local_now(manager,owner,REPLACE_ORIGINAL.load(Ordering::Acquire));}
+}
 fn reset_twin() {
-    TWIN_ARMED.store(false,Ordering::Release);SECOND_ACCEPTED.store(false,Ordering::Release);
+    TWIN_ARMED.store(false,Ordering::Release);
+    CAP_NOTICED.store(false,Ordering::Release);
     if let Ok(mut gate)=REPLACEMENT.lock(){*gate=None;}
 }
 fn preserve_replacement(ticket:Option<(usize,i32)>,manager:usize,effect:i32,at_replacement:bool,enabled:bool,cancel:bool)->bool {
@@ -43,10 +94,10 @@ unsafe extern "C" fn replacement_clear(manager:*mut u8,owner:i32,caller:usize) {
     if ACTIVE.load(Ordering::Acquire)&&TWIN.load(Ordering::Acquire) {
         let buddy=unsafe {&*manager.cast::<eldenring::cs::SummonBuddyManager>()};
         let ticket=REPLACEMENT.lock().ok().and_then(|g|*g);
-        super::log(format!("TOWER_TWIN clear audit: caller_match={} owner={owner} pending={} cancel={} second={} bound={} ticket={ticket:?}",caller==expected,buddy.request_summon_speffect_id,buddy.disappear_requested,SECOND_ACCEPTED.load(Ordering::Acquire),BOUND.load(Ordering::Acquire)==manager as usize));
+        super::log(format!("TOWER_TWIN clear audit: caller_match={} owner={owner} pending={} cancel={} bound={} ticket={ticket:?}",caller==expected,buddy.request_summon_speffect_id,buddy.disappear_requested,BOUND.load(Ordering::Acquire)==manager as usize));
     }
     if expected!=0&&caller==expected&&ACTIVE.load(Ordering::Acquire)&&TWIN.load(Ordering::Acquire)
-        &&SECOND_ACCEPTED.load(Ordering::Acquire)&&BOUND.load(Ordering::Acquire)==manager as usize {
+        &&BOUND.load(Ordering::Acquire)==manager as usize {
         let buddy=unsafe {&*manager.cast::<eldenring::cs::SummonBuddyManager>()};
         let living_player=unsafe {eldenring::cs::PlayerIns::local_player()}.is_ok_and(|p|p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag()&&unsafe {p.player_game_data.as_ref()}.character_event_id as i32==owner&&super::arenas::for_block(i32::from(p.current_block_id)).is_some());
         let mut preserved=false;
@@ -54,7 +105,7 @@ unsafe extern "C" fn replacement_clear(manager:*mut u8,owner:i32,caller:usize) {
             preserved=preserve_replacement(*gate,manager as usize,buddy.request_summon_speffect_id,true,living_player,buddy.disappear_requested);
         }
         if preserved {
-            super::log(format!("TOWER_TWIN preserved first group: owner={owner} pending={} caller=4b8a95",buddy.request_summon_speffect_id));return;
+            super::log(format!("TOWER_TWIN preserved existing groups: owner={owner} pending={} caller=4b8a95",buddy.request_summon_speffect_id));return;
         }
     }
     unsafe {original(manager,owner);}
@@ -75,6 +126,33 @@ fn local_buddies(manager:&eldenring::cs::SummonBuddyManager,owner:i32)->usize {
         !group.is_remote&&chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag()
     }).count()
 }
+pub fn local_handles(world:&WorldChrMan)->Vec<eldenring::cs::FieldInsHandle> {
+    let Some(owner)=world.main_player.as_ref().map(|p|unsafe {p.player_game_data.as_ref()}.character_event_id as i32) else{return Vec::new();};
+    world.summon_buddy_manager.groups.iter().filter(|pair|pair.first==owner)
+        .flat_map(|pair|pair.second.iter()).filter(|group|!group.is_remote)
+        .map(|group|unsafe {group.chr_ins.as_ref()}.field_ins_handle).collect()
+}
+pub fn local_living_handles(world:&WorldChrMan)->Vec<eldenring::cs::FieldInsHandle> {
+    let Some(owner)=world.main_player.as_ref().map(|p|unsafe {p.player_game_data.as_ref()}.character_event_id as i32) else{return Vec::new();};
+    world.summon_buddy_manager.groups.iter().filter(|pair|pair.first==owner)
+        .flat_map(|pair|pair.second.iter()).filter(|group| {
+            let chr=unsafe {group.chr_ins.as_ref()};
+            !group.is_remote&&chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag()&&!chr.debug_flags.character_disabled()
+        }).map(|group|unsafe {group.chr_ins.as_ref()}.field_ins_handle).collect()
+}
+/// 场上当前存活的本机召唤物组数：战斗中优先按 refund 账本按次统计（同一骨灰连召两组也记 2 组），账本未开启时按 buddy_param_id/1000 去重兜底。
+pub fn local_living_group_count(world:&WorldChrMan)->usize {
+    let Some(owner)=world.main_player.as_ref().map(|p|unsafe {p.player_game_data.as_ref()}.character_event_id as i32) else{return 0;};
+    let mut families=std::collections::BTreeSet::new();
+    for group in world.summon_buddy_manager.groups.iter().filter(|pair|pair.first==owner).flat_map(|pair|pair.second.iter()) {
+        let chr=unsafe {group.chr_ins.as_ref()};
+        if !group.is_remote&&chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag()&&!chr.debug_flags.character_disabled() {
+            families.insert(group.buddy_param_id/1000);
+        }
+    }
+    if families.is_empty() {return 0;}
+    refund::living_groups().filter(|&n|n>0).unwrap_or(families.len())
+}
 fn resummon_ready(manager:&eldenring::cs::SummonBuddyManager)->bool {
     if !ACTIVE.load(Ordering::Acquire)||BOUND.load(Ordering::Acquire)!=std::ptr::from_ref(manager) as usize{return false;}
     let Ok(player)=(unsafe {eldenring::cs::PlayerIns::local_player()}) else{return false;};
@@ -91,8 +169,8 @@ pub fn set_twin(on:bool){let on=on&&REPLACE_READY.load(Ordering::Acquire);if TWI
 fn refresh_allowed(active:bool,bound:usize,manager:usize,block:i32,alive:bool,used:bool)->bool {
     active&&bound!=0&&bound==manager&&eligible(block,alive,used)
 }
-fn second_use_allowed(armed:bool,spent:bool,pending:i32,cooldown:f32,in_range:bool,cancel:bool)->bool {
-    armed&&!spent&&pending<0&&cooldown<=0.0&&in_range&&!cancel
+fn twin_use_allowed(armed:bool,pending:i32,cooldown:f32,in_range:bool,cancel:bool)->bool {
+    armed&&pending<0&&cooldown<=0.0&&in_range&&!cancel
 }
 unsafe extern "C" fn use_state(manager:*mut u8,goods:i32)->i32 {
     let original:unsafe extern "C" fn(*mut u8,i32)->i32=unsafe {std::mem::transmute(USE_STATE.load(Ordering::Acquire))};
@@ -103,9 +181,9 @@ unsafe extern "C" fn use_state(manager:*mut u8,goods:i32)->i32 {
     if ACTIVE.load(Ordering::Acquire)&&TWIN.load(Ordering::Acquire)&&BOUND.load(Ordering::Acquire)==manager as usize {
         let buddy=unsafe {&*manager.cast::<eldenring::cs::SummonBuddyManager>()};
         let range=buddy.is_within_activation_range&&buddy.buddy_stone_entity_id!=0;
-        if second_use_allowed(TWIN_ARMED.load(Ordering::Acquire),SECOND_ACCEPTED.load(Ordering::Acquire),buddy.request_summon_speffect_id,buddy.item_use_cooldown_timer,range,buddy.disappear_requested)
+        if twin_use_allowed(TWIN_ARMED.load(Ordering::Acquire),buddy.request_summon_speffect_id,buddy.item_use_cooldown_timer,range,buddy.disappear_requested)
             &&super::native_talk::flag(SUMMONED_FLAG)==Ok(false)
-            &&(goods==-1||erdtree_tower::rewards::spirit_level(0x40000000|goods as u32).is_some())
+            &&(goods==-1||goods>=0&&erdtree_tower::rewards::spirit_level(0x40000000|goods as u32).is_some())
             &&unsafe {eldenring::cs::PlayerIns::local_player()}.is_ok_and(|p|p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag()&&super::arenas::for_block(i32::from(p.current_block_id)).is_some()) {
             return 0;
         }
@@ -118,8 +196,11 @@ unsafe extern "C" fn clear_frame(manager:*mut u8) {
     unsafe {fade::tick(manager);}
     if REPLACE_READY.load(Ordering::Acquire) {unsafe {dismissal::tick(manager,REPLACE_ORIGINAL.load(Ordering::Acquire));}}
     if !ACTIVE.load(Ordering::Acquire)||BOUND.load(Ordering::Acquire)!=manager as usize {return;}
-    // 双生的灵唤铃：第一只还在场时，让骨灰在这一阶段的使用检查里可用
-    if TWIN_ARMED.load(Ordering::Acquire) {unsafe {(*manager.cast::<eldenring::cs::SummonBuddyManager>()).player_has_alive_summon=false;}}
+    // 双生的灵唤铃 / 召唤师「群灵」：允许继续召唤时，在这一阶段的使用检查里清掉残留的“有存活召唤物”标记
+    let buddy=unsafe {&mut *manager.cast::<eldenring::cs::SummonBuddyManager>()};
+    let resummon_clear=RESUMMON.load(Ordering::Acquire)&&RESUMMON_ARMED.load(Ordering::Acquire)&&buddy.request_summon_speffect_id<0
+        &&unsafe {eldenring::cs::PlayerIns::local_player()}.is_ok_and(|p|local_buddies(buddy,unsafe {p.player_game_data.as_ref()}.character_event_id as i32)==0);
+    if TWIN_ARMED.load(Ordering::Acquire)||resummon_clear {buddy.player_has_alive_summon=false;}
     let Ok(world)=(unsafe {WorldChrMan::instance_mut()}) else {return;};
     let Some(player)=world.main_player.as_mut() else {return;};
     let used=super::native_talk::flag(SUMMONED_FLAG).unwrap_or(true);
@@ -146,10 +227,17 @@ unsafe extern "C" fn request(manager:*mut u8,effect:i32)->bool {
     let state=unsafe {query(manager,-1)};
     let field=|offset|unsafe {manager.add(offset).cast::<i32>().read()};
     super::log(format!("Spirit use request: effect={effect} state={state} stone={} active_stone={} goods={} active_goods={} twin_armed={}",field(0x38),field(0x3c),field(0xe0),field(0xe4),TWIN_ARMED.load(Ordering::Acquire)));
-    let twin=TWIN_ARMED.load(Ordering::Acquire)&&BOUND.load(Ordering::Acquire)==manager as usize;let goods=field(0xe0);
+    let twin=TWIN.load(Ordering::Acquire)&&TWIN_ARMED.load(Ordering::Acquire)&&BOUND.load(Ordering::Acquire)==manager as usize;let goods=field(0xe0);
     let resummon=resummon_ready(unsafe {&*manager.cast::<eldenring::cs::SummonBuddyManager>()});
     // A native state-2 rejection requests disappearance; only clear it after all local summons are dead.
-    if resummon {unsafe {(*manager.cast::<eldenring::cs::SummonBuddyManager>()).disappear_requested=false;}}
+    if resummon {
+        let buddy=unsafe {&mut *manager.cast::<eldenring::cs::SummonBuddyManager>()};
+        buddy.disappear_requested=false;
+        buddy.player_has_alive_summon=false;
+    } else if twin {
+        let buddy=unsafe {&mut *manager.cast::<eldenring::cs::SummonBuddyManager>()};
+        if !buddy.disappear_requested&&buddy.request_summon_speffect_id<0 {buddy.player_has_alive_summon=false;}
+    }
     let usage=(BOUND.load(Ordering::Acquire)==manager as usize).then(||refund::capture(unsafe {&*manager.cast::<eldenring::cs::SummonBuddyManager>()},goods,effect)).flatten();
     if let Ok(mut gate)=REPLACEMENT.lock(){*gate=None;}
     let accepted=unsafe {original(manager,effect)};
@@ -157,8 +245,8 @@ unsafe extern "C" fn request(manager:*mut u8,effect:i32)->bool {
     if accepted&&let Some(usage)=usage {refund::accepted(usage);}
     TWIN_ARMED.store(false,Ordering::Release);
     if twin&&accepted {
-        SECOND_ACCEPTED.store(true,Ordering::Release);
         if let Ok(mut gate)=REPLACEMENT.lock(){*gate=Some((manager as usize,effect));}
+        super::log(format!("TOWER_TWIN accepted goods={goods} effect={effect}; existing groups protected"));
     }
     super::log(format!("Spirit use result: accepted={accepted} pending={} active={} stone={}",field(0x20),field(0x24),field(0x3c)));
     if (twin||resummon)&&!accepted&&goods>0 {TWIN_REFUND.store(goods,Ordering::Release);super::log(format!("TOWER_SUMMON request rejected; ash {goods} will be returned"));}
@@ -208,15 +296,16 @@ unsafe fn install_trace()->Result<(),String> {
 pub const SUMMONED_FLAG:u32=45020968;
 #[derive(Default)]
 pub struct Spirits {script:Option<TalkScript>,reported:bool,failed:bool,status:Option<(u32,bool,bool,bool)>,registration:Option<u32>,
-    /// 双生的灵唤铃：这场战斗已经重新开放过召唤点；上一次记录的存活召唤物数量
-    twin_reopened:bool,buddies:Option<usize>,
+    /// 上一次记录的本机存活召唤物数量
+    buddies:Option<usize>,
     /// 召唤师再召唤：这一轮召唤的召唤物已经出场过（出场前召唤物数为 0，不能当成阵亡）
     spirit_seen:bool}
 // Accessed only from the serialized game task, like the native NPC dialogs.
 unsafe impl Send for Spirits {}
 
-/// 第二只还没召：已经重新开放、召唤点没再用掉、场上有第一只
-fn twin_armed(twin:bool,reopened:bool,used:bool,buddies:usize)->bool {twin&&reopened&&!used&&buddies>0}
+/// 双生的灵唤铃：当前没有待处理召唤且未请求离场时，始终重新开放召唤点，允许召唤任意数量骨灰同时在场
+fn twin_reopen_allowed(twin:bool,used:bool,pending:i32,cancel:bool)->bool {twin&&used&&pending<0&&!cancel}
+fn twin_armed(twin:bool,used:bool,pending:i32,cancel:bool)->bool {twin&&!used&&pending<0&&!cancel}
 fn eligible(block:i32,combat:bool,used:bool)->bool {super::arenas::for_block(block).is_some()&&combat&&!used}
 impl Spirits {
     pub fn poll(&mut self,world:&WorldChrMan,block:i32,combat:bool)->Result<(),String> {
@@ -238,36 +327,52 @@ impl Spirits {
         }
         let mut used=super::native_talk::flag(SUMMONED_FLAG)?;
         let manager=&world.summon_buddy_manager;
+        // 即使 SUMMONED_FLAG 暂时为 true（正在处理跨帧召唤请求），也必须保持 BOUND 有效，否则 replacement_clear 会放行旧组清除。
+        BOUND.store(std::ptr::from_ref(&**manager) as usize,Ordering::Release);
         if let Ok(mut gate)=REPLACEMENT.lock() {
             if gate.is_some_and(|(address,effect)|address!=std::ptr::from_ref(&**manager) as usize||effect!=manager.request_summon_speffect_id) {*gate=None;}
         }
         let owner=world.main_player.as_ref().map(|p|unsafe {p.player_game_data.as_ref()}.character_event_id as i32);
         let buddies=owner.map_or(0,|owner|local_buddies(manager,owner));
         if self.buddies!=Some(buddies) {
-            super::log(format!("TOWER_TWIN alive spirits={buddies} (was {:?}) active_goods={} active_effect={} alive_flag={} reopened={}",self.buddies,manager.active_summon_goods_id,manager.active_summon_speffect_id,manager.player_has_alive_summon,self.twin_reopened));
+            super::log(format!("TOWER_TWIN alive spirits={buddies} (was {:?}) active_goods={} active_effect={} alive_flag={}",self.buddies,manager.active_summon_goods_id,manager.active_summon_speffect_id,manager.player_has_alive_summon));
             self.buddies=Some(buddies);
         }
         if buddies>0 {self.spirit_seen=true;}
         if owner.is_some()&&manager.request_summon_speffect_id<0&&resummon_allowed(RESUMMON.load(Ordering::Acquire),used,self.spirit_seen,buddies) {
             super::native_talk::set_flag(SUMMONED_FLAG,false)?;
-            used=false;self.spirit_seen=false;self.twin_reopened=false;reset_twin();
+            used=false;self.spirit_seen=false;reset_twin();
             RESUMMON_ARMED.store(true,Ordering::Release);
             super::log(format!("TOWER_RESUMMON all local spirits are gone; native use armed; active_goods={} active_effect={}",manager.active_summon_goods_id,manager.active_summon_speffect_id));
         }
         let twin=TWIN.load(Ordering::Acquire);
-        if used&&twin&&!self.twin_reopened&&buddies>0 {
-            super::native_talk::set_flag(SUMMONED_FLAG,false)?;
-            self.twin_reopened=true;used=false;
-            super::log("TOWER_TWIN first spirit is out; summon point reopened for a second spirit");
+        let party=PARTY.load(Ordering::Acquire);
+        let (used_slots,capacity)=pool_usage(manager);
+        let within_cap=summon_capacity_ok(used_slots,capacity,party);
+        if twin&&!within_cap {
+            if !CAP_NOTICED.swap(true,Ordering::AcqRel) {
+                let budget=summon_slot_budget(capacity,party);
+                super::log(format!("TOWER_TWIN paused at summon safety cap: used={used_slots} budget={budget} capacity={capacity} party={party}"));
+                if let Ok(mut notice)=CAP_NOTICE.lock() {
+                    *notice=Some(if party {format!("场上召唤物已达联机安全上限（{budget}），待部分离场或阵亡后可继续召唤。")}
+                        else {format!("场上召唤物已达引擎安全上限（{budget}），待部分阵亡后可继续召唤。")});
+                }
+            }
+        } else if within_cap {
+            CAP_NOTICED.store(false,Ordering::Release);
         }
-        TWIN_ARMED.store(twin_armed(twin&&!SECOND_ACCEPTED.load(Ordering::Acquire),self.twin_reopened,used,buddies),Ordering::Release);
+        if twin_reopen_allowed(twin&&within_cap,used,manager.request_summon_speffect_id,manager.disappear_requested) {
+            super::native_talk::set_flag(SUMMONED_FLAG,false)?;
+            used=false;
+            super::log(format!("TOWER_TWIN summon point reopened for additional spirit (alive={buddies} pool={used_slots}/{capacity})"));
+        }
+        TWIN_ARMED.store(twin_armed(twin&&within_cap,used,manager.request_summon_speffect_id,manager.disappear_requested),Ordering::Release);
         let status=(manager.buddy_stone_entity_id,manager.is_within_activation_range,manager.player_has_alive_summon,used);
         if self.status!=Some(status) {
             super::log(format!("Spirit state: stone={} range={} alive={} used={} cooldown={}",status.0,status.1,status.2,status.3,manager.item_use_cooldown_timer));
             self.status=Some(status);
         }
         if used {return Ok(());}
-        BOUND.store(std::ptr::from_ref(&**manager) as usize,Ordering::Release);
         let script=self.script.as_mut().unwrap();
         // Native t000002000 refreshes the short-lived summon permission before registration.
         for id in [9530,84] {
@@ -298,38 +403,35 @@ mod tests {
         assert!(!allowed(true,true,-1,0.0,true,1));
     }
     #[test]
-    fn frame_pause_keeps_accepted_second_request_until_encounter_cleanup() {
+    fn frame_pause_keeps_accepted_twin_request_until_encounter_cleanup() {
         super::ACTIVE.store(true,super::Ordering::Release);
         super::BOUND.store(10,super::Ordering::Release);
-        super::SECOND_ACCEPTED.store(true,super::Ordering::Release);
         super::RESUMMON_ARMED.store(true,super::Ordering::Release);
         *super::REPLACEMENT.lock().unwrap()=Some((10,232000));
         super::begin_frame();
         assert!(!super::ACTIVE.load(super::Ordering::Acquire));
-        assert!(super::SECOND_ACCEPTED.load(super::Ordering::Acquire));
         assert!(super::RESUMMON_ARMED.load(super::Ordering::Acquire));
         assert_eq!(*super::REPLACEMENT.lock().unwrap(),Some((10,232000)));
         super::set_active(true);
-        assert!(super::SECOND_ACCEPTED.load(super::Ordering::Acquire));
+        assert_eq!(*super::REPLACEMENT.lock().unwrap(),Some((10,232000)));
         super::set_active(false);
         assert!(!super::RESUMMON_ARMED.load(super::Ordering::Acquire));
-        assert!(!super::SECOND_ACCEPTED.load(super::Ordering::Acquire));
         assert_eq!(*super::REPLACEMENT.lock().unwrap(),None);
     }
     #[test]
-    fn second_use_preserves_cooldown_range_and_single_extra_use() {
-        use super::second_use_allowed as allowed;
-        assert!(allowed(true,false,-1,0.0,true,false));
-        assert!(!allowed(false,false,-1,0.0,true,false));
-        assert!(!allowed(true,true,-1,0.0,true,false));
-        assert!(!allowed(true,false,212000,0.0,true,false));
-        assert!(!allowed(true,false,-1,0.01,true,false));
-        assert!(!allowed(true,false,-1,f32::NAN,true,false));
-        assert!(!allowed(true,false,-1,0.0,false,false));
-        assert!(!allowed(true,false,-1,0.0,true,true));
+    fn twin_use_preserves_cooldown_range_and_cancel_guards() {
+        use super::twin_use_allowed as allowed;
+        assert!(allowed(true,-1,0.0,true,false));
+        assert!(allowed(true,-1,-0.01,true,false));
+        assert!(!allowed(false,-1,0.0,true,false));
+        assert!(!allowed(true,212000,0.0,true,false));
+        assert!(!allowed(true,-1,0.01,true,false));
+        assert!(!allowed(true,-1,f32::NAN,true,false));
+        assert!(!allowed(true,-1,0.0,false,false));
+        assert!(!allowed(true,-1,0.0,true,true));
     }
     #[test]
-    fn replacement_guard_only_protects_the_matching_pending_second_summon() {
+    fn replacement_guard_only_protects_the_matching_pending_summon() {
         let ticket=Some((10usize,217001));
         assert!(!super::preserve_replacement(ticket,10,217001,false,true,false));
         assert!(!super::preserve_replacement(ticket,20,217001,true,true,false));
@@ -352,13 +454,31 @@ mod tests {
         assert!(!refresh_allowed(true,10,10,0x2d020000,true,true));
     }
     #[test]
-    fn the_twin_summon_only_lifts_the_alive_flag_between_the_first_and_second_spirit() {
-        use super::twin_armed;
-        assert!(twin_armed(true,true,false,1));
-        assert!(!twin_armed(false,true,false,1),"no ember");
-        assert!(!twin_armed(true,false,false,1),"first summon not yet made");
-        assert!(!twin_armed(true,true,true,2),"second spirit already summoned");
-        assert!(!twin_armed(true,true,false,0),"the first spirit is gone: the native rules apply again");
+    fn twin_summon_reopens_after_every_completed_summon_until_dismissal() {
+        use super::{twin_armed,twin_reopen_allowed};
+        assert!(twin_reopen_allowed(true,true,-1,false),"reopens after 1st, 2nd, 3rd... summon finishes");
+        assert!(!twin_reopen_allowed(false,true,-1,false),"no ember");
+        assert!(!twin_reopen_allowed(true,false,-1,false),"already open");
+        assert!(!twin_reopen_allowed(true,true,212000,false),"waits for pending summon to finish");
+        assert!(!twin_reopen_allowed(true,true,-1,true),"never reopens during dismissal");
+        assert!(twin_armed(true,false,-1,false),"armed before 1st and after every subsequent summon");
+        assert!(!twin_armed(false,false,-1,false),"no ember");
+        assert!(!twin_armed(true,true,-1,false),"waits for flag clear");
+        assert!(!twin_armed(true,false,212000,false),"disarmed while a summon request is pending");
+        assert!(!twin_armed(true,false,-1,true),"disarmed during dismissal");
+    }
+    #[test]
+    fn summon_pool_soft_cap_is_stricter_in_party_and_reserves_engine_headroom() {
+        use super::{summon_capacity_ok,summon_slot_budget};
+        assert_eq!(summon_slot_budget(32,true),8);
+        assert_eq!(summon_slot_budget(32,false),24);
+        assert_eq!(summon_slot_budget(10,true),6);
+        assert_eq!(summon_slot_budget(10,false),8);
+        assert!(summon_capacity_ok(7,32,true));
+        assert!(!summon_capacity_ok(8,32,true));
+        assert!(summon_capacity_ok(23,32,false));
+        assert!(!summon_capacity_ok(24,32,false));
+        assert!(summon_capacity_ok(0,0,true));
     }
     #[test]
     fn summoners_can_call_again_only_after_their_spirits_are_gone() {

@@ -5,13 +5,15 @@ use eldenring::cs::{PlayerIns,SummonBuddyManager};
 struct Key {manager:usize,owner:i32,members:Vec<u64>}
 #[derive(Default)]
 struct Watch {pending:Option<(Key,Duration,Duration,bool)>}
+const FALLBACK_GRACE:Duration=Duration::from_millis(1500);
+const MAX_NATIVE_WAIT:Duration=Duration::from_millis(1500);
 impl Watch {
     fn observe(&mut self,now:Duration,key:Option<Key>,delay:Duration)->bool {
         let Some(key)=key else{self.pending=None;return false;};
-        if self.pending.as_ref().is_none_or(|(old,_,_,_)|*old!=key){self.pending=Some((key,now,delay,false));return false;}
+        if self.pending.as_ref().is_none_or(|(old,_,_,_)|*old!=key){self.pending=Some((key,now,delay.min(MAX_NATIVE_WAIT),false));return false;}
         let (_,since,longest,fired)=self.pending.as_mut().unwrap();
-        *longest=(*longest).max(delay);
-        if *fired||now.saturating_sub(*since)<Duration::from_secs(5)+*longest{return false;}
+        *longest=(*longest).max(delay.min(MAX_NATIVE_WAIT));
+        if *fired||now.saturating_sub(*since)<FALLBACK_GRACE+*longest{return false;}
         *fired=true;true
     }
 }
@@ -47,10 +49,22 @@ pub(super) unsafe fn tick(manager:*mut u8,clear:usize) {
     let fire=WATCH.try_lock().is_ok_and(|mut watch|watch.observe(START.elapsed(),key.clone(),delay));
     if fire&&let Some(key)=key {
         super::reset_twin();
-        crate::log(format!("ASH_DISMISS fallback owner={} members={} after native delay plus 5s; invoking native owner clear",key.owner,key.members.len()));
+        crate::log(format!("ASH_DISMISS fallback owner={} members={} after fade grace; invoking native owner clear",key.owner,key.members.len()));
         let original:unsafe extern "C" fn(*mut u8,i32)=unsafe {std::mem::transmute(clear)};
         unsafe {original(manager,key.owner);}
     }
+}
+pub(super) unsafe fn clear_local_now(manager:*mut u8,owner:i32,clear:usize)->bool {
+    if manager.is_null()||clear==0{return false;}
+    let buddy=unsafe {&*manager.cast::<SummonBuddyManager>()};
+    if buddy.request_summon_speffect_id>=0{return false;}
+    let count=buddy.groups.iter().filter(|pair|pair.first==owner).flat_map(|pair|pair.second.iter()).filter(|g|!g.is_remote).count();
+    if count==0{return false;}
+    super::reset_twin();
+    crate::log(format!("ASH_DISMISS pre-warp owner={owner} local_members={count}; invoking native owner clear"));
+    let original:unsafe extern "C" fn(*mut u8,i32)=unsafe {std::mem::transmute(clear)};
+    unsafe {original(manager,owner);}
+    true
 }
 
 #[cfg(test)]
@@ -73,29 +87,28 @@ mod tests {
     fn grace_is_one_shot_and_new_members_restart_it() {
         let mut watch=Watch::default();
         assert!(!watch.observe(Duration::ZERO,Some(key(1)),Duration::ZERO));
-        assert!(!watch.observe(Duration::from_millis(4999),Some(key(1)),Duration::ZERO));
-        assert!(watch.observe(Duration::from_secs(5),Some(key(1)),Duration::ZERO));
+        assert!(!watch.observe(Duration::from_millis(1499),Some(key(1)),Duration::ZERO));
+        assert!(watch.observe(Duration::from_millis(1500),Some(key(1)),Duration::ZERO));
         assert!(!watch.observe(Duration::from_secs(20),Some(key(1)),Duration::ZERO));
         assert!(!watch.observe(Duration::from_secs(21),Some(key(2)),Duration::ZERO));
-        assert!(!watch.observe(Duration::from_secs(25),Some(key(2)),Duration::ZERO));
-        assert!(watch.observe(Duration::from_secs(26),Some(key(2)),Duration::ZERO));
+        assert!(!watch.observe(Duration::from_millis(22499),Some(key(2)),Duration::ZERO));
+        assert!(watch.observe(Duration::from_millis(22500),Some(key(2)),Duration::ZERO));
     }
     #[test]
     fn cancelled_dismissal_or_owner_change_does_not_reuse_timer() {
         let mut watch=Watch::default();
         watch.observe(Duration::ZERO,Some(key(1)),Duration::ZERO);
-        assert!(!watch.observe(Duration::from_secs(4),None,Duration::ZERO));
-        assert!(!watch.observe(Duration::from_secs(5),Some(key(1)),Duration::ZERO));
+        assert!(!watch.observe(Duration::from_millis(1000),None,Duration::ZERO));
+        assert!(!watch.observe(Duration::from_millis(1500),Some(key(1)),Duration::ZERO));
         let other=Key{owner:21,..key(1)};
         assert!(!watch.observe(Duration::from_secs(10),Some(other.clone()),Duration::ZERO));
-        assert!(watch.observe(Duration::from_secs(15),Some(other),Duration::ZERO));
+        assert!(watch.observe(Duration::from_millis(11500),Some(other),Duration::ZERO));
     }
     #[test]
-    fn native_delay_is_respected_before_fallback() {
+    fn native_delay_is_respected_up_to_fade_cap_before_fallback() {
         let mut watch=Watch::default();
         watch.observe(Duration::ZERO,Some(key(1)),Duration::from_secs(3));
-        assert!(!watch.observe(Duration::from_secs(5),Some(key(1)),Duration::ZERO));
-        assert!(!watch.observe(Duration::from_secs(7),Some(key(1)),Duration::ZERO));
-        assert!(watch.observe(Duration::from_secs(8),Some(key(1)),Duration::ZERO));
+        assert!(!watch.observe(Duration::from_millis(2999),Some(key(1)),Duration::ZERO));
+        assert!(watch.observe(Duration::from_secs(3),Some(key(1)),Duration::ZERO));
     }
 }

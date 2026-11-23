@@ -13,17 +13,21 @@ static class SpiritVisualAssets {
         }
         var npc=Read("NpcParam");var effects=Read("SpEffectParam");var vfx=Read("SpEffectVfxParam");var phantoms=Read("PhantomParam");
         var e=effects.Rows.ToDictionary(r=>r.ID);var v=vfx.Rows.ToDictionary(r=>r.ID);
-        const int phantom=9681000;
+        const int phantom=205,legacyPhantom=9681000;
         var nativeVisual=v[I(e[295000],"vfxId")];
-        if(I(nativeVisual,"phantomParamOverwriteId") is not (200 or phantom))throw new Exception("Native spirit shader changed");
+        if(I(nativeVisual,"phantomParamOverwriteId") is not (200 or legacyPhantom or phantom))throw new Exception("Native spirit shader changed");
         var managed=File.ReadAllLines(Path.Combine(input,"custom-spirit-definitions.tsv")).Select((line,family)=>100000000+int.Parse(line.Split('|')[1])*10000+8000+family).ToHashSet();
         if(managed.Count<56||npc.Rows.Count(r=>managed.Contains(r.ID)&&r.Name?.StartsWith("Tower custom spirit ")==true)!=managed.Count)throw new Exception("Custom spirit NPC set incomplete");
+        if(!verify) {
+            foreach(var row in vfx.Rows.Where(r=>r.Name?.StartsWith("Tower spirit visual ")==true&&I(r,"phantomParamOverwriteId")==legacyPhantom))
+                Set(row,"phantomParamOverwriteId",phantom);
+        }
         var replacements=new Dictionary<int,int>{{14495,9681000},{20011320,9681001}};
         // 其余带着自己幻影着色的继承效果（Boss 骨灰带进来的）按编号依次排在后面，已有的两个编号不变
         bool Conflicting(PARAM.Row effect)=>effect.Cells.Where(c=>c.Def.InternalName.StartsWith("vfxId"))
             .Any(c=>v.TryGetValue(Convert.ToInt32(c.Value),out var visual)&&I(visual,"phantomParamOverwriteType")!=0&&I(visual,"phantomParamOverwriteId")!=phantom);
         if(!verify)foreach(int source in npc.Rows.Where(r=>managed.Contains(r.ID)).SelectMany(r=>Enumerable.Range(0,32).Select(slot=>I(r,$"spEffectID{slot}")))
-            .Where(id=>!replacements.ContainsKey(id)&&!replacements.ContainsValue(id)&&e.TryGetValue(id,out var effect)&&Conflicting(effect)).Distinct().OrderBy(id=>id))
+            .Where(id=>id!=295000&&!replacements.ContainsKey(id)&&!replacements.ContainsValue(id)&&e.TryGetValue(id,out var effect)&&Conflicting(effect)).Distinct().OrderBy(id=>id))
             replacements[source]=9681000+replacements.Count;
         if(replacements.Count>32)throw new Exception("Too many inherited spirit visual effects");
         void Put(PARAM table,PARAM.Row row) {
@@ -32,11 +36,19 @@ static class SpiritVisualAssets {
             if(existing!=null)table.Rows.Remove(existing);
             table.Rows.Add(row);
         }
+        // 原版 PhantomParam 全表编号都在 1..999 内，7 位编号 9681000 会导致引擎查不到灵体着色器。
+        // 改用未占用的三位编号 205，并调低 alpha / diffMulColorA 呈现明显的白色半透明骨灰质感。
         var silver=new PARAM.Row(phantoms.Rows.Single(r=>r.ID==200)){ID=phantom,Name="Tower silver spirit appearance"};
-        foreach(var field in new[]{"edgeColorR","edgeColorG","edgeColorB","frontColorR","frontColorG","frontColorB"})Set(silver,field,245);
-        silver["edgeColorA"].Value=0.65f;silver["frontColorA"].Value=0.45f;
-        silver["alpha"].Value=0.85f;silver["glowScale"].Value=0.6f;
-        if(!verify) {Put(phantoms,silver);Set(nativeVisual,"phantomParamOverwriteId",phantom);}
+        Set(silver,"edgeColorR",235);Set(silver,"edgeColorG",245);Set(silver,"edgeColorB",255);
+        Set(silver,"frontColorR",200);Set(silver,"frontColorG",215);Set(silver,"frontColorB",235);
+        silver["edgeColorA"].Value=0.55f;silver["frontColorA"].Value=0.25f;
+        silver["diffMulColorA"].Value=0.55f;silver["alpha"].Value=0.55f;
+        silver["edgePower"].Value=0.75f;silver["glowScale"].Value=1.8f;
+        if(!verify) {
+            phantoms.Rows.RemoveAll(r=>r.ID==legacyPhantom&&r.Name=="Tower silver spirit appearance");
+            Put(phantoms,silver);Set(nativeVisual,"phantomParamOverwriteId",phantom);
+        }
+        if(phantoms.Rows.Any(r=>r.ID==legacyPhantom&&r.Name=="Tower silver spirit appearance"))throw new Exception("Legacy out-of-range PhantomParam row still present");
         var actualSilver=phantoms.Rows.Single(r=>r.ID==phantom);
         if(I(nativeVisual,"phantomParamOverwriteId")!=phantom||silver.Cells.Any(c=>!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(c.Value,actualSilver[c.Def.InternalName].Value)))throw new Exception("Silver spirit material missing");
         if(!verify)foreach(var (source,id) in replacements) {
@@ -63,18 +75,24 @@ static class SpiritVisualAssets {
                 foreach(var cell in effect.Cells.Where(c=>c.Def.InternalName.StartsWith("vfxId")))
                     if(v.TryGetValue(Convert.ToInt32(cell.Value),out var visual)&&I(visual,"phantomParamOverwriteType")!=0&&I(visual,"phantomParamOverwriteId")!=phantom)throw new Exception($"Conflicting spirit shader: {row.ID}/{effect.ID}");
         }
-        if(verify) {Console.WriteLine($"PASS: all {managed.Count} custom summon NPCs use native spirit shader; conflicting inherited effects replaced");return;}
+        if(verify) {Console.WriteLine($"PASS: all {managed.Count} custom summon NPCs use spirit shader {phantom}; conflicting inherited effects replaced");return;}
         foreach(var (name,table) in new[]{("NpcParam",npc),("SpEffectParam",effects),("SpEffectVfxParam",vfx),("PhantomParam",phantoms)}) {
             var before=PARAM.Read(original[File_(name).Name]);before.ApplyParamdef(table.AppliedParamdef);var rows=table.Rows.ToDictionary(r=>r.ID);
-            foreach(var row in before.Rows)foreach(var cell in row.Cells) {
-                var expected=cell.Value;
-                if(name=="SpEffectVfxParam"&&row.ID==nativeVisual.ID&&cell.Def.InternalName=="phantomParamOverwriteId")expected=Convert.ChangeType(phantom,expected.GetType());
-                if(name=="SpEffectVfxParam"&&row.Name?.StartsWith("Tower spirit visual ")==true&&cell.Def.InternalName=="phantomParamOverwriteId")expected=Convert.ChangeType(phantom,expected.GetType());
-                if(name=="NpcParam"&&managed.Contains(row.ID)) {
-                    if(cell.Def.InternalName=="phantomShaderId")expected=Convert.ChangeType(phantom,expected.GetType());
-                    if(cell.Def.InternalName.StartsWith("spEffectID")&&replacements.TryGetValue(Convert.ToInt32(expected),out int id))expected=Convert.ChangeType(id,expected.GetType());
+            foreach(var row in before.Rows) {
+                if(name=="PhantomParam"&&row.ID==legacyPhantom&&row.Name=="Tower silver spirit appearance")continue;
+                if(name=="PhantomParam"&&row.ID==phantom&&row.Name=="Tower silver spirit appearance")continue;
+                var afterRow=rows[row.ID];
+                for(int ci=0;ci<row.Cells.Count;ci++) {
+                    var cell=row.Cells[ci];
+                    var expected=cell.Value;
+                    if(name=="SpEffectVfxParam"&&row.ID==nativeVisual.ID&&cell.Def.InternalName=="phantomParamOverwriteId")expected=Convert.ChangeType(phantom,expected.GetType());
+                    if(name=="SpEffectVfxParam"&&row.Name?.StartsWith("Tower spirit visual ")==true&&cell.Def.InternalName=="phantomParamOverwriteId")expected=Convert.ChangeType(phantom,expected.GetType());
+                    if(name=="NpcParam"&&managed.Contains(row.ID)) {
+                        if(cell.Def.InternalName=="phantomShaderId")expected=Convert.ChangeType(phantom,expected.GetType());
+                        if(cell.Def.InternalName.StartsWith("spEffectID")&&replacements.TryGetValue(Convert.ToInt32(expected),out int id))expected=Convert.ChangeType(id,expected.GetType());
+                    }
+                    if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(expected,afterRow.Cells[ci].Value))throw new Exception($"Unrelated field changed: {name}/{row.ID}/{cell.Def.InternalName}");
                 }
-                if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(expected,rows[row.ID][cell.Def.InternalName].Value))throw new Exception($"Unrelated field changed: {name}/{row.ID}/{cell.Def.InternalName}");
             }
             table.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));File_(name).Bytes=table.Write();
         }

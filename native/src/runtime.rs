@@ -333,6 +333,10 @@ fn tick_party_scarabs(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->
                 record_checked(run)?;finish_party_award()?;
             }
         }
+        if state.ash_guard.is_none()&&let Some(run)=state.view.run.as_ref()&&let Some(plan)=keep_summoned_ash(world,run) {
+            state.ash_refunds=plan;state.ash_guard=Some(Instant::now());
+        }
+        world.summon_buddy_manager.disappear_requested=true;
         if let Some(hunt)=scene.hunt.take(){hunt.retire(world);}
         link.event.applied=Some(job.wave);state.view.shared_event=false;return Ok(());
     }
@@ -1106,7 +1110,7 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
     {let link=state.party.as_mut().unwrap();link.law_flasks.observe(link.epoch,present&&alive&&link.fighting&&!link.victory,total);}
     let orders=state.party.as_mut().unwrap().poll(if present {state.view.run.as_ref()}else{None},alive,at_hub,state.rest_end.requested);
     for order in orders {apply_party_order(state,world,game,order)?;}
-    sync_merchant_reward(state)?;
+    sync_merchant_reward(state,world)?;
     if state.party.as_ref().is_some_and(|p|p.event.pause.ticket.is_some()){return Ok(());}
     if QUICK_END.load(std::sync::atomic::Ordering::Relaxed){return Ok(());}
     tick_revival(state,world,game)?;
@@ -1491,8 +1495,8 @@ fn suspend_snapshot(state:&mut Runtime,world:&WorldChrMan,game:&GameMan)->Result
     if state.identity!=Some(owner)||state.hub.as_ref().is_none_or(|h|h.owner!=owner){return Err("等待当前角色与旅程绑定完成".into());}
     if state.material_award.is_some()||state.command.is_some()||state.reward_wait.is_some()||state.travel.is_some()
         ||state.room.as_ref().is_some_and(|r|r.dialog_active())||state.attendant.as_ref().is_some_and(|r|r.dialog_active())
-        ||state.view.travelling||!state.ash_refunds.is_empty()||super::run_screen::active()
-        ||super::hub::path(owner,"party-award").exists(){return Err("等待当前交易、领奖或传送完成".into());}
+        ||state.view.travelling||!state.ash_refunds.is_empty()||super::spirits::has_local_groups(world)||super::run_screen::active()
+        ||super::hub::path(owner,"party-award").exists(){return Err("等待当前交易、领奖、召唤物退场或传送完成".into());}
     let run=state.view.run.as_ref().ok_or("当前没有正在进行的旅程")?;
     let mut saved=erdtree_tower::suspension::prepare(run,unsafe {player.player_game_data.as_ref()}.rune_count,state.flasks.as_ref().map(|f|f.total()))?;
     saved.hp=(i64::from(saved.max_hp)*i64::from(player.chr_ins.modules.data.hp)/i64::from(player.chr_ins.modules.data.max_hp.max(1))).clamp(1,i64::from(saved.max_hp.max(1))) as u32;
@@ -1514,8 +1518,8 @@ fn return_suspended_to_hub(state:&mut Runtime,world:&mut WorldChrMan,game:&mut G
     state.travel=None;state.reward_wait=None;state.flasks=None;state.identity=None;state.party_error=None;state.party_pending=None;
     state.rest_end=Default::default();state.host_death=Default::default();state.party_death=Default::default();
     state.event_start=None;state.descent=None;state.stormveil=None;state.chariot_clock=None;let _=clear_chariot();
-    super::seamless_revival::cancel();super::spirits::refund::close();state.ash_tracking=false;
-    world.summon_buddy_manager.disappear_requested=true;
+    super::seamless_revival::cancel();super::spirits::refund::close();state.ash_tracking=false;state.ash_guard=None;state.ash_refunds.clear();state.ash_revival_refund=false;state.twin_refund=None;
+    super::spirits::prepare_warp(world,"suspend_to_hub");
     state.suspension.returning=true;state.suspension.committed=Some(Instant::now());state.suspension.requested=false;
     game.save_requested=true;
     super::suspension::notice("旅程已暂存，正在返回大赐福。请勿强制关闭游戏。");
@@ -2006,13 +2010,20 @@ fn tick_locked() {
             super::input::CAPTURE.store(false,std::sync::atomic::Ordering::Relaxed);
         }
     }
-    let summon_scope=state.party.as_ref().and_then(|link|{
-        if link.event.combat_active() {
+    let hunter_summon=state.room.as_ref().filter(|room|room.hunter.as_ref().is_some_and(|h|h.ready())&&room.hunter_defeated_at.is_none())
+        .zip(state.view.run.as_ref().filter(|r|r.bells.challenge.is_some()))
+        .filter(|_|state.party.as_ref().is_none_or(|p|p.event.merchant_phase>=2))
+        .map(|(room,run)|(state.party.as_ref().map_or_else(||(u64::from(run.act)<<32)|room.node as u64,|p|p.epoch),room.block));
+    let solo_scarab_summon=(state.party.is_none()).then(||state.room.as_ref().filter(|room|room.scarabs.active())
+        .zip(state.view.run.as_ref()).map(|(room,run)|((u64::from(run.act)<<32)|room.node as u64,run.regional_event.attempts,room.block))).flatten();
+    let party_summon=state.party.as_ref().and_then(|link|{
+        if link.event.combat_active()||link.event.scarabs_active() {
             state.party_scene.as_ref().map(|scene|(link.epoch,scene.wave,scene.block))
         }else if !link.host()&&link.bound&&!link.victory {
             state.view.run.as_ref().filter(|run|matches!(run.phase,Phase::Combat{..})).map(|run|(link.epoch,0,super::arenas::for_run(run,true).block))
         }else {None}
     });
+    let summon_scope=extra_summon_scope(party_summon,hunter_summon,solo_scarab_summon);
     let summon_available=summon_scope.is_some_and(|(_,_,block)|!game.warp_requested&&world.main_player.as_ref().is_some_and(|p|
         i32::from(p.current_block_id)==block&&p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag()));
     let music_active=state.pending.as_ref().is_some_and(|p|!p.completed)
@@ -2034,7 +2045,9 @@ fn tick_locked() {
     // 召唤师「群灵」：召唤物全部阵亡后可以再召唤
     super::spirits::set_resummon(local_combat&&state.pending.as_ref().map(|p|&p.next_run).or(state.view.run.as_ref()).is_some_and(|r|r.summoner()&&r.class_rules>0));
     super::spirits::set_twin(local_combat&&state.pending.as_ref().map(|p|&p.next_run).or(state.view.run.as_ref()).is_some_and(|r|r.embers.contains(&erdtree_tower::embers::Ember::SpiritTwin)));
+    super::spirits::set_party(state.party.is_some());
     super::enemies::set_party(state.party.is_some());
+    if let Some(notice)=super::spirits::take_cap_notice() {report(&mut state,notice);}
     // 苦难律法「孤狼」：与房主、单人相同，联机成员与守卫战也不开放召唤点
     let lone_wolf=super::law::lone_wolf(state.view.run.as_ref());
     if let Some(spirits)=encounter_state(&mut state.party_spirits,summon_scope,summon_available&&!lone_wolf) {
@@ -2225,9 +2238,11 @@ fn tick_locked() {
         &&state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}));
     // 联机的守卫战（所有人都没有 Pending）也拍快照，胜利时补骨灰要用
     // 召唤师「群灵」也覆盖房间里的挑战：铃珠猎人、粪金龟狩猎、史东薇尔突围与泥头车生存（这些不走普通战斗流程，单独算进来）
-    let room_challenge=state.room.as_ref().is_some_and(|room|room.hunter.is_some()||room.scarabs.active())
+    let hunter_active=state.room.as_ref().is_some_and(|room|room.hunter.is_some()&&room.hunter_defeated_at.is_none())
+        &&state.view.run.as_ref().is_some_and(|r|r.bells.challenge.is_some());
+    let room_challenge=hunter_active||state.room.as_ref().is_some_and(|room|room.scarabs.active())
         ||state.view.run.as_ref().is_some_and(|run|run.regional_event.stormveil==Some(erdtree_tower::stormveil::Progress::Running));
-    let ash_fighting=ash_tracking_active(state.travel.is_some(),state.pending.as_ref().is_some_and(|pending|!pending.completed)||client_fighting||state.party.as_ref().is_some_and(|p|p.event.combat_active())||room_challenge);
+    let ash_fighting=ash_tracking_active(state.travel.is_some(),state.pending.as_ref().is_some_and(|pending|!pending.completed)||client_fighting||state.party.as_ref().is_some_and(|p|p.event.combat_active()||p.event.scarabs_active())||room_challenge);
     let service_preparing=state.room.as_ref().is_some_and(|room|!room.view.loading)
         &&state.view.run.as_ref().is_some_and(|run|!matches!(run.phase,Phase::Dead|Phase::Won));
     let ash_context=ash_fighting||service_preparing;
@@ -2257,22 +2272,24 @@ fn tick_locked() {
         state.ash_tracking=false;
     }
     if ash_context||(!ash_owner_alive&&ash_journey&&state.ash_tracking) {super::spirits::refund::observe(world);}
-    // 双生的灵唤铃：第二只的召唤被原版拒绝时，补回白扣的骨灰（扣除可能稍晚于请求，5 秒内重试）
+    // 双生的灵唤铃 / 召唤师再召唤：召唤被原版拒绝时，补回白扣的骨灰（扣除可能稍晚于请求，5 秒内重试）
     if let Some(id)=super::spirits::take_twin_refund() {state.twin_refund=Some((id,Instant::now()));}
     if let Some((id,since))=state.twin_refund {
-        match super::loadout::refund_spent_ashes(player_data,&state.ash_before,Some(id)) {
+        match super::spirits::refund::refund_rejected(player_data,&state.ash_before,id) {
             Ok(0) if since.elapsed()<Duration::from_secs(5)=>{},
             Ok(count)=>{super::log(format!("TOWER_TWIN rejected ash {id} returned: {count}"));state.twin_refund=None;},
             Err(error)=>{super::log(format!("TOWER_TWIN ash refund failed: {error}"));state.twin_refund=None;},
         }
     }
-    // 已冻结的返还不因快速进入下一场而丢失；战斗中暂缓发放。
-    let ash_ready=ash_owner_alive&&(state.ash_revival_refund||ash_refund_ready(ash_fighting.then_some(false),world.summon_buddy_manager.player_has_alive_summon,&mut state.ash_guard));
-    if ash_ready && state.ashes_checked.is_none_or(|t|t.elapsed()>=Duration::from_millis(500)) {
+    // 已冻结的返还不因快速进入下一场而丢失或阻塞下一场追踪；清空已用骨灰仍在战斗与召唤物存活期间暂缓。
+    let refund_ready=frozen_ash_refund_ready(ash_owner_alive,game.warp_requested,state.ash_guard.is_some());
+    let clear_ready=ash_owner_alive&&!game.warp_requested&&state.ash_guard.is_none()
+        &&ash_refund_ready(ash_fighting.then_some(false),world.summon_buddy_manager.player_has_alive_summon,&mut state.ash_guard);
+    if (refund_ready||clear_ready) && state.ashes_checked.is_none_or(|t|t.elapsed()>=Duration::from_millis(500)) {
         state.ashes_checked=Some(Instant::now());
         if state.ash_guard.is_some() {
             match super::spirits::refund::pump(player_data,&mut state.ash_refunds) {
-                Ok(true)=>{super::log(format!("ASH_GROUP all refunds confirmed: {:?}",state.ash_refunds));state.ash_guard=None;state.ash_revival_refund=false;},
+                Ok(true)=>{super::log(format!("ASH_GROUP all refunds confirmed: {:?}",state.ash_refunds));state.ash_refunds.clear();state.ash_guard=None;state.ash_revival_refund=false;},
                 Ok(false)=>{},
                 Err(error)=>super::log_repeating(format!("Spirit ash refund failed: {error}")),
             }
@@ -2528,6 +2545,8 @@ fn tick_locked() {
         super::log(format!("Tower seed: {seed}"));
         report(&mut state, "角色已绑定，五瓶已就绪。点击金色节点开始旅程。");
     }
+    let player = world.main_player.as_ref().unwrap();
+    let player_data = unsafe { &mut *player.player_game_data.as_ptr() };
 
     let larval_due=state.larval_retry.is_none_or(|t|t.elapsed()>=Duration::from_secs(2));
     let mut larval_sent=state.larval_sent;
@@ -3695,16 +3714,23 @@ fn prepare_regional_decision(run:&Run,decide:impl FnOnce(&mut Run)->Result<(),St
     close()?;
     Ok(next)
 }
-fn sync_merchant_reward(state:&mut Runtime)->Result<(),String> {
+fn sync_merchant_reward(state:&mut Runtime,world:&mut WorldChrMan)->Result<(),String> {
     let phase=state.party.as_ref().map_or(0,|p|p.event.merchant_phase);
     if phase==0{return Ok(());}
     let Some(run)=state.view.run.as_ref() else{return Ok(());};
     let Phase::Node{id}=run.phase else{return Ok(());};
     if run.nodes[id].kind!=erdtree_tower::NodeKind::Shop{return Err("商人挑战与当前节点不匹配".into());}
+    let had_challenge=run.bells.challenge.is_some();
     let mut next=run.clone();
     if !next.bells.down(next.act,id){next.challenge_merchant()?;}
     let reward=if phase==3 {next.defeat_hunter()?}else{None};
     if next!=*run {record_checked(&next)?;state.view.run=Some(next);}
+    if phase==3&&(had_challenge||reward.is_some()) {
+        if state.ash_guard.is_none()&&let Some(run)=state.view.run.as_ref()&&let Some(plan)=keep_summoned_ash(world,run) {
+            state.ash_refunds=plan;state.ash_guard=Some(Instant::now());
+        }
+        world.summon_buddy_manager.disappear_requested=true;
+    }
     if let Some(kind)=reward {report(state,format!("获得{}！本局后续商店对应商品 +5，全队共享。",erdtree_tower::merchant::NAMES[kind]));}
     Ok(())
 }
@@ -3751,7 +3777,8 @@ fn tick_merchant(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::room
     if hunter.poll(world,started,host)? {
         // 召唤师「群灵」：击败铃珠猎人时召唤物还活着，补回这次用掉的骨灰
         if let Some(run)=state.view.run.as_ref()&&let Some(plan)=keep_summoned_ash(world,run) {state.ash_refunds=plan;state.ash_guard=Some(Instant::now());}
-        if let Some(link)=state.party.as_mut(){link.merchant_phase(3)?;sync_merchant_reward(state)?;}
+        world.summon_buddy_manager.disappear_requested=true;
+        if let Some(link)=state.party.as_mut(){link.merchant_phase(3)?;sync_merchant_reward(state,world)?;}
         else {
             let mut next=state.view.run.clone().unwrap();let kind=next.defeat_hunter()?;record_checked(&next)?;state.view.run=Some(next);
             if let Some(kind)=kind {report(state,format!("获得{}！本局后续商店对应商品 +5。",erdtree_tower::merchant::NAMES[kind]));}
@@ -3873,6 +3900,7 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
                         let player=world.main_player.as_ref().ok_or("角色未加载")?;
                         let next_room=super::rooms::Room::for_run(&next,room.node,erdtree_tower::NodeKind::Event,player.chr_ins.modules.data.hp,player.chr_ins.modules.data.fp)?;
                         record_checked(&next)?;
+                        super::spirits::prepare_warp(world,"trial_mausoleum");
                         game.move_map_target=BlockId::from(next_room.block);game.initial_area_entity_id=next_room.entry;game.warp_requested=true;
                         if let Some(scene)=state.party_scene.as_mut(){scene.run=next.clone();scene.block=next_room.block;}
                         state.view.run=Some(next);state.view.room=Some(next_room.view.clone());state.view.busy=true;
@@ -4439,6 +4467,7 @@ fn tick_scarabs(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::rooms
     if room.scarabs.done() {
         // 召唤师「群灵」：狩猎结束时召唤物还活着，补回这次用掉的骨灰
         if let Some(run)=state.view.run.as_ref()&&let Some(plan)=keep_summoned_ash(world,run) {state.ash_refunds=plan;state.ash_guard=Some(Instant::now());}
+        world.summon_buddy_manager.disappear_requested=true;
         room.scarabs=Default::default();
     }
     let active=room.scarabs.active();
@@ -4793,7 +4822,8 @@ fn settle_portal_ashes(state:&mut Runtime,world:&mut WorldChrMan) {
             }
         }
     }
-    if world.summon_buddy_manager.player_has_alive_summon {
+    super::spirits::log_remaining(world,"portal_settlement");
+    if world.summon_buddy_manager.player_has_alive_summon||super::spirits::has_local_groups(world) {
         world.summon_buddy_manager.disappear_requested=true;
     }
 }
@@ -4808,6 +4838,13 @@ fn event_preparation_starts_tracking_without_resetting_it_at_spawn_or_dismissal(
     assert!(!ash_tracking_start(true,false,false,true));
     assert!(!ash_tracking_start(false,false,false,false));
     assert!(ash_tracking_start(true,false,false,false),"next wave may start after refunds finish");
+}
+fn extra_summon_scope(party:Option<(u64,u8,i32)>,hunter:Option<(u64,i32)>,solo_scarabs:Option<(u64,u8,i32)>)->Option<(u64,u8,i32)> {
+    party.or_else(||hunter.map(|(epoch,block)|(epoch,250,block)))
+        .or_else(||solo_scarabs.map(|(epoch,attempt,block)|(epoch,200u8.saturating_add(attempt),block)))
+}
+fn frozen_ash_refund_ready(owner_alive:bool,warping:bool,guard:bool)->bool {
+    owner_alive&&!warping&&guard
 }
 fn ash_refund_ready(pending_completed:Option<bool>,summon_alive:bool,guard:&mut Option<Instant>)->bool {
     let fighting=pending_completed==Some(false);
@@ -4899,9 +4936,12 @@ impl ParkourRoute {
             &&(pos[0]-self.goal[0]).powi(2)+(pos[2]-self.goal[2]).powi(2)<16.0
     }
 }
-fn start_stormveil(state:&mut Runtime,world:&WorldChrMan,game:&mut GameMan,run:Run)->Result<(),String> {
-    let player=world.main_player.as_ref().ok_or("角色尚未加载")?;
-    if game.warp_requested||!player.chr_ins.modules.physics.standing_on_solid_ground{return Err("请等待角色站稳".into());}
+fn start_stormveil(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan,run:Run)->Result<(),String> {
+    let (hp,fp)={
+        let player=world.main_player.as_ref().ok_or("角色尚未加载")?;
+        if game.warp_requested||!player.chr_ins.modules.physics.standing_on_solid_ground{return Err("请等待角色站稳".into());}
+        (player.chr_ins.modules.data.hp,player.chr_ins.modules.data.fp)
+    };
     if run.regional_event.stormveil!=Some(erdtree_tower::stormveil::Progress::Running)&&!(run.regional_event.chariot&&run.regional_event.stormveil==Some(erdtree_tower::stormveil::Progress::Complete)){return Err("跑城挑战尚未确认".into());}
     if run.regional_event.hidden_road.is_some(){verify_hidden_road_resources()?;}
     record_checked(&run)?;
@@ -4911,9 +4951,10 @@ fn start_stormveil(state:&mut Runtime,world:&WorldChrMan,game:&mut GameMan,run:R
         clear_chariot()?;
         set_flag(45010942,true)?;set_flag(45010995,true)?;
     }
+    super::spirits::prepare_warp(world,"start_parkour");
     super::native_talk::set_flag(route.flag,true)?;
     game.move_map_target=BlockId::from(route.block);game.initial_area_entity_id=route.entry;game.warp_requested=true;
-    state.stormveil=Some((Instant::now(),player.chr_ins.modules.data.hp,player.chr_ins.modules.data.fp,false));
+    state.stormveil=Some((Instant::now(),hp,fp,false));
     state.stormveil_barrier.reset();
     state.room=None;state.party_scene=None;state.pending=None;state.travel=None;state.command=None;
     let message=if run.regional_event.chariot{"泥头车生存：正在前往竞技场中心".into()}else{format!("{}：抵达路线终点",route.name)};
@@ -5064,9 +5105,12 @@ fn tick_stormveil(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Resu
     report(state,"挑战完成，请确认本次获得的护符赐福。");Ok(())
 }
 
-fn start_descent(state:&mut Runtime,world:&WorldChrMan,game:&mut GameMan,mut run:Run)->Result<(),String> {
-    let player=world.main_player.as_ref().ok_or("角色尚未加载")?;
-    if game.warp_requested||!player.chr_ins.modules.physics.standing_on_solid_ground{return Err("请等待角色站稳".into());}
+fn start_descent(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan,mut run:Run)->Result<(),String> {
+    let (hp,fp)={
+        let player=world.main_player.as_ref().ok_or("角色尚未加载")?;
+        if game.warp_requested||!player.chr_ins.modules.physics.standing_on_solid_ground{return Err("请等待角色站稳".into());}
+        (player.chr_ins.modules.data.hp,player.chr_ins.modules.data.fp)
+    };
     if !run.regional_event.descent_started {
         if run.regional_event.opened==0&&run.regional_event.receipt.is_none(){return Err("请先与引导者交谈并参加试炼".into());}
         run.regional_event.descent_started=true;
@@ -5074,10 +5118,11 @@ fn start_descent(state:&mut Runtime,world:&WorldChrMan,game:&mut GameMan,mut run
     record_checked(&run)?;
     for id in 35007990..=35007994 {super::native_talk::set_flag(id,false)?;}
     super::native_talk::set_flag(35007990,true)?;
+    super::spirits::prepare_warp(world,"start_descent");
     game.move_map_target=BlockId::from(0x23000000);
     game.initial_area_entity_id=if run.regional_event.opened!=0||run.regional_event.receipt.is_some(){35000989}else{35000988};
     game.warp_requested=true;
-    state.descent=Some((Instant::now(),player.chr_ins.modules.data.hp,player.chr_ins.modules.data.fp,false));
+    state.descent=Some((Instant::now(),hp,fp,false));
     state.room=None;state.party_scene=None;state.pending=None;state.travel=None;state.command=None;
     state.view.room=Some(super::rooms::RoomView{message:"是男人就下一百层".into(),loading:true,completed:false});
     state.view.run=Some(run);state.view.busy=false;state.view.travelling=false;state.view.enemy_hp=None;
@@ -5164,6 +5209,7 @@ fn recover_entry(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->R
     let restored=travel.resources_restored;
     *travel=super::travel::Travel::new(travel.node);travel.resources_restored=restored;
     *started=Instant::now();
+    super::spirits::prepare_warp(world,"recover_entry");
     game.move_map_target=BlockId::from(arena.block);game.initial_area_entity_id=arena.combat_entry();game.warp_requested=true;
     Ok(())
 }
@@ -5249,6 +5295,7 @@ fn request_travel(
             state.party_scene=Some(PartyScene{run:next.clone(),block:room.block,wave:0,started:Instant::now(),guards:None,hunt:None});
             if state.party.as_ref().unwrap().host(){state.party.as_mut().unwrap().gate.begin_events()?;}
         }
+        super::spirits::prepare_warp(world,"travel_room");
         game.move_map_target = BlockId::from(room.block);
         game.initial_area_entity_id = room.entry;
         game.warp_requested = true;
@@ -5342,6 +5389,7 @@ fn request_travel(
         super::log(format!("TRAVEL_REUSE block={:08x} node={id} party={}; keeping loaded scene and normal spawn barrier",arena.block,state.party.is_some()));
         report(state,"正在返回出生点并清理上一场传送门……");
     }else {
+        super::spirits::prepare_warp(world,"travel_combat");
         game.move_map_target = BlockId::from(arena.block);
         game.initial_area_entity_id = arena.combat_entry();
         game.warp_requested = true;
@@ -5465,6 +5513,21 @@ mod tests {
         assert!(super::ash_tracking_active(true,true));
         assert!(super::ash_tracking_active(false,true));
         assert!(!super::ash_tracking_active(false,false));
+    }
+    #[test]
+    fn frozen_ash_refund_keeps_pumping_into_next_fight_unless_dead_or_warping() {
+        assert!(super::frozen_ash_refund_ready(true,false,true));
+        assert!(!super::frozen_ash_refund_ready(false,false,true));
+        assert!(!super::frozen_ash_refund_ready(true,true,true));
+        assert!(!super::frozen_ash_refund_ready(true,false,false));
+    }
+    #[test]
+    fn extra_summon_scope_covers_party_challenges_merchant_hunter_and_solo_scarabs() {
+        assert_eq!(super::extra_summon_scope(Some((9,2,0x2d010000)),None,None),Some((9,2,0x2d010000)));
+        assert_eq!(super::extra_summon_scope(None,Some((4,0x2d020000)),None),Some((4,250,0x2d020000)));
+        assert_eq!(super::extra_summon_scope(None,None,Some((5,1,0x2d010000))),Some((5,201,0x2d010000)));
+        assert_eq!(super::extra_summon_scope(None,None,Some((5,2,0x2d010000))),Some((5,202,0x2d010000)));
+        assert_eq!(super::extra_summon_scope(None,None,None),None);
     }
     #[test]
     fn merchant_ai_stays_enabled_between_party_sync_ticks() {

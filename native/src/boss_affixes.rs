@@ -158,7 +158,7 @@ impl Fight {
         // 腐败仍使用本机血量差；吸血独立按真实命中计数。
         let player_hp=world.main_player.as_ref().map(|p|p.chr_ins.modules.data.hp);
         let taken=match (self.player_hp,player_hp) {(Some(before),Some(after)) if after<before=>before-after,_=>0};self.player_hp=player_hp;
-        let own:Vec<FieldInsHandle>=world.main_player.as_ref().map(|p|p.chr_ins.field_ins_handle).into_iter().chain(world.summon_buddy_chr_set.characters().map(|c|c.field_ins_handle)).collect();
+        let own:Vec<FieldInsHandle>=world.main_player.as_ref().map(|p|p.chr_ins.field_ins_handle).into_iter().chain(super::spirits::local_handles(world)).collect();
         let mut reflected=0i64;
         let thorned=self.affixes.contains(&Affix::Thorned);
         if thorned {

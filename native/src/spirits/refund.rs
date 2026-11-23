@@ -5,10 +5,20 @@ use eldenring::cs::{SummonBuddyManager,WorldChrMan};
 struct Member {key:u64,param:i32,alive:bool}
 pub(super) struct Use {goods:u32,before:Vec<u64>,params:Vec<i32>,members:HashMap<u64,(bool,Instant)>}
 #[derive(Default)]
-struct Ledger {inventory:Vec<(u32,u32)>,observed_inventory:Option<Vec<(u32,u32)>>,uses:Vec<Use>,closed:bool,owner_dead:bool}
+struct Ledger {inventory:Vec<(u32,u32)>,observed_inventory:Option<Vec<(u32,u32)>>,pending_restores:Vec<(u32,u32)>,uses:Vec<Use>,closed:bool,owner_dead:bool}
 #[derive(Debug)]
 pub(crate) struct Refund {pub goods:u32,pub quantity:u32,post_spend_max:u32,target:Option<u32>,confirmed:bool}
 fn count(inventory:&[(u32,u32)],goods:u32)->u32 {inventory.iter().filter(|(id,_)|*id==goods).fold(0,|sum,(_,n)|sum.saturating_add(*n))}
+fn take_pending(pending:&mut Vec<(u32,u32)>,goods:u32,mut quantity:u32)->u32 {
+    for (id,left) in pending.iter_mut() {
+        if *id==goods&&quantity>0 {
+            let used=(*left).min(quantity);
+            *left-=used;quantity-=used;
+        }
+    }
+    pending.retain(|(_,left)|*left>0);
+    quantity
+}
 impl Refund {
     fn grant(&self,current:u32)->Option<u32>{(!self.confirmed&&self.target.is_none()&&current<=self.post_spend_max).then_some(self.quantity)}
     fn requested(&mut self,current:u32){self.target=Some(current.saturating_add(self.quantity));}
@@ -22,10 +32,25 @@ impl Ledger {
         let additions:Vec<_>=goods.into_iter().map(|goods|(goods,count(current,goods).saturating_sub(count(previous,goods)))).filter(|(_,n)|*n>0).collect();
         self.observed_inventory=Some(current.to_vec());
         for (goods,quantity) in additions {
+            let quantity=take_pending(&mut self.pending_restores,goods,quantity);
+            if quantity==0 {continue;}
             let before=count(&self.inventory,goods);
             self.inventory.retain(|(id,_)|*id!=goods);
             self.inventory.push((goods,before.saturating_add(quantity)));
         }
+    }
+    fn expected_remaining(&self,goods:u32)->u32 {
+        let used=self.uses.iter().filter(|u|u.goods==goods).count() as u32;
+        count(&self.inventory,goods).saturating_sub(used)
+    }
+    fn needs_rejected_refund(&mut self,goods:u32,current:&[(u32,u32)])->bool {
+        if self.closed{return false;}
+        self.refresh_inventory(current);
+        count(current,goods)<self.expected_remaining(goods)
+    }
+    fn record_restore(&mut self,goods:u32,quantity:u32) {
+        if self.closed||quantity==0{return;}
+        self.pending_restores.push((goods,quantity));
     }
     fn accept(&mut self,usage:Use) {
         let used=self.uses.iter().filter(|u|u.goods==usage.goods).count() as u32;
@@ -54,6 +79,9 @@ impl Ledger {
         if !allowed||!self.owner_dead||self.closed{return Vec::new();}
         self.owner_dead=false;self.settle()
     }
+    fn living_groups(&self)->Option<usize> {
+        (!self.closed&&!self.uses.is_empty()).then(||self.uses.iter().filter(|u|u.members.values().any(|(alive,_)|*alive)).count())
+    }
     fn settle(&mut self)->Vec<Refund> {
         if self.closed{return Vec::new();}self.closed=true;
         let mut counts=BTreeMap::<u32,(u32,u32)>::new();
@@ -65,7 +93,7 @@ impl Ledger {
     }
 }
 
-static LEDGER:Mutex<Ledger>=Mutex::new(Ledger{inventory:Vec::new(),observed_inventory:None,uses:Vec::new(),closed:true,owner_dead:false});
+static LEDGER:Mutex<Ledger>=Mutex::new(Ledger{inventory:Vec::new(),observed_inventory:None,pending_restores:Vec::new(),uses:Vec::new(),closed:true,owner_dead:false});
 fn local_members(manager:&SummonBuddyManager,owner:i32,owner_dead:bool)->Vec<Member> {
     manager.groups.iter().filter(|pair|pair.first==owner).flat_map(|pair|pair.second.iter()).filter(|group|!group.is_remote).map(|group| {
         let chr=unsafe {group.chr_ins.as_ref()};let handle=chr.field_ins_handle;
@@ -87,6 +115,7 @@ pub(super) fn accepted(usage:Use) {
         else {super::super::log(format!("ASH_GROUP ignored request goods={goods}: encounter closed, limit reached, or absent from starting inventory"));}}
 }
 pub(crate) fn begin(before:&[(u32,u32)]) {if let Ok(mut ledger)=LEDGER.lock(){*ledger=Ledger{inventory:before.to_vec(),..Default::default()};}}
+pub(crate) fn living_groups()->Option<usize> {LEDGER.lock().ok().and_then(|ledger|ledger.living_groups())}
 pub(crate) fn tracking()->bool {LEDGER.lock().is_ok_and(|ledger|!ledger.closed)}
 pub(crate) fn close(){if let Ok(mut ledger)=LEDGER.lock(){ledger.closed=true;ledger.owner_dead=false;}}
 pub(crate) fn recover(summoner:bool)->Vec<Refund> {
@@ -136,13 +165,27 @@ pub(crate) fn pump(data:&mut eldenring::cs::PlayerGameData,plan:&mut [Refund])->
         refund.confirm(current);
         if let Some(quantity)=refund.grant(current) {grants.push((index,current,quantity));}
     }
-    if !grants.is_empty() {
-        let items:Vec<_>=grants.iter().map(|&(index,_,quantity)|((0x40000000|plan[index].goods) as i32,quantity as i32,-1)).collect();
+    for chunk in grants.chunks(2) {
+        let items:Vec<_>=chunk.iter().map(|&(index,_,quantity)|((0x40000000|plan[index].goods) as i32,quantity as i32,-1)).collect();
         super::super::items::give(&items)?;
-        for (index,current,quantity) in grants {let refund=&mut plan[index];refund.requested(current);
+        for &(index,current,quantity) in chunk {let refund=&mut plan[index];refund.requested(current);
             super::super::log(format!("ASH_GROUP refund requested goods={} quantity={quantity} target={:?}",refund.goods,refund.target));}
     }
     Ok(plan.iter().all(|r|r.confirmed))
+}
+pub(crate) fn refund_rejected(data:&mut eldenring::cs::PlayerGameData,fallback_before:&[(u32,u32)],goods:u32)->Result<usize,String> {
+    let current=super::super::loadout::ash_snapshot(data)?;
+    let decision={
+        let Ok(mut ledger)=LEDGER.lock() else{return Ok(0);};
+        if ledger.closed {None} else {Some(ledger.needs_rejected_refund(goods,&current))}
+    };
+    let Some(needed)=decision else {return super::super::loadout::refund_spent_ashes(data,fallback_before,Some(goods));};
+    if !needed {return Ok(0);}
+    let item=eldenring::cs::ItemId::new(eldenring::cs::ItemCategory::Goods,goods).map_err(|e|e.to_string())?;
+    super::super::items::give(&[(item.into_inner() as i32,1,-1)])?;
+    if let Ok(mut ledger)=LEDGER.lock() {ledger.record_restore(goods,1);}
+    super::super::log(format!("ASH_GROUP rejected summon refund requested: goods={goods} current={current:?}"));
+    Ok(1)
 }
 
 #[cfg(test)]
@@ -230,4 +273,36 @@ mod tests {
     #[test]fn delayed_first_group_members_keep_their_buddy_param_identity(){let mut l=two();l.observe(&[member(1,10,false),member(2,10,false),member(3,20,false),member(4,10,true)],false,Instant::now());let p=l.settle();assert_eq!(p.len(),1);assert_eq!(p[0].goods,100);}
     #[test]fn async_refund_waits_for_both_consumptions_and_never_grants_twice(){let mut r=Refund{goods:100,quantity:2,post_spend_max:0,target:None,confirmed:false};assert_eq!(r.grant(1),None);assert_eq!(r.grant(0),Some(2));r.requested(0);assert_eq!(r.grant(0),None);r.confirm(1);assert!(!r.confirmed);r.confirm(2);assert!(r.confirmed);assert_eq!(r.grant(0),None);}
     #[test]fn separate_inventory_entries_are_counted_and_unknown_goods_cannot_be_refunded(){let mut l=Ledger{inventory:vec![(100,1),(100,1)],..Default::default()};l.accept(usage(999,&[],10));assert!(l.uses.is_empty());l.accept(usage(100,&[],10));l.accept(usage(100,&[1],10));l.accept(usage(100,&[1,2],10));assert_eq!(l.uses.len(),2);l.observe(&[member(1,10,true),member(2,10,true)],false,Instant::now());assert_eq!(l.settle()[0].quantity,2);assert_eq!(count(&[(100,1),(100,1)],100),2);}
+    #[test]
+    fn rejected_summon_refunds_mid_fight_acquisitions_without_over_refunding_stacks() {
+        let mut ledger=Ledger{inventory:vec![(100,2)],..Default::default()};
+        // 1st summon accepted (consumes 1 of 2), 2nd summon rejected without deducting: must NOT grant extra copy.
+        ledger.accept(usage(100,&[],10));
+        assert!(!ledger.needs_rejected_refund(100,&[(100,1)]));
+        // 2nd summon rejected AND deducted the remaining copy: must refund 1, and arrival must not inflate inventory.
+        assert!(ledger.needs_rejected_refund(100,&[]));
+        ledger.record_restore(100,1);
+        ledger.refresh_inventory(&[(100,1)]);
+        assert_eq!(count(&ledger.inventory,100),2);
+        assert!(!ledger.needs_rejected_refund(100,&[(100,1)]));
+        // Mid-fight Capture / Shop ash not in starting snapshot: rejected deduction still refunds once.
+        ledger.refresh_inventory(&[(100,1),(300,1)]);
+        assert_eq!(count(&ledger.inventory,300),1);
+        assert!(ledger.needs_rejected_refund(300,&[(100,1)]));
+        ledger.record_restore(300,1);
+        ledger.refresh_inventory(&[(100,1),(300,1)]);
+        assert_eq!(count(&ledger.inventory,300),1,"restored copy is not counted as a second acquisition");
+    }
+    #[test]
+    fn many_concurrent_summon_groups_settle_independently() {
+        let mut ledger=Ledger{inventory:vec![(100,2),(200,1),(300,1),(400,1)],..Default::default()};
+        ledger.accept(usage(100,&[],10));
+        ledger.accept(usage(200,&[1],20));
+        ledger.accept(usage(300,&[1,2],30));
+        ledger.accept(usage(400,&[1,2,3],40));
+        ledger.accept(usage(100,&[1,2,3,4],10));
+        ledger.observe(&[member(1,10,true),member(2,20,false),member(3,30,true),member(4,40,true),member(5,10,true)],false,Instant::now());
+        let plan=ledger.settle();
+        assert_eq!(plan.iter().map(|r|(r.goods,r.quantity,r.post_spend_max)).collect::<Vec<_>>(),[(100,2,0),(300,1,0),(400,1,0)]);
+    }
 }

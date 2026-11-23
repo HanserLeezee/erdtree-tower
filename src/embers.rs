@@ -2,7 +2,7 @@ use serde::{Deserialize,Serialize};
 
 /// 余烬：誓约三选一里的机制增益，没有代价，不能深化；选过的整局生效
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash,Serialize,Deserialize)]
-pub enum Ember {Execution,Bloodlord,Frost,Deathflame,Miquella,Rise,DragonHeart,Revenge,Frenzy,Echo,Feast,Thorns,SpiritLink,SpiritBurst,SpiritFeast,SpiritCommand,SpiritTwin,SoulEater,Chain,Godslayer,SpiritKeeper,Barrier,Meditation,Glintstone,FullMoon,Footwork,SpiritResonance,Pouch,Arts,Bulwark,Breaker,Harvest,LastStand,Martyr,Mercy,Battlemage,Stride,FrostShackle,Tent,Capture,Glintblade,Mind}
+pub enum Ember {Execution,Bloodlord,Frost,Deathflame,Miquella,Rise,DragonHeart,Revenge,Frenzy,Echo,Feast,Thorns,SpiritLink,SpiritBurst,SpiritFeast,SpiritCommand,SpiritTwin,SoulEater,Chain,Godslayer,SpiritKeeper,Barrier,Meditation,Glintstone,FullMoon,Footwork,SpiritResonance,Pouch,Arts,Bulwark,Breaker,Harvest,LastStand,Martyr,Mercy,Battlemage,Stride,FrostShackle,Tent,Capture,Glintblade,Mind,Phalanx,HeavyCast}
 
 // 运行时数值（参数类的数值见 scene-builder/EmberAssets.cs，说明文字同步引用这些常量）
 pub const EXECUTION_SECONDS:u32=10;
@@ -10,7 +10,7 @@ pub const EXECUTION_STAMINA_CUT:u32=50;
 pub const BUILDUP:u32=40;
 pub const DEATHFLAME_RADIUS:f32=4.0;
 pub const DEATHFLAME_PERCENT:u32=8;
-pub const LIFESTEAL_PERCENT:u32=8;
+pub const LIFESTEAL_PERCENT:u32=6;
 pub const RISE_BELOW_PERCENT:u32=10;
 pub const RISE_TO_PERCENT:u32=30;
 pub const DRAGON_RESTORE_PERCENT:u32=50;
@@ -31,7 +31,9 @@ pub const SPIRIT_BURST_RADIUS:f32=6.0;
 pub const SPIRIT_BURST_PERCENT:u32=20;
 pub const SPIRIT_FEAST_HEAL_PERCENT:u32=20;
 pub const SPIRIT_FEAST_FP_PERCENT:u32=20;
-pub const SPIRIT_COMMAND_PERCENT:u32=20;
+pub const SPIRIT_COMMAND_PERCENT:u32=35;
+pub const SPIRIT_COMMAND_CUT_PERCENT:u32=25;
+pub const SPIRIT_COMMAND_REGEN_PERCENT:u32=2;
 /// 灵唤师的共鸣：召唤物在场时，玩家自己造成的伤害提高（召唤物的伤害不变）
 pub const SPIRIT_RESONANCE_PERCENT:u32=40;
 // 叠层余烬：层数由战斗中的事件累积，整局保留（Run::ember_stacks），不设上限
@@ -92,6 +94,21 @@ pub const HARVEST_STEP_PERCENT:u32=1;
 pub const CAPTURE_FROM_PERCENT:u32=30;
 /// 由心及物：最大生命增加最大专注的这么多倍（游戏只能按倍率改最大生命，运行时按当前数值换算成倍率）
 pub const MIND_HP_TIMES:u32=3;
+/// 卡利亚剑阵：普攻命中回复最大专注的百分比（至少 PHALANX_FP_MIN 点），并有概率召唤卡利亚圆阵（内置冷却）
+pub const PHALANX_FP_PERCENT:u32=5;
+pub const PHALANX_FP_MIN:i32=4;
+pub const PHALANX_CHANCE_PERCENT:u32=30;
+pub const PHALANX_COOLDOWN_SECONDS:u64=12;
+pub fn phalanx_fp(max_fp:i32)->i32 {
+    if max_fp<=0 {return 0;}
+    ((i64::from(max_fp)*i64::from(PHALANX_FP_PERCENT)/100) as i32).max(PHALANX_FP_MIN).min(max_fp)
+}
+/// 重咏之威：法术与祷告基础消耗每有 1 点专注，法术/祷告伤害提高 1.5%（千分比 15，最多计 100 点专注即 +150%）
+pub const HEAVY_CAST_PERMILLE:u32=15;
+pub const HEAVY_CAST_MAX_FP:u32=100;
+pub fn heavy_cast_rate(base_fp:u32)->f32 {
+    1.0+(base_fp.min(HEAVY_CAST_MAX_FP)*HEAVY_CAST_PERMILLE) as f32/1000.0
+}
 /// 由心及物的最大生命倍率：base 为不算这枚余烬时的最大生命，按千分之一取整（倍率不变就不用换行）
 pub fn mind_hp_rate(base:i32,max_fp:i32)->f32 {
     if base<=0||max_fp<=0 {return 1.0;}
@@ -117,30 +134,34 @@ pub fn capture_chance_permille(hp:i32,max:i32)->Option<u32> {
 pub const HARVEST_POINT_CAP:u32=1000;
 
 impl Ember {
-    pub const ALL:[Self;41]=[Self::Execution,Self::Bloodlord,Self::Frost,Self::Deathflame,Self::Miquella,Self::Rise,Self::DragonHeart,Self::Revenge,Self::Frenzy,Self::Echo,Self::Feast,Self::Thorns,
+    pub const ALL:[Self;43]=[Self::Execution,Self::Bloodlord,Self::Frost,Self::Deathflame,Self::Miquella,Self::Rise,Self::DragonHeart,Self::Revenge,Self::Frenzy,Self::Echo,Self::Feast,Self::Thorns,
         Self::SpiritLink,Self::SpiritBurst,Self::SpiritFeast,Self::SpiritCommand,Self::SpiritTwin,Self::SoulEater,Self::Chain,Self::Godslayer,Self::SpiritKeeper,
-        Self::Barrier,Self::Meditation,Self::Glintstone,Self::FullMoon,Self::Footwork,Self::SpiritResonance,Self::Pouch,Self::Arts,Self::Bulwark,Self::Breaker,Self::Harvest,Self::LastStand,Self::Martyr,Self::Mercy,Self::Battlemage,Self::FrostShackle,Self::Tent,Self::Capture,Self::Glintblade,Self::Mind];
+        Self::Barrier,Self::Meditation,Self::Glintstone,Self::FullMoon,Self::Footwork,Self::SpiritResonance,Self::Pouch,Self::Arts,Self::Bulwark,Self::Breaker,Self::Harvest,Self::LastStand,Self::Martyr,Self::Mercy,Self::Battlemage,Self::FrostShackle,Self::Tent,Self::Capture,Self::Glintblade,Self::Mind,Self::Phalanx,Self::HeavyCast];
     // Retained only for old saves and archived runs.
-    pub fn retired(self)->bool {matches!(self,Self::Stride|Self::SpiritTwin)}
-    pub fn index(self)->usize {match self {Self::Stride=>36,Self::FrostShackle=>37,Self::Tent=>38,Self::Capture=>39,Self::Glintblade=>40,Self::Mind=>41,_=>Self::ALL.iter().position(|e|*e==self).unwrap()}}
-    /// 奖励卡徽记与原生菜单图集共用稳定编号，保留已退役余烬的编号。
-    pub fn emblem_index(self)->usize {self.icon_index()}
-    pub fn icon_index(self)->usize {self.index()}
+    pub fn retired(self)->bool {matches!(self,Self::Stride)}
+    pub fn index(self)->usize {match self {Self::Stride=>36,Self::FrostShackle=>37,Self::Tent=>38,Self::Capture=>39,Self::Glintblade=>40,Self::Mind=>41,Self::Phalanx=>42,Self::HeavyCast=>43,_=>Self::ALL.iter().position(|e|*e==self).unwrap()}}
+    /// 奖励卡徽记使用独立序号；原生拾取图集暂未重打时，新增余烬复用相近原生图标号。
+    pub fn emblem_index(self)->usize {self.index()}
+    pub fn icon_index(self)->usize {match self {Self::Phalanx=>40,Self::HeavyCast=>23,_=>self.index()}}
     pub fn name(self)->&'static str {match self {
         Self::FrostShackle=>"寒霜枷锁",
         Self::Tent=>"帐篷",
         Self::Capture=>"捕灵壶",
         Self::Glintblade=>"魔力辉剑",
         Self::Mind=>"由心及物",
+        Self::Phalanx=>"卡利亚剑阵",
+        Self::HeavyCast=>"重咏之威",
         Self::Execution=>"无声处刑",Self::Bloodlord=>"鲜血君王的赐福",Self::Frost=>"永冻吐息",Self::Deathflame=>"死诞之焰",
         Self::Miquella=>"米凯拉之刃",Self::Rise=>"荷莱·露的再起",Self::DragonHeart=>"古龙之心",Self::Revenge=>"以血还血",
         Self::Frenzy=>"癫火狂热",Self::Echo=>"圣杯余响",Self::Feast=>"噬神之蛇的饱食",Self::Thorns=>"荆棘之躯",
-        Self::SpiritLink=>"仿身泪滴的替身",Self::SpiritBurst=>"灵骸迸裂",Self::SpiritFeast=>"众灵的盛宴",Self::SpiritCommand=>"灵唤铃的号令",
+        Self::SpiritLink=>"仿身泪滴的替身",Self::SpiritBurst=>"灵骸迸裂",Self::SpiritFeast=>"众灵的盛宴",Self::SpiritCommand=>"孤王的契约",
         Self::SpiritTwin=>"双生的灵唤铃",Self::SoulEater=>"噬魂者",Self::Chain=>"处刑之链",Self::Godslayer=>"屠神者",Self::SpiritKeeper=>"灵魂收容",
         Self::Barrier=>"托普斯的力场",Self::Meditation=>"亚兹勒的冥想",Self::Glintstone=>"辉石的余韵",Self::FullMoon=>"蕾娜拉的满月",
         Self::Footwork=>"黑刀刺客的身法",Self::SpiritResonance=>"灵唤师的共鸣",Self::Pouch=>"行商的无底囊",Self::Arts=>"战技的精粹",Self::Bulwark=>"坩埚骑士的铁壁",Self::Breaker=>"鲜血骑士的破势",Self::Harvest=>"处刑者的血宴",Self::LastStand=>"红狮子的不退",Self::Martyr=>"殉道者的苦修",Self::Mercy=>"黄金树的恩泽",Self::Battlemage=>"战斗法师",Self::Stride=>"已移除的余烬",
     }}
     pub fn effect(self)->String {match self {
+        Self::HeavyCast=>format!("施放魔法或祷告时\n基础消耗每有 1 点专注\n伤害提高 {}%",HEAVY_CAST_PERMILLE as f32/10.0),
+        Self::Phalanx=>format!("普攻命中敌人时\n回复 {PHALANX_FP_PERCENT}% 最大专注（至少 {PHALANX_FP_MIN} 点）\n{PHALANX_CHANCE_PERCENT}% 概率召唤卡利亚剑阵\n冷却 {PHALANX_COOLDOWN_SECONDS} 秒"),
         Self::Mind=>format!("最大生命增加\n相当于最大专注的 {MIND_HP_TIMES} 倍"),
         Self::Glintblade=>"魔法命中敌人时\n召唤一把魔力辉剑追击它\n每次施法最多一把".into(),
         Self::Capture=>format!("投掷壶命中残血敌人可捕捉\n{CAPTURE_FROM_PERCENT}% 生命时 {CAPTURE_BASE_CHANCE}%，{CAPTURE_SURE_PERCENT}% 以下必定\n视为击杀，并获得其骨灰\nBoss 也能捕捉"),
@@ -161,12 +182,12 @@ impl Ember {
         Self::SpiritLink=>format!("召唤物在场时\n你受到伤害的 {SPIRIT_SHARE_PERCENT}%\n改由召唤物承受"),
         Self::SpiritBurst=>format!("召唤物倒下或消失时，对 {SPIRIT_BURST_RADIUS} 米内敌人\n造成其最大生命 {SPIRIT_BURST_PERCENT}% 的伤害\n对 Boss 最多 {BOSS_CAP_PERCENT}%"),
         Self::SpiritFeast=>format!("敌人倒下时\n召唤物回复 {SPIRIT_FEAST_HEAL_PERCENT}% 生命\n你回复 {SPIRIT_FEAST_FP_PERCENT}% 专注"),
-        Self::SpiritCommand=>format!("召唤物造成的伤害 +{SPIRIT_COMMAND_PERCENT}%\n受到的伤害 -{SPIRIT_COMMAND_PERCENT}%"),
-        Self::SpiritTwin=>"每场战斗可以再召唤一次骨灰\n两组召唤物同时在场\n胜利时各组存活则返还骨灰".into(),
+        Self::SpiritCommand=>format!("场上仅有 1 组召唤物时\n召唤物伤害 +{SPIRIT_COMMAND_PERCENT}%，减伤 {SPIRIT_COMMAND_CUT_PERCENT}%\n且每秒回复 {SPIRIT_COMMAND_REGEN_PERCENT}% 最大生命"),
+        Self::SpiritTwin=>"每场战斗可召唤任意数量骨灰\n所有召唤物同时在场\n胜利时各组存活分别返还骨灰".into(),
         Self::SoulEater=>format!("击倒得魂：小怪{} 精英{} Boss{}\n联机造成过伤害即可参与击杀得魂\n每 {SOUL_POINTS} 魂一层，每层攻击 +{SOUL_STEP_PERCENT}%\n层数不设上限，整局保留",SOUL_KILL[0],SOUL_KILL[1],SOUL_KILL[2]),
         Self::Chain=>format!("每次致命一击叠一层，每关最多 {CHAIN_ROOM_LIMIT} 层\n每层致命一击伤害 +{CHAIN_STEP_PERCENT}%\n总层数不设上限，整局保留"),
         Self::Godslayer=>format!("每赢一场精英战或 Boss 战叠一层\n每层最大生命 +{SLAYER_HP_PERCENT}%、攻击 +{SLAYER_ATTACK_PERCENT}%\n层数不设上限，整局保留"),
-        Self::SpiritKeeper=>format!("召唤物在场时击倒敌人叠一层\n每层召唤物伤害 +{KEEPER_ATTACK_PERCENT}%\n受到的伤害 -{KEEPER_CUT_PERCENT}%（逐层乘算）\n层数不设上限，整局保留"),
+        Self::SpiritKeeper=>format!("召唤物击倒敌人叠一层\n每层召唤物伤害 +{KEEPER_ATTACK_PERCENT}%\n受到的伤害 -{KEEPER_CUT_PERCENT}%（逐层乘算）\n层数不设上限，整局保留"),
         Self::Barrier=>format!("施放法术或祷告时\n受到的伤害降低 {BARRIER_CUT_PERCENT}%"),
         Self::Meditation=>"施放法术或祷告时霸体\n不会被打断".into(),
         Self::Glintstone=>format!("法术与祷告消耗的专注\n降低 {GLINTSTONE_FP_PERCENT}%"),
@@ -209,7 +230,7 @@ impl Ember {
     /// 召唤流余烬：只有身上带着骨灰时才会出现在奖励里
     pub fn needs_spirit(self)->bool {matches!(self,Self::SpiritLink|Self::SpiritBurst|Self::SpiritFeast|Self::SpiritCommand|Self::SpiritTwin|Self::SpiritKeeper|Self::SpiritResonance)}
     /// 法师余烬：只有身上带着法杖或圣印记时才会出现在奖励里
-    pub fn needs_casting(self)->bool {matches!(self,Self::Barrier|Self::Meditation|Self::Glintstone|Self::FullMoon)}
+    pub fn needs_casting(self)->bool {matches!(self,Self::Barrier|Self::Meditation|Self::Glintstone|Self::FullMoon|Self::HeavyCast)}
     /// 这局的构筑能不能抽到它
     /// 职业专属余烬（余烬规则 3 起）：只有这些职业抽得到；None 为通用余烬，所有职业都能抽到
     pub fn classes(self)->Option<&'static [crate::Class]> {
@@ -220,8 +241,8 @@ impl Ember {
             Self::Mercy=>Some(&[Prophet,Confessor]),
             Self::Stride=>Some(&[Astrologer,Prophet,Confessor]),
             Self::Bloodlord|Self::Frost|Self::Footwork|Self::Breaker=>Some(&[Samurai]),
-            Self::Barrier|Self::Meditation|Self::Glintstone|Self::FullMoon|Self::Martyr|Self::Battlemage=>Some(&[Astrologer,Prophet]),
-            Self::Glintblade=>Some(&[Astrologer]),
+            Self::Barrier|Self::Meditation|Self::Glintstone|Self::FullMoon|Self::Martyr|Self::Battlemage|Self::HeavyCast=>Some(&[Astrologer,Prophet]),
+            Self::Glintblade|Self::Phalanx=>Some(&[Astrologer]),
             Self::SpiritLink|Self::SpiritBurst|Self::SpiritFeast|Self::SpiritCommand|Self::SpiritTwin|Self::SpiritKeeper|Self::SpiritResonance|Self::Capture=>Some(&[Confessor]),
             _=>None,
         }
@@ -270,7 +291,7 @@ pub struct StrikeRequest {pub seq:u32,pub strike:Strike}
 /// 战斗中让叠层余烬加层的事件
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum Gain {
-    /// 击倒敌人：rank 0 普通、1 精英、2 Boss；spirit 为召唤物当时在场
+    /// 击倒敌人：rank 0 普通、1 精英、2 Boss；spirit 为由本机召唤物击倒
     Kill{rank:u8,spirit:bool},
     /// 联机参与击杀，仅供噬魂者获得魂值。
     Assist{rank:u8},
@@ -435,6 +456,8 @@ pub fn icon_talisman(ember:Ember)->u32 {match ember {
     Ember::Capture=>3060,
     Ember::Glintblade=>1010,
     Ember::Mind=>1010,
+    Ember::Phalanx=>1010,
+    Ember::HeavyCast=>1010,
     Ember::Execution=>5050,Ember::Bloodlord=>2160,Ember::Frost=>1140,Ember::Deathflame=>1190,Ember::Miquella=>1250,Ember::Rise=>3090,
     Ember::DragonHeart=>4020,Ember::Revenge=>2060,Ember::Frenzy=>2080,Ember::Echo=>5000,Ember::Feast=>5030,Ember::Thorns=>1210,
     Ember::SpiritLink=>6090,Ember::SpiritBurst=>6020,Ember::SpiritFeast=>2210,Ember::SpiritCommand=>3060,Ember::SpiritTwin=>6090,
@@ -485,6 +508,33 @@ mod tests {
         assert_eq!(Ember::ALL.iter().map(|e|e.index()).collect::<std::collections::HashSet<_>>().len(),Ember::ALL.len());
     }
     #[test]
+    fn phalanx_is_an_astrologer_epic_with_fp_floor_and_stable_ids() {
+        use super::*;
+        assert_eq!(Ember::Phalanx.index(),42);
+        assert_eq!(Ember::Phalanx.emblem_index(),42);
+        assert_eq!(Ember::Phalanx.icon_index(),40);
+        assert_eq!(Ember::Phalanx.quality(),2);
+        assert_eq!(Ember::Phalanx.classes(),Some(&[crate::Class::Astrologer][..]));
+        assert!(!Ember::Phalanx.needs_casting());
+        assert_eq!((phalanx_fp(0),phalanx_fp(3),phalanx_fp(50),phalanx_fp(100),phalanx_fp(240)),(0,3,4,5,12));
+        assert_eq!(Ember::ALL.iter().map(|e|e.index()).collect::<std::collections::HashSet<_>>().len(),Ember::ALL.len());
+    }
+    #[test]
+    fn heavy_cast_scales_spell_damage_by_base_fp_for_casters() {
+        use super::*;
+        assert_eq!(Ember::HeavyCast.index(),43);
+        assert_eq!(Ember::HeavyCast.emblem_index(),43);
+        assert_eq!(Ember::HeavyCast.icon_index(),23);
+        assert_eq!(Ember::HeavyCast.quality(),2);
+        assert!(Ember::HeavyCast.needs_casting());
+        assert_eq!(Ember::HeavyCast.classes(),Some(&[crate::Class::Astrologer,crate::Class::Prophet][..]));
+        assert!((heavy_cast_rate(0)-1.0).abs()<1e-5);
+        assert!((heavy_cast_rate(20)-1.3).abs()<1e-5);
+        assert!((heavy_cast_rate(48)-1.72).abs()<1e-5);
+        assert!((heavy_cast_rate(62)-1.93).abs()<1e-5);
+        assert!((heavy_cast_rate(200)-2.5).abs()<1e-5);
+    }
+    #[test]
     fn capture_chance_starts_at_thirty_percent_and_is_certain_at_ten() {
         use super::*;
         assert_eq!(capture_chance_permille(301,1000),None);
@@ -506,12 +556,15 @@ mod tests {
         assert_eq!(Ember::ALL.iter().map(|e|e.index()).collect::<std::collections::HashSet<_>>().len(),Ember::ALL.len());
     }
     #[test]
-    fn twin_is_temporarily_retired_without_renumbering_other_embers() {
+    fn twin_is_active_for_summoners_and_keeps_its_stable_index() {
         use super::*;
         assert_eq!(Ember::SpiritTwin.index(),16);assert_eq!(Ember::SoulEater.index(),17);
-        assert!(!pool(&[],true,true,Some(crate::Class::Confessor),false).contains(&Ember::SpiritTwin));
+        assert!(!Ember::SpiritTwin.retired());
+        assert!(pool(&[],true,true,Some(crate::Class::Confessor),false).contains(&Ember::SpiritTwin));
+        assert!(!pool(&[],true,true,Some(crate::Class::Samurai),false).contains(&Ember::SpiritTwin));
         let mut run=crate::Run::new(1,crate::Class::Confessor);run.embers.push(Ember::SpiritTwin);
-        assert!(!crate::Run::decode(&run.encode().unwrap()).unwrap().embers.contains(&Ember::SpiritTwin));
+        assert!(crate::Run::decode(&run.encode().unwrap()).unwrap().embers.contains(&Ember::SpiritTwin));
+        assert_eq!(Ember::SpiritTwin.effect(),"每场战斗可召唤任意数量骨灰\n所有召唤物同时在场\n胜利时各组存活分别返还骨灰");
     }
     use super::*;
     #[test]
@@ -632,10 +685,10 @@ mod tests {
         for _ in 0..Ember::ALL.iter().filter(|e|!e.retired()).count() {let e=offer(held.len() as u64*31,&held,true,true,None).unwrap();assert!(!held.contains(&e));held.push(e);}
         assert_eq!(offer(1,&held,true,true,None),None);
         assert_eq!(offer(5,&[],true,true,None),offer(5,&[],true,true,None));
-        // 没有骨灰、也没有法杖圣印记时只出 30 枚（不分职业时），抽完就没有了
+        // 没有骨灰、也没有法杖圣印记时只出 31 枚（不分职业时），抽完就没有了
         let mut plain=vec![];
         while let Some(e)=offer(plain.len() as u64*17,&plain,false,false,None) {assert!(!e.needs_spirit()&&!e.needs_casting());plain.push(e);}
-        assert_eq!(plain.len(),30);
+        assert_eq!(plain.len(),31);
     }
     #[test]
     fn enemy_damage_is_capped_for_bosses() {
@@ -843,6 +896,8 @@ mod tests {
     }
     #[test]
     fn card_text_uses_the_tuned_numbers() {
+        assert_eq!(Ember::Miquella.effect(),"造成伤害的 6%\n转为生命");
+        assert_eq!(Ember::SpiritKeeper.effect(),"召唤物击倒敌人叠一层\n每层召唤物伤害 +3%\n受到的伤害 -2%（逐层乘算）\n层数不设上限，整局保留");
         assert_eq!(Ember::Execution.effect(),"致命一击后 10 秒内\n精力消耗 -50%");
         assert_eq!(Ember::Barrier.effect(),"施放法术或祷告时\n受到的伤害降低 50%");
         assert_eq!(Ember::FullMoon.effect(),"专注不低于 70% 时\n造成的伤害提高 30%");
@@ -856,6 +911,8 @@ mod tests {
         assert!(Ember::Breaker.quality()==3&&!Ember::Breaker.needs_spirit()&&!Ember::Breaker.needs_casting());
         assert!(Ember::SpiritResonance.needs_spirit()&&Ember::SpiritResonance.quality()==3&&!Ember::SpiritResonance.affects_enemies());
         assert_eq!(Ember::Frenzy.effect(),"每次命中攻击 +2%，最多 +80%\n受伤时清零");
+        assert_eq!(Ember::SpiritCommand.name(),"孤王的契约");
+        assert_eq!(Ember::SpiritCommand.effect(),"场上仅有 1 组召唤物时\n召唤物伤害 +35%，减伤 25%\n且每秒回复 2% 最大生命");
         assert!(Ember::ALL.iter().all(|e|e.effect().lines().all(|l|l.chars().count()<=20)),"card lines must fit");
     }
 }

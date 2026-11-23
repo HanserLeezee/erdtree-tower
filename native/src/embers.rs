@@ -69,8 +69,30 @@ struct Break {key:u64,bursts:Vec<i32>,effects:Vec<i32>,hp:i32}
 const FLASH:i32=FIRST+40;
 /// 捕灵壶：捕捉成功时挂在敌人身上的一次性扣血（一下扣满最大生命，走游戏自己的死亡流程；scene-builder capture-patch）
 pub const CAPTURE:i32=FIRST+29;
-/// 灵唤铃的号令：挂在召唤物身上
+/// 卡利亚剑阵：挂在玩家身上触发 BehaviorParam_PC 9670044 召唤原版卡利亚圆阵（Bullet 10430100）
+const PHALANX_CAST:i32=FIRST+44;
+const NORMAL_ATTACK_WINDOW:Duration=Duration::from_millis(1200);
+const MELEE_REACH:f32=6.5;
+fn observe_normal_attack(until:&mut Option<Instant>,now:Instant,light_attack:bool,non_normal:bool) {
+    if non_normal {*until=None;}
+    else if light_attack {*until=Some(now+NORMAL_ATTACK_WINDOW);}
+}
+fn is_normal_melee_hit(attack_active:bool,attacker_is_spirit:bool,near_player_bullet:bool,dist:f32)->bool {
+    attack_active&&!attacker_is_spirit&&!near_player_bullet&&dist<=MELEE_REACH
+}
+fn next_roll(seed:&mut u64,modulus:u32)->u32 {
+    if *seed==0 {*seed=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0x9e37_79b9,|d|d.as_nanos() as u64)|1;}
+    *seed^=*seed<<13;*seed^=*seed>>7;*seed^=*seed<<17;
+    (*seed%u64::from(modulus)) as u32
+}
+/// 孤王的契约：场上仅有 1 组本机召唤物时挂在召唤物身上（伤害 +35%、减伤 25%），超过 1 组时摘除
 const SPIRIT_COMMAND:i32=FIRST+50;
+fn spirit_regen_due(last:&mut Option<Instant>,active:bool,now:Instant)->bool {
+    if !active {*last=None;return false;}
+    let Some(at)=*last else{*last=Some(now);return false;};
+    if now.duration_since(at)<Duration::from_secs(1) {return false;}
+    *last=Some(now);true
+}
 fn frenzy_effect(stack:u8)->i32 {if stack<=8 {FIRST+30+i32::from(stack)}else{FIRST+100+i32::from(stack)-9}}
 /// 旧版本常驻效果只用于清理；原生处决由攻击表的 350501 事件识别。
 const CHAIN_RESIDENT:i32=FIRST+5;
@@ -126,8 +148,21 @@ fn player_ids()->impl Iterator<Item=i32> {[EXECUTION,REVENGE,ECHO,BARRIER,MEDITA
 /// 叠层余烬不设上限：每种两行轮换（灵魂收容挂在召唤物身上，其余挂在玩家身上）。
 /// 层数变了就把新倍率写进没挂着的那一行、换上它，再摘掉旧的那一行；不改正在生效的那一行
 fn slots(ember:Ember)->Option<[i32;2]> {
-    let base=match ember {Ember::Mind=>42,Ember::Battlemage=>26,Ember::Godslayer=>60,Ember::Harvest=>62,Ember::SoulEater=>70,Ember::Chain=>80,Ember::SpiritKeeper=>90,_=>return None};
+    let base=match ember {Ember::Mind=>42,Ember::HeavyCast=>45,Ember::Battlemage=>26,Ember::Godslayer=>60,Ember::Harvest=>62,Ember::SoulEater=>70,Ember::Chain=>80,Ember::SpiritKeeper=>90,_=>return None};
     Some([FIRST+base,FIRST+base+1])
+}
+const HEAVY_CAST_LATCH:Duration=Duration::from_millis(2500);
+fn selected_spell_mp()->u32 {
+    let Ok(player)=(unsafe {eldenring::cs::PlayerIns::local_player()}) else{return 0;};
+    let equip=&unsafe {player.player_game_data.as_ref()}.equipment.equip_magic_data;
+    let Ok(slot)=usize::try_from(equip.selected_slot) else{return 0;};
+    let Some(entry)=equip.entries.get(slot) else{return 0;};
+    if entry.param_id<=0 {return 0;}
+    let Ok(params)=(unsafe {SoloParamRepository::instance()}) else{return 0;};
+    params.get::<eldenring::cs::Magic>(entry.param_id as u32).map_or(0,|row|row.mp().max(0) as u32)
+}
+fn heavy_cast_effective_mp(selected:u32,latch:Option<(u32,Instant)>,now:Instant)->u32 {
+    latch.filter(|&(_,until)|now<until).map_or(selected,|(mp,_)|selected.max(mp))
 }
 const PLAYER_STACKING:[Ember;4]=[Ember::Godslayer,Ember::Harvest,Ember::SoulEater,Ember::Chain];
 /// 处刑者的血宴：致命一击之后这么久之内自己打死的敌人算处决击杀（每次致命一击只算一只）
@@ -337,6 +372,13 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>,fight:&Fight,spirit_alive:bool,grea
     // 由心及物：最大生命 + 最大专注 × 3，按不算这枚余烬的最大生命换算成倍率
     let mind_slot=if embers.contains(&Ember::Mind) {mind_hp_slot(chr,&present)}else{None};
     swap(chr,&present,Ember::Mind,mind_slot);
+    // 重咏之威：按当前选中（或刚施放）法术/祷告的基础专注消耗动态缩放法术/祷告伤害（不影响近战武器）
+    let heavy_slot=if embers.contains(&Ember::HeavyCast) {
+        let mp=fight.heavy_cast_mp.max(selected_spell_mp());
+        let rate=embers::heavy_cast_rate(mp);
+        scaled_slot_rates(Ember::HeavyCast,mp,&present,embers::Rates{attack:rate,hp:1.0,cut:1.0})
+    }else{None};
+    swap(chr,&present,Ember::HeavyCast,heavy_slot);
     for id in player_ids() {if present.contains(&id)&&!want.contains(&id){chr.remove_speffect(id);}}
     if want.is_empty()||!ready(&want) {observe_chain(chr,stacks.level(Ember::Chain));return;}
     for id in want {if !present.contains(&id){chr.apply_speffect(id,false);}}
@@ -345,8 +387,8 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>,fight:&Fight,spirit_alive:bool,grea
 fn resonance_active(held:&[Ember],spirit_alive:bool)->bool {
     spirit_alive&&held.contains(&Ember::SpiritResonance)
 }
-pub fn living_spirit(world:&mut WorldChrMan)->bool {
-    world.summon_buddy_chr_set.characters().any(|c|c.modules.data.hp>0&&!c.chr_flags1c5.death_flag())
+pub fn living_spirit(world:&WorldChrMan)->bool {
+    !super::spirits::local_living_handles(world).is_empty()
 }
 fn distance(a:[f32;3],b:[f32;3])->f32 {((a[0]-b[0]).powi(2)+(a[1]-b[1]).powi(2)+(a[2]-b[2]).powi(2)).sqrt()}
 /// slot：这场战斗敌人名单里的位置（联机时房主与成员一致，成员发来的敌人侧效果按它找敌人）
@@ -368,7 +410,7 @@ pub struct Events {pub feast:bool,pub gains:Vec<Gain>,pub strikes:Vec<Strike>,
     pub captures:Vec<(i32,u8)>}
 /// 本机玩家与本机召唤物：联机时只算他们的命中与击倒（看敌人的 last_hit_by）
 fn own_handles(world:&WorldChrMan)->Vec<FieldInsHandle> {
-    world.main_player.as_ref().map(|p|p.chr_ins.field_ins_handle).into_iter().chain(world.summon_buddy_chr_set.characters().map(|c|c.field_ins_handle)).collect()
+    world.main_player.as_ref().map(|p|p.chr_ins.field_ins_handle).into_iter().chain(super::spirits::local_handles(world)).collect()
 }
 /// 联机时敌人的 last_hit_by 是空的（成员这边敌人的生命来自房主的同步，同步里只有生命与伤害、没有攻击者）：
 /// 离这只敌人最近的是本机玩家或本机召唤物（不比队友远）就算自己的。近战准，远程法术会算给离得近的队友
@@ -376,9 +418,23 @@ fn own_handles(world:&WorldChrMan)->Vec<FieldInsHandle> {
 /// BULLET_REACH 米以内的弹体，按施放者是不是本机玩家或本机召唤物归属；没有弹体再按最近距离兜底
 const BULLET_MEMORY:Duration=Duration::from_millis(700);
 const BULLET_REACH:f32=6.0;
-fn bullet_owner_is_mine(foe:[f32;3],bullets:&[(Instant,[f32;3],bool)])->Option<bool> {
-    bullets.iter().map(|&(_,p,mine)|(distance(foe,p),mine)).filter(|&(d,_)|d<=BULLET_REACH)
-        .min_by(|a,b|a.0.total_cmp(&b.0)).map(|(_,mine)|mine)
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+enum BulletOwner {Player,Spirit,Teammate}
+fn bullet_owner(foe:[f32;3],bullets:&[(Instant,[f32;3],BulletOwner)])->Option<BulletOwner> {
+    bullets.iter().map(|&(_,p,owner)|(distance(foe,p),owner)).filter(|&(d,_)|d<=BULLET_REACH)
+        .min_by(|a,b|a.0.total_cmp(&b.0)).map(|(_,owner)|owner)
+}
+#[cfg(test)]
+fn bullet_owner_is_mine(foe:[f32;3],bullets:&[(Instant,[f32;3],BulletOwner)])->Option<bool> {
+    bullet_owner(foe,bullets).map(|owner|!matches!(owner,BulletOwner::Teammate))
+}
+fn killed_by_spirit(attacker_empty:bool,attacker_is_spirit:bool,bullet:Option<BulletOwner>,foe:[f32;3],spirit_at:&[[f32;3]],non_spirit_at:&[[f32;3]])->bool {
+    if !attacker_empty {return attacker_is_spirit;}
+    match bullet {
+        Some(BulletOwner::Spirit)=>true,
+        Some(BulletOwner::Player|BulletOwner::Teammate)=>false,
+        None=>nearest_is_mine(foe,spirit_at,non_spirit_at),
+    }
 }
 fn nearest_is_mine(foe:[f32;3],mine:&[[f32;3]],others:&[[f32;3]])->bool {
     let closest=|set:&[[f32;3]]|set.iter().map(|&p|distance(foe,p)).fold(f32::INFINITY,f32::min);
@@ -391,8 +447,8 @@ pub struct Fight {
     lifesteal:i64,rose:bool,dragon_ready:Option<Instant>,revenge_until:Option<Instant>,echo_until:Option<Instant>,pub frenzy:u8,
     /// 施法时：按住施法键期间与松开后 CAST_LINGER_MS 内；cast_seen 只用于每场战斗记一次日志
     cast_until:Option<Instant>,cast_seen:bool,
-    /// 联机时最近的玩家弹体（时间、位置、是否本机发出），给查不到攻击者的命中归属用
-    bullets:Vec<(Instant,[f32;3],bool)>,
+    /// 最近的玩家/召唤物弹体（时间、位置、归属），给联机查不到攻击者及灵魂收容判定召唤物击杀用
+    bullets:Vec<(Instant,[f32;3],BulletOwner)>,
     /// 蕾娜拉的满月：专注不低于 MOON_FP_PERCENT%
     full_moon:bool,
     /// 黑刀刺客的身法：退还翻滚与致命一击扣掉的精力
@@ -410,6 +466,12 @@ pub struct Fight {
     /// 鲜血骑士的破势：每只敌人的发作状态；probes：本场已记的校准日志条数
     breaks:Vec<Break>,probes:u8,
     capture_seed:u64,
+    /// 卡利亚剑阵：最近一次轻攻击输入窗口与剑阵内置冷却到期时间
+    normal_attack_until:Option<Instant>,phalanx_ready:Option<Instant>,
+    /// 孤王的契约：召唤物每秒持续回血计时
+    lone_king_regen:Option<Instant>,
+    /// 重咏之威：当前生效的基础专注消耗，及刚施放高耗蓝法术时的短暂锁存（切法术不掉在飞弹体的加成）
+    heavy_cast_mp:u32,heavy_cast_latch:Option<(u32,Instant)>,
 }
 impl Fight {
     pub fn observe_practice_refill(&mut self,world:&WorldChrMan) {
@@ -486,12 +548,29 @@ impl Fight {
         let data=&player.chr_ins.modules.data;
         let (hp,max_hp,stamina,max_stamina)=(data.hp,data.max_hp,data.stamina,data.max_stamina);
         // 法师余烬：施法键（主手、副手，含武器上的施法）按住即算施法，松开后再保持一会儿，出招动作放完前都算
-        if has(Ember::Barrier)||has(Ember::Meditation) {
+        let cast_pressed={
             let input=&player.chr_ins.modules.action_request.action_requests;
-            if input.magic_r()||input.magic_l()||input.magic_r2()||input.magic_l2() {
-                self.cast_until=Some(now+Duration::from_millis(embers::CAST_LINGER_MS));
-                if !self.cast_seen {self.cast_seen=true;super::log("TOWER_EMBER cast detected");}
-            }
+            input.magic_r()||input.magic_l()||input.magic_r2()||input.magic_l2()
+        };
+        if (has(Ember::Barrier)||has(Ember::Meditation))&&cast_pressed {
+            self.cast_until=Some(now+Duration::from_millis(embers::CAST_LINGER_MS));
+            if !self.cast_seen {self.cast_seen=true;super::log("TOWER_EMBER cast detected");}
+        }
+        if has(Ember::HeavyCast) {
+            let selected=selected_spell_mp();
+            if cast_pressed&&selected>0 {self.heavy_cast_latch=Some((selected,now+HEAVY_CAST_LATCH));}
+            self.heavy_cast_mp=heavy_cast_effective_mp(selected,self.heavy_cast_latch,now);
+        } else {
+            self.heavy_cast_mp=0;self.heavy_cast_latch=None;
+        }
+        // 卡利亚剑阵：记录轻攻击（R1 / 非举盾 L1）输入窗口；施法、战技或重击输入清空窗口，避免误把法术/战技算成普攻
+        if has(Ember::Phalanx) {
+            let req=&player.chr_ins.modules.action_request;
+            let (input,pressed)=(&req.action_requests,&req.new_action_presses);
+            let non_normal=input.magic_r()||input.magic_l()||input.magic_r2()||input.magic_l2()
+                ||pressed.l2()||input.l2()||pressed.r2()||input.r2();
+            let light_attack=pressed.r1()||input.r1()||((pressed.l1()||input.l1())&&!input.guard());
+            observe_normal_attack(&mut self.normal_attack_until,now,light_attack,non_normal);
         }
         // 黑刀刺客的身法：刚按下闪避键、短按松开（长按是冲刺）、刚进入致命一击时，退还这次动作扣掉的精力
         let mut refund=0;
@@ -509,37 +588,49 @@ impl Fight {
         self.full_moon=has(Ember::FullMoon)&&data.max_fp>0&&i64::from(data.fp)*100>=i64::from(data.max_fp)*i64::from(embers::MOON_FP_PERCENT);
         let p=player.chr_ins.modules.physics.position;let here=[p.0,p.1,p.2];
         let taken=self.player_hp.map_or(0,|before|(before-hp).max(0));self.player_hp=Some(hp);
-        // 敌人：命中与倒下。单人时都算自己的；联机时按敌人的 last_hit_by 只算本机玩家与召唤物的（队友的不算进自己的余烬）
+        // 敌人：命中与倒下。单人时都算自己的；联机时按敌人的 last_hit_by 只算本机玩家与召唤物的（队友与队友召唤物的不算进自己的余烬）
+        let spirit_handles=super::spirits::local_handles(world);
         let own=own_handles(world);
+        let local_spirits=super::spirits::local_living_handles(world);
         let living=|c:&ChrIns|c.modules.data.hp>0&&!c.chr_flags1c5.death_flag()&&!c.debug_flags.character_disabled();
         let at=|c:&ChrIns|{let q=c.modules.physics.position;[q.0,q.1,q.2]};
-        let mine_at:Vec<_>=std::iter::once(here).chain(world.summon_buddy_chr_set.characters().filter(|c|living(c)).map(|c|at(c))).collect();
-        let others_at:Vec<_>=world.player_chr_set.characters().map(|p|&p.chr_ins).filter(|c|!own.contains(&c.field_ins_handle)&&living(c)).map(at).collect();
-        if party||has(Ember::Glintblade) {
-            let teammates:Vec<_>=world.player_chr_set.characters().map(|p|p.chr_ins.field_ins_handle).filter(|h|!own.contains(h)).collect();
+        let spirit_at:Vec<_>=local_spirits.iter().filter_map(|h|world.chr_ins_by_handle(h)).map(at).collect();
+        let mine_at:Vec<_>=std::iter::once(here).chain(spirit_at.iter().copied()).collect();
+        let others_at:Vec<_>=world.player_chr_set.characters().map(|p|&p.chr_ins)
+            .chain(world.summon_buddy_chr_set.characters().map(|c|&*c))
+            .filter(|c|!own.contains(&c.field_ins_handle)&&living(c)).map(at).collect();
+        let non_spirit_at:Vec<_>=std::iter::once(here).chain(others_at.iter().copied()).collect();
+        if party||has(Ember::Glintblade)||has(Ember::SpiritKeeper)||has(Ember::Phalanx) {
+            let teammates:Vec<_>=world.player_chr_set.characters().map(|p|p.chr_ins.field_ins_handle)
+                .chain(world.summon_buddy_chr_set.characters().map(|c|c.field_ins_handle))
+                .filter(|h|!own.contains(h)).collect();
             self.bullets.retain(|&(t,_,_)|now.duration_since(t)<=BULLET_MEMORY);
             if let Ok(manager)=unsafe {eldenring::cs::CSBulletManager::instance()} {
                 for bullet in manager.bullets() {
                     let owner=bullet.targeting_owner.owner_chr_handle;
-                    let mine=own.contains(&owner);
-                    if !mine&&!teammates.contains(&owner) {continue;}
+                    let kind=if spirit_handles.contains(&owner) {BulletOwner::Spirit}
+                        else if own.contains(&owner) {BulletOwner::Player}
+                        else if teammates.contains(&owner) {BulletOwner::Teammate}
+                        else {continue;};
                     let q=bullet.physics.position;
-                    self.bullets.push((now,[q.0,q.1,q.2],mine));
+                    self.bullets.push((now,[q.0,q.1,q.2],kind));
                 }
             }
             if self.bullets.len()>512 {let excess=self.bullets.len()-512;self.bullets.drain(..excess);}
         }
         // 自己造成的伤害（米凯拉之刃按它吸血）：自己那几只敌人每一帧掉的生命都算，不受命中判定的门槛与间隔限制
-        let (mut hits,mut deaths,mut dealt)=(Vec::new(),Vec::new(),0i64);
+        let (mut hits,mut deaths,mut dealt)=(Vec::new(),Vec::<(usize,bool)>::new(),0i64);
         let mut captured:Vec<usize>=Vec::new();
         let mut blades:Vec<(FieldInsHandle,[f32;3])>=Vec::new();
+        let mut phalanx_hits=0u32;
         for &(ref handle,rank,slot) in foes {
             let Some(chr)=world.chr_ins_by_handle(handle) else{continue};
             let (foe_hp,foe_max)=(chr.modules.data.hp,chr.modules.data.max_hp);
             let q=chr.modules.physics.position;let pos=[q.0,q.1,q.2];
             let alive=foe_hp>0&&!chr.chr_flags1c5.death_flag();
             let attacker=chr.last_hit_by;
-            let by_bullet=if party&&attacker.is_empty() {bullet_owner_is_mine(pos,&self.bullets)} else {None};
+            let nearest_bullet=if attacker.is_empty()&&(party||has(Ember::SpiritKeeper)) {bullet_owner(pos,&self.bullets)} else {None};
+            let by_bullet=if party {nearest_bullet.map(|o|!matches!(o,BulletOwner::Teammate))} else {None};
             let mine=!party||if attacker.is_empty() {by_bullet.unwrap_or_else(||nearest_is_mine(pos,&mine_at,&others_at))} else {own.contains(&attacker)};
             let Some(index)=self.foes.iter().position(|f|f.handle==*handle) else {
                 self.foes.push(Foe{handle:*handle,hp:foe_hp,max:foe_max,pos,alive,boss:rank<=1,rank,slot,hit_at:None,participation:Default::default()});continue;
@@ -575,10 +666,20 @@ impl Fight {
             if !mine {continue;}
             // 魔力辉剑：自己的弹体刚落在这只敌人附近、它掉了血，且还有一次没换过辉剑的施法
             if has(Ember::Glintblade)&&drop>0&&alive
-                &&self.bullets.iter().any(|&(t,p,own)|own&&now.duration_since(t)<=BULLET_MEMORY&&distance(p,pos)<=BULLET_REACH)
+                &&self.bullets.iter().any(|&(t,p,owner)|!matches!(owner,BulletOwner::Teammate)&&now.duration_since(t)<=BULLET_MEMORY&&distance(p,pos)<=BULLET_REACH)
                 &&super::glintblade::take_cast() {blades.push((*handle,pos));}
+            // 卡利亚剑阵：近战轻攻击命中（排除召唤物与玩家自己的弹体/剑阵回环）
+            if has(Ember::Phalanx)&&(hit||died) {
+                let attacker_is_spirit=if !attacker.is_empty() {spirit_handles.contains(&attacker)} else {matches!(nearest_bullet,Some(BulletOwner::Spirit))};
+                let near_player_bullet=self.bullets.iter().any(|&(t,p,owner)|matches!(owner,BulletOwner::Player)&&now.duration_since(t)<=BULLET_MEMORY&&distance(p,pos)<=BULLET_REACH);
+                let attack_active=self.normal_attack_until.is_some_and(|until|now<=until);
+                if is_normal_melee_hit(attack_active,attacker_is_spirit,near_player_bullet,distance(here,pos)) {phalanx_hits+=1;}
+            }
             dealt+=i64::from(lost);
-            if died {deaths.push(index);} else if hit {hits.push((index,drop));}
+            if died {
+                let by_spirit=killed_by_spirit(attacker.is_empty(),spirit_handles.contains(&attacker),nearest_bullet,pos,&spirit_at,&non_spirit_at);
+                deaths.push((index,by_spirit));
+            } else if hit {hits.push((index,drop));}
         }
         for (target,pos) in blades {
             match super::glintblade::spawn(here,&target,pos) {
@@ -587,30 +688,33 @@ impl Fight {
             }
         }
         // 召唤物：只看本机玩家的骨灰
-        let spirit=world.summon_buddy_chr_set.characters().find(|c|c.modules.data.hp>0&&!c.chr_flags1c5.death_flag())
-            .map(|c|{let q=c.modules.physics.position;(c.modules.data.hp,c.modules.data.max_hp,[q.0,q.1,q.2])});
-        let vanished=self.spirit.filter(|_|spirit.is_none());self.spirit=spirit.map(|(_,_,pos)|pos);
-        for &dead in &deaths {events.gains.push(Gain::Kill{rank:kill_rank(self.foes[dead].rank),spirit:spirit.is_some()||vanished.is_some()});}
+        let local_spirits=super::spirits::local_living_handles(world);
+        let spirit=local_spirits.iter().filter_map(|h|world.chr_ins_by_handle(h)).max_by_key(|c|c.modules.data.hp)
+            .map(|c|{let q=c.modules.physics.position;(c.field_ins_handle,c.modules.data.hp,c.modules.data.max_hp,[q.0,q.1,q.2])});
+        let vanished=self.spirit.filter(|_|spirit.is_none());self.spirit=spirit.map(|(_,_,_,pos)|pos);
+        for &(dead,by_spirit) in &deaths {events.gains.push(Gain::Kill{rank:kill_rank(self.foes[dead].rank),spirit:by_spirit});}
         // 处刑者的血宴：致命一击之后不久自己打死的那一只（只算第一只，范围伤害顺带打死的不算）
-        if let Some(&dead)=deaths.first()&&self.critical_at.is_some_and(|at|now.duration_since(at)<HARVEST_WINDOW) {
+        if let Some(&(dead,_))=deaths.first()&&self.critical_at.is_some_and(|at|now.duration_since(at)<HARVEST_WINDOW) {
             self.critical_at=None;let rank=kill_rank(self.foes[dead].rank);
             events.gains.push(Gain::CriticalKill{rank});super::log(format!("TOWER_EMBER harvest critical kill rank={rank}"));
         }
-        // 灵魂收容：每只在场的召唤物挂上当前层数的效果
-        if has(Ember::SpiritKeeper) {
-            let living=|c:&&mut _|{let c:&ChrIns=c;c.modules.data.hp>0&&!c.chr_flags1c5.death_flag()};
-            let present:Vec<i32>=world.summon_buddy_chr_set.characters().filter(living).flat_map(|c|c.special_effect.entries().map(|e|e.param_id).collect::<Vec<_>>()).collect();
+        // 灵魂收容：每只本机在场的召唤物挂上当前层数的效果
+        if has(Ember::SpiritKeeper)&&!local_spirits.is_empty() {
+            let present:Vec<i32>=local_spirits.iter().filter_map(|h|world.chr_ins_by_handle(h))
+                .flat_map(|c|c.special_effect.entries().map(|e|e.param_id).collect::<Vec<_>>()).collect();
             let want=scaled_slot(Ember::SpiritKeeper,keeper,&present);
-            for chr in world.summon_buddy_chr_set.characters().filter(living) {
-                let own:Vec<_>=chr.special_effect.entries().map(|e|e.param_id).collect();
-                swap(chr,&own,Ember::SpiritKeeper,want);
+            for handle in &local_spirits {
+                if let Some(chr)=world.chr_ins_by_handle_mut(handle) {
+                    let own:Vec<_>=chr.special_effect.entries().map(|e|e.param_id).collect();
+                    swap(chr,&own,Ember::SpiritKeeper,want);
+                }
             }
         }
         // 玩家侧：所有玩家都生效
         let mut heal=0i64;
         // 仿身泪滴的替身：受到的伤害一部分转给召唤物（召唤物至少留 1 点生命，不由余烬直接打倒）
         let mut spirit_loss=0i32;
-        if has(Ember::SpiritLink)&&taken>0 && let Some((spirit_hp,_,_))=spirit {
+        if has(Ember::SpiritLink)&&taken>0 && let Some((_,spirit_hp,_,_))=spirit {
             spirit_loss=((i64::from(taken)*i64::from(embers::SPIRIT_SHARE_PERCENT)/100) as i32).min(spirit_hp-1).max(0);
             heal+=i64::from(spirit_loss);
         }
@@ -629,11 +733,19 @@ impl Fight {
         let dragon=has(Ember::DragonHeart)&&stamina<=0&&max_stamina>0&&self.dragon_ready.is_none_or(|t|now>=t);
         // 殉道者的苦修：掉了多少生命（按最大生命的比例），就按同样的比例回复专注
         let martyr=if has(Ember::Martyr) {taken}else{0};
-        if heal>0||rise||dragon||refund>0||martyr>0 {
-            let data=&mut world.main_player.as_mut().unwrap().chr_ins.modules.data;
+        let phalanx_proc=if has(Ember::Phalanx)&&phalanx_hits>0&&self.phalanx_ready.is_none_or(|t|now>=t) {
+            (0..phalanx_hits).any(|_|next_roll(&mut self.capture_seed,100)<embers::PHALANX_CHANCE_PERCENT)
+        } else {false};
+        if heal>0||rise||dragon||refund>0||martyr>0||phalanx_hits>0||phalanx_proc {
+            let chr=&mut world.main_player.as_mut().unwrap().chr_ins;
+            let data=&mut chr.modules.data;
             if martyr>0 {
                 let gain=embers::martyr_fp(martyr,data.max_hp,data.max_fp);
                 if gain>0 {data.fp=(i64::from(data.fp.max(0))+i64::from(gain)).min(i64::from(data.max_fp)) as i32;}
+            }
+            if phalanx_hits>0 {
+                let gain=i64::from(embers::phalanx_fp(data.max_fp))*i64::from(phalanx_hits);
+                if gain>0 {data.fp=(i64::from(data.fp.max(0))+gain).min(i64::from(data.max_fp)) as i32;}
             }
             if refund>0 {
                 data.stamina=(i64::from(data.stamina.max(0))+i64::from(refund)).min(i64::from(data.max_stamina)) as i32;
@@ -649,15 +761,31 @@ impl Fight {
                 self.dragon_ready=Some(now+Duration::from_secs(embers::DRAGON_COOLDOWN_SECONDS));
             }
             self.player_hp=Some(data.hp);
+            if phalanx_proc&&ready(&[PHALANX_CAST]) {
+                chr.apply_speffect(PHALANX_CAST,false);
+                self.phalanx_ready=Some(now+Duration::from_secs(embers::PHALANX_COOLDOWN_SECONDS));
+                super::log(format!("TOWER_EMBER phalanx summoned hits={phalanx_hits} cd={}s",embers::PHALANX_COOLDOWN_SECONDS));
+            }
         }
-        // 众灵的盛宴、灵唤铃的号令、替身的分担：都作用在本机召唤物上
-        if spirit.is_some()&&(spirit_loss>0||has(Ember::SpiritCommand)||has(Ember::SpiritFeast)&&!deaths.is_empty()) {
+        // 众灵的盛宴、孤王的契约、替身的分担：都作用在本机召唤物上
+        let lone_king=has(Ember::SpiritCommand)&&super::spirits::local_living_group_count(world)==1;
+        let lone_king_heal=spirit_regen_due(&mut self.lone_king_regen,lone_king,now);
+        if let Some((link_handle,_,_,_))=spirit&&(spirit_loss>0||has(Ember::SpiritCommand)||has(Ember::SpiritFeast)&&!deaths.is_empty()) {
             let feast_heal=if has(Ember::SpiritFeast) {deaths.len() as i64}else{0};
-            if let Some(chr)=world.summon_buddy_chr_set.characters().find(|c|c.modules.data.hp>0&&!c.chr_flags1c5.death_flag()) {
+            for handle in &local_spirits {
+                let Some(chr)=world.chr_ins_by_handle_mut(handle) else{continue};
                 let data=&mut chr.modules.data;
+                let loss=if *handle==link_handle {i64::from(spirit_loss)}else{0};
                 let restored=i64::from(data.max_hp)*i64::from(embers::SPIRIT_FEAST_HEAL_PERCENT)/100*feast_heal;
-                data.hp=(i64::from(data.hp)-i64::from(spirit_loss)+restored).clamp(1,i64::from(data.max_hp)) as i32;
-                if has(Ember::SpiritCommand)&&ready(&[SPIRIT_COMMAND])&&!chr.special_effect.entries().any(|e|e.param_id==SPIRIT_COMMAND) {chr.apply_speffect(SPIRIT_COMMAND,false);}
+                let regen=if lone_king_heal&&data.max_hp>0 {(i64::from(data.max_hp)*i64::from(embers::SPIRIT_COMMAND_REGEN_PERCENT)/100).max(1)}else{0};
+                if loss>0||restored>0||regen>0 {
+                    data.hp=(i64::from(data.hp)-loss+restored+regen).clamp(1,i64::from(data.max_hp)) as i32;
+                }
+                if has(Ember::SpiritCommand)&&ready(&[SPIRIT_COMMAND]) {
+                    let active=chr.special_effect.entries().any(|e|e.param_id==SPIRIT_COMMAND);
+                    if lone_king&&!active {chr.apply_speffect(SPIRIT_COMMAND,false);}
+                    else if !lone_king&&active {chr.remove_speffect(SPIRIT_COMMAND);}
+                }
             }
             if feast_heal>0 {
                 let data=&mut world.main_player.as_mut().unwrap().chr_ins.modules.data;
@@ -675,7 +803,7 @@ impl Fight {
         let mut wound=|origin:[f32;3],radius:f32,ember:Ember,foes:&[Foe]| {
             for (index,foe) in foes.iter().enumerate() {if foe.alive&&distance(foe.pos,origin)<=radius {strikes.push((index,Strike::Wound{slot:foe.slot,ember}));}}
         };
-        if has(Ember::Deathflame) {for &dead in &deaths {wound(self.foes[dead].pos,embers::DEATHFLAME_RADIUS,Ember::Deathflame,&self.foes);}}
+        if has(Ember::Deathflame) {for &(dead,_) in &deaths {wound(self.foes[dead].pos,embers::DEATHFLAME_RADIUS,Ember::Deathflame,&self.foes);}}
         // 圣杯余响：喝圣杯瓶后一段时间内的增益（挂在玩家身上，由 sync 按 echo_until 挂上 / 摘掉；再喝一口重新计时）
         if has(Ember::Echo)&&drank {self.echo_until=Some(Instant::now()+Duration::from_secs(embers::ECHO_SECONDS));}
         if has(Ember::SpiritBurst) && let Some(origin)=vanished {wound(origin,embers::SPIRIT_BURST_RADIUS,Ember::SpiritBurst,&self.foes);super::log("TOWER_EMBER spirit burst");}
@@ -868,9 +996,20 @@ mod tests {
     #[test]
     fn unattributed_ranged_hits_follow_the_bullet_owner() {
         let now=Instant::now();let foe=[20.0,0.0,0.0];
-        assert_eq!(bullet_owner_is_mine(foe,&[(now,[19.0,0.0,0.0],true),(now,[30.0,0.0,0.0],false)]),Some(true),"my spell landed on it");
-        assert_eq!(bullet_owner_is_mine(foe,&[(now,[18.0,0.0,0.0],true),(now,[20.5,0.0,0.0],false)]),Some(false),"the teammate's bolt is closer");
-        assert_eq!(bullet_owner_is_mine(foe,&[(now,[0.0,0.0,0.0],true)]),None,"no bullet near it, fall back to distance");
+        assert_eq!(bullet_owner_is_mine(foe,&[(now,[19.0,0.0,0.0],BulletOwner::Player),(now,[30.0,0.0,0.0],BulletOwner::Teammate)]),Some(true),"my spell landed on it");
+        assert_eq!(bullet_owner_is_mine(foe,&[(now,[18.0,0.0,0.0],BulletOwner::Spirit),(now,[20.5,0.0,0.0],BulletOwner::Teammate)]),Some(false),"the teammate's bolt is closer");
+        assert_eq!(bullet_owner_is_mine(foe,&[(now,[0.0,0.0,0.0],BulletOwner::Player)]),None,"no bullet near it, fall back to distance");
+    }
+    #[test]
+    fn spirit_keeper_only_credits_local_spirit_kills() {
+        let foe=[0.0,0.0,0.0];
+        assert!(killed_by_spirit(false,true,None,foe,&[],&[[0.5,0.0,0.0]]),"direct spirit kill via last_hit_by");
+        assert!(!killed_by_spirit(false,false,Some(BulletOwner::Spirit),foe,&[[0.1,0.0,0.0]],&[[5.0,0.0,0.0]]),"player last_hit_by never counts even if spirit is standing next to foe");
+        assert!(killed_by_spirit(true,false,Some(BulletOwner::Spirit),foe,&[[10.0,0.0,0.0]],&[[0.5,0.0,0.0]]),"ranged spirit bullet kill when last_hit_by is empty");
+        assert!(!killed_by_spirit(true,false,Some(BulletOwner::Player),foe,&[[0.5,0.0,0.0]],&[[10.0,0.0,0.0]]),"player bullet kill does not count");
+        assert!(killed_by_spirit(true,false,None,foe,&[[1.0,0.0,0.0]],&[[4.0,0.0,0.0]]),"closest local spirit fallback");
+        assert!(!killed_by_spirit(true,false,None,foe,&[[4.0,0.0,0.0]],&[[1.0,0.0,0.0]]),"player closer than spirit does not count");
+        assert!(!killed_by_spirit(true,false,None,foe,&[],&[[1.0,0.0,0.0]]),"no spirit alive");
     }
     #[test]
     fn unattributed_hits_go_to_the_nearest_side() {
@@ -946,12 +1085,48 @@ mod tests {
         assert!([SPIRIT_RESONANCE,ARTS_ATTACK,ARTS_COST,BULWARK].into_iter().all(|id|ids.contains(&id)));
         assert!(!ids.contains(&EXECUTION_RELIEF),"the relief expires on its own, sync never strips it");
         assert_eq!(frenzy_effect(embers::FRENZY_STACKS),FIRST+131);
-        let mut all=ids.clone();all.extend([BLOOD,FROST,FLASH,SPIRIT_COMMAND,CHAIN_MARK,CHAIN_RESIDENT+1,EXECUTION+1,EXECUTION_RELIEF]);
+        let mut all=ids.clone();all.extend([BLOOD,FROST,FLASH,PHALANX_CAST,SPIRIT_COMMAND,CHAIN_MARK,CHAIN_RESIDENT+1,EXECUTION+1,EXECUTION_RELIEF]);
         all.extend(Ember::ALL.into_iter().filter_map(slots).flatten());
         let count=all.len();all.sort();all.dedup();assert_eq!(all.len(),count,"effect ids overlap");
         assert!(all.iter().all(|id|(FIRST..FIRST+200).contains(id)),"inside the ember range");
-        assert!(Ember::ALL.into_iter().all(|e|(e.stacking()||matches!(e,Ember::Battlemage|Ember::Mind))==slots(e).is_some()));
+        assert!(Ember::ALL.into_iter().all(|e|(e.stacking()||matches!(e,Ember::Battlemage|Ember::Mind|Ember::HeavyCast))==slots(e).is_some()));
         assert!(PLAYER_STACKING.iter().all(|e|e.stacking()&&*e!=Ember::SpiritKeeper));
         assert_eq!([0,1,2,3].map(kill_rank),[2,1,1,0]);
+    }
+    #[test]
+    fn phalanx_only_triggers_on_close_non_bullet_normal_attacks() {
+        let now=Instant::now();
+        let mut window=None;
+        observe_normal_attack(&mut window,now,true,false);
+        assert!(window.is_some_and(|u|u>now));
+        observe_normal_attack(&mut window,now,true,true);
+        assert!(window.is_none(),"spell/AoW/heavy input clears light-attack window");
+        assert!(is_normal_melee_hit(true,false,false,2.5));
+        assert!(!is_normal_melee_hit(false,false,false,2.5));
+        assert!(!is_normal_melee_hit(true,true,false,2.5),"spirit hits do not trigger phalanx");
+        assert!(!is_normal_melee_hit(true,false,true,2.5),"player bullet hits do not loop phalanx");
+        assert!(!is_normal_melee_hit(true,false,false,MELEE_REACH+0.1));
+    }
+    #[test]
+    fn lone_king_regen_ticks_every_second_and_resets_when_inactive() {
+        let start=Instant::now();
+        let mut last=None;
+        assert!(!spirit_regen_due(&mut last,false,start));
+        assert!(last.is_none());
+        assert!(!spirit_regen_due(&mut last,true,start),"first active frame arms timer");
+        assert!(!spirit_regen_due(&mut last,true,start+Duration::from_millis(999)));
+        assert!(spirit_regen_due(&mut last,true,start+Duration::from_secs(1)));
+        assert!(!spirit_regen_due(&mut last,true,start+Duration::from_millis(1500)));
+        assert!(!spirit_regen_due(&mut last,false,start+Duration::from_secs(2)),"second group clears timer");
+        assert!(last.is_none());
+    }
+    #[test]
+    fn heavy_cast_latch_keeps_high_fp_bonus_briefly_when_swapping_spells() {
+        let now=Instant::now();
+        let latch=Some((57,now+HEAVY_CAST_LATCH));
+        assert_eq!(heavy_cast_effective_mp(7,latch,now+Duration::from_secs(1)),57);
+        assert_eq!(heavy_cast_effective_mp(62,latch,now+Duration::from_secs(1)),62);
+        assert_eq!(heavy_cast_effective_mp(7,latch,now+HEAVY_CAST_LATCH),7);
+        assert_eq!(heavy_cast_effective_mp(24,None,now),24);
     }
 }

@@ -11,10 +11,10 @@ static class EmberPickupAssets {
         var order=Regex.Match(source,@"pub const ALL:[^=]+?=\[(.*?)\];",RegexOptions.Singleline).Groups[1].Value;
         var keys=Regex.Matches(order,@"Self::(\w+)").Select(m=>m.Groups[1].Value).ToArray();
         var names=Regex.Matches(source,@"Self::(\w+)=>""([^""]+)""").GroupBy(m=>m.Groups[1].Value).ToDictionary(g=>g.Key,g=>g.First().Groups[2].Value);
-        if(keys.Length!=41||keys.Distinct().Count()!=41||keys[36]!="FrostShackle"||keys[37]!="Tent"||keys[38]!="Capture"||keys[39]!="Glintblade"||keys[40]!="Mind"||keys.Any(k=>!names.ContainsKey(k)))throw new Exception("Ember catalogue mismatch");
+        if(keys.Length!=43||keys.Distinct().Count()!=43||keys[36]!="FrostShackle"||keys[37]!="Tent"||keys[38]!="Capture"||keys[39]!="Glintblade"||keys[40]!="Mind"||keys[41]!="Phalanx"||keys[42]!="HeavyCast"||keys.Any(k=>!names.ContainsKey(k)))throw new Exception("Ember catalogue mismatch");
         int Index(int i)=>i>=36?i+1:i;
-        int Icon(int i)=>Index(i);
-        const int ArtCount=42;
+        int Icon(int i)=>Index(i) switch {42=>40,43=>23,var x=>x};
+        const int ArtCount=44;
         Directory.CreateDirectory(output);
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
         var file=reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name)=="EquipParamGoods");
