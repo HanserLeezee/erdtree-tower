@@ -91,8 +91,22 @@ fn next_roll(seed:&mut u64,modulus:u32)->u32 {
     *seed^=*seed<<13;*seed^=*seed>>7;*seed^=*seed<<17;
     (*seed%u64::from(modulus)) as u32
 }
-/// 孤王的契约：场上仅有 1 组本机召唤物时挂在召唤物身上（伤害 +35%、减伤 25%），超过 1 组时摘除
+/// 孤王的契约：场上仅有 1 组本机召唤物时挂在召唤物身上（伤害 +30%、减伤 20%），超过 1 组时摘除
 const SPIRIT_COMMAND:i32=FIRST+50;
+/// 仿身泪滴的替身：本机存活召唤物（生命 > 1）在场时挂在玩家身上，先直接减免 50% 伤害（防止被秒杀），再由运行时将等量伤害扣到召唤物身上
+const SPIRIT_LINK:i32=FIRST+51;
+fn spirit_link_transfer(taken:i32,mitigated_by_effect:bool,spare_hp:i32)->(i32,i32) {
+    if taken<=0||spare_hp<=0 {return (0,0);}
+    let share=i64::from(embers::SPIRIT_SHARE_PERCENT);
+    if mitigated_by_effect {
+        let denom=(100-share).max(1);
+        let transfer=((i64::from(taken)*share/denom) as i32).min(spare_hp).max(0);
+        (0,transfer)
+    } else {
+        let transfer=((i64::from(taken)*share/100) as i32).min(spare_hp).max(0);
+        (transfer,transfer)
+    }
+}
 fn spirit_regen_due(last:&mut Option<Instant>,active:bool,now:Instant)->bool {
     if !active {*last=None;return false;}
     let Some(at)=*last else{*last=Some(now);return false;};
@@ -150,7 +164,7 @@ fn observe_chain(chr:&ChrIns,level:u32) {
     if let Ok(mut trace)=CHAIN_TRACE.lock(){*trace=ChainTrace{level,resident:CRITICAL_HOOK_READY.load(Ordering::Acquire),marker:CRITICAL_PENDING.load(Ordering::Acquire),
         rate:row.map(|r|r.physics_attack_rate()),critical_only:row.is_some_and(|r|r.state_info()==367&&r.throw_attack_param_change()),effects:active.len()};}
 }
-fn player_ids()->impl Iterator<Item=i32> {[EXECUTION,REVENGE,ECHO,BARRIER,MEDITATION,GLINTSTONE,FULL_MOON,SPIRIT_RESONANCE,ARTS_ATTACK,ARTS_COST,BULWARK,LAST_STAND,CHAIN_RESIDENT].into_iter().chain((1..=embers::FRENZY_STACKS).map(frenzy_effect))}
+fn player_ids()->impl Iterator<Item=i32> {[EXECUTION,REVENGE,ECHO,BARRIER,MEDITATION,GLINTSTONE,FULL_MOON,SPIRIT_RESONANCE,SPIRIT_LINK,ARTS_ATTACK,ARTS_COST,BULWARK,LAST_STAND,CHAIN_RESIDENT].into_iter().chain((1..=embers::FRENZY_STACKS).map(frenzy_effect))}
 /// 叠层余烬不设上限：每种两行轮换（灵魂收容挂在召唤物身上，其余挂在玩家身上）。
 /// 层数变了就把新倍率写进没挂着的那一行、换上它，再摘掉旧的那一行；不改正在生效的那一行
 fn slots(ember:Ember)->Option<[i32;2]> {
@@ -363,7 +377,7 @@ fn sync_battlemage(wanted:&[(u32,u8)]) {
             row.set_attack_element_correct_id(c.elements);
         }
     }
-    for (slot,&(row_id,stat)) in wanted.iter().enumerate().take(embers::BATTLEMAGE_WEAPONS) {
+    for (slot,&(row_id,stat)) in wanted.iter().enumerate().take(embers::BATTLEMAGE_MAX_SLOTS) {
         let custom=BATTLEMAGE_ELEMENTS+slot as u32;
         let Some(row)=params.get::<EquipParamWeapon>(row_id) else{continue};
         let (correct,elements)=(if stat==0{row.correct_magic()}else{row.correct_faith()},row.attack_element_correct_id());
@@ -391,7 +405,7 @@ fn bulwark_guard_weapon(equipment:&eldenring::cs::ChrAsmEquipment,ids:&[i32],han
 pub fn bulwark_guard(player:&eldenring::cs::PlayerIns)->bool {
     bulwark_guard_weapon(&player.chr_asm.equipment,&player.chr_asm.equipment_param_ids,player.guard_reference_hand)
 }
-pub fn sync(chr:&mut ChrIns,run:Option<&Run>,fight:&Fight,spirit_alive:bool,greatshield_guard:bool) {
+pub fn sync(chr:&mut ChrIns,run:Option<&Run>,fight:&Fight,spirit_alive:bool,spirit_link:bool,greatshield_guard:bool) {
     let mut want=Vec::new();
     let embers=held(run);
     sync_pouch(embers.contains(&Ember::Pouch));
@@ -414,6 +428,7 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>,fight:&Fight,spirit_alive:bool,grea
     }
     if fight.full_moon {want.push(FULL_MOON);}
     if resonance_active(&embers,spirit_alive) {want.push(SPIRIT_RESONANCE);}
+    if embers.contains(&Ember::SpiritLink)&&spirit_link {want.push(SPIRIT_LINK);}
     if fight.frenzy>0 {want.push(frenzy_effect(fight.frenzy));}
     let present:Vec<_>=chr.special_effect.entries().map(|e|e.param_id).collect();
     let stacks=run.map(|r|r.ember_stacks).unwrap_or_default();
@@ -451,6 +466,9 @@ fn resonance_active(held:&[Ember],spirit_alive:bool)->bool {
 }
 pub fn living_spirit(world:&WorldChrMan)->bool {
     !super::spirits::local_living_handles(world).is_empty()
+}
+pub fn linkable_spirit(world:&WorldChrMan)->bool {
+    super::spirits::local_living_handles(world).iter().filter_map(|h|world.chr_ins_by_handle(h)).any(|c|c.modules.data.hp>1)
 }
 fn distance(a:[f32;3],b:[f32;3])->f32 {((a[0]-b[0]).powi(2)+(a[1]-b[1]).powi(2)+(a[2]-b[2]).powi(2)).sqrt()}
 /// slot：这场战斗敌人名单里的位置（联机时房主与成员一致，成员发来的敌人侧效果按它找敌人）
@@ -517,7 +535,7 @@ pub struct Fight {
     /// 蕾娜拉的满月：专注不低于 MOON_FP_PERCENT%
     full_moon:bool,
     /// 黑刀刺客的身法：退还翻滚与致命一击扣掉的精力
-    footwork:Footwork,feasts:u8,missing:bool,
+    footwork:Footwork,arts_stamina:ArtsStamina,feasts:u8,missing:bool,
     /// 上一帧在场的召唤物位置（灵骸迸裂在它消失时引爆）
     spirit:Option<[f32;3]>,
     /// 上一帧玩家身上有处刑之链的致命一击标记
@@ -651,6 +669,13 @@ impl Fight {
             let critical=throwing&&!self.footwork.throwing;self.footwork.throwing=throwing;
             refund=self.footwork.observe(stamina,dodge||critical,now);
             if refund>0&&!self.footwork.logged {self.footwork.logged=true;super::log(format!("TOWER_EMBER footwork refund {refund} critical={critical}"));}
+        }
+        if has(Ember::Arts) {
+            let request=&player.chr_ins.modules.action_request;
+            let (input,pressed)=(&request.action_requests,&request.new_action_presses);
+            let skill=pressed.l2()||input.l2();
+            let dodge=pressed.rolling()||pressed.backstep()||pressed.emergencystep();
+            refund+=self.arts_stamina.observe(stamina,skill,dodge,refund>0,now);
         }
         self.full_moon=has(Ember::FullMoon)&&data.max_fp>0&&i64::from(data.fp)*100>=i64::from(data.max_fp)*i64::from(embers::MOON_FP_PERCENT);
         let p=player.chr_ins.modules.physics.position;let here=[p.0,p.1,p.2];
@@ -823,11 +848,16 @@ impl Fight {
         }
         // 玩家侧：所有玩家都生效
         let mut heal=0i64;
-        // 仿身泪滴的替身：受到的伤害一部分转给召唤物（召唤物至少留 1 点生命，不由余烬直接打倒）
+        // 仿身泪滴的替身：本机存活召唤物（生命 > 1）在场时已由 SPIRIT_LINK 实时减伤 50%，此处把等量伤害分摊扣到召唤物身上（每只至少留 1 点生命）
         let mut spirit_loss=0i32;
-        if has(Ember::SpiritLink)&&taken>0 && let Some((_,spirit_hp,_,_))=spirit {
-            spirit_loss=((i64::from(taken)*i64::from(embers::SPIRIT_SHARE_PERCENT)/100) as i32).min(spirit_hp-1).max(0);
-            heal+=i64::from(spirit_loss);
+        if has(Ember::SpiritLink)&&taken>0&&!local_spirits.is_empty() {
+            let spare_hp:i32=local_spirits.iter().filter_map(|h|world.chr_ins_by_handle(h))
+                .map(|c|(c.modules.data.hp-1).max(0)).fold(0i32,|acc,v|acc.saturating_add(v));
+            let mitigated=world.main_player.as_ref().is_some_and(|p|p.chr_ins.special_effect.entries().any(|e|e.param_id==SPIRIT_LINK));
+            let (player_refund,transfer)=spirit_link_transfer(taken,mitigated,spare_hp);
+            heal+=i64::from(player_refund);
+            spirit_loss=transfer;
+            if transfer>0 {super::log(format!("TOWER_EMBER spirit_link taken={taken} mitigated={mitigated} transfer={transfer} spare={spare_hp}"));}
         }
         if has(Ember::Miquella) {
             self.lifesteal+=dealt*i64::from(embers::LIFESTEAL_PERCENT);
@@ -867,6 +897,7 @@ impl Fight {
             if refund>0 {
                 data.stamina=(i64::from(data.stamina.max(0))+i64::from(refund)).min(i64::from(data.max_stamina)) as i32;
                 self.footwork.last=Some(data.stamina);
+                self.arts_stamina.last=Some(data.stamina);
             }
             if rise {
                 data.hp=data.hp.max((i64::from(data.max_hp)*i64::from(embers::RISE_TO_PERCENT)/100) as i32);self.rose=true;
@@ -887,16 +918,22 @@ impl Fight {
         // 众灵的盛宴、孤王的契约、替身的分担：都作用在本机召唤物上
         let lone_king=has(Ember::SpiritCommand)&&super::spirits::local_living_group_count(world)==1;
         let lone_king_heal=spirit_regen_due(&mut self.lone_king_regen,lone_king,now);
-        if let Some((link_handle,_,_,_))=spirit&&(spirit_loss>0||has(Ember::SpiritCommand)||has(Ember::SpiritFeast)&&!deaths.is_empty()) {
+        if spirit.is_some()&&(spirit_loss>0||has(Ember::SpiritCommand)||has(Ember::SpiritFeast)&&!deaths.is_empty()) {
             let feast_heal=if has(Ember::SpiritFeast) {deaths.len() as i64}else{0};
-            for handle in &local_spirits {
+            let mut order:Vec<_>=local_spirits.iter().copied().collect();
+            if spirit_loss>0 {
+                order.sort_by_key(|h|std::cmp::Reverse(world.chr_ins_by_handle(h).map_or(0,|c|c.modules.data.hp)));
+            }
+            let mut pending_loss=i64::from(spirit_loss);
+            for handle in &order {
                 let Some(chr)=world.chr_ins_by_handle_mut(handle) else{continue};
                 let data=&mut chr.modules.data;
-                let loss=if *handle==link_handle {i64::from(spirit_loss)}else{0};
+                let take=pending_loss.min(i64::from((data.hp-1).max(0)));
+                pending_loss-=take;
                 let restored=i64::from(data.max_hp)*i64::from(embers::SPIRIT_FEAST_HEAL_PERCENT)/100*feast_heal;
                 let regen=if lone_king_heal&&data.max_hp>0 {(i64::from(data.max_hp)*i64::from(embers::SPIRIT_COMMAND_REGEN_PERCENT)/100).max(1)}else{0};
-                if loss>0||restored>0||regen>0 {
-                    data.hp=(i64::from(data.hp)-loss+restored+regen).clamp(1,i64::from(data.max_hp)) as i32;
+                if take>0||restored>0||regen>0 {
+                    data.hp=(i64::from(data.hp)-take+restored+regen).clamp(1,i64::from(data.max_hp)) as i32;
                 }
                 if has(Ember::SpiritCommand)&&ready(&[SPIRIT_COMMAND]) {
                     let active=chr.special_effect.entries().any(|e|e.param_id==SPIRIT_COMMAND);
@@ -1011,6 +1048,42 @@ impl Footwork {
         if drop>0&&self.armed.is_some_and(|until|now<until) {self.armed=None;self.recent=None;return drop;}
         0
     }
+}
+/// 战技的精粹：按下/按住 L2 战技键后的窗口内退还 15% 消耗的精力（带余数累计，不扣正常翻滚/轻攻精力）
+const ARTS_STAMINA_WINDOW:Duration=Duration::from_millis(1200);
+#[derive(Default)]
+struct ArtsStamina {last:Option<i32>,until:Option<Instant>,rem:i64}
+impl ArtsStamina {
+    fn observe(&mut self,stamina:i32,skill:bool,dodge:bool,already_refunded:bool,now:Instant)->i32 {
+        let drop=self.last.map_or(0,|before|(before-stamina).max(0));
+        self.last=Some(stamina);
+        if dodge {self.until=None;return 0;}
+        if skill {self.until=Some(now+ARTS_STAMINA_WINDOW);}
+        if already_refunded||drop<=0||!self.until.is_some_and(|u|now<u) {return 0;}
+        self.rem+=i64::from(drop)*i64::from(embers::ARTS_STAMINA_CUT_PERCENT);
+        let back=(self.rem/100) as i32;
+        self.rem%=100;
+        back
+    }
+}
+#[test]
+fn arts_stamina_refunds_fifteen_percent_only_during_skill_window() {
+    let t=Instant::now();let ms=|n:u64|t+Duration::from_millis(n);
+    let mut a=ArtsStamina::default();
+    assert_eq!(a.observe(100,false,false,false,ms(0)),0);
+    assert_eq!(a.observe(80,false,false,false,ms(16)),0,"normal attack without L2 is not refunded");
+    assert_eq!(a.observe(80,true,false,false,ms(100)),0,"L2 pressed arms skill window");
+    assert_eq!(a.observe(60,false,false,false,ms(200)),3,"20 stamina * 15% = 3");
+    a.last=Some(60);
+    assert_eq!(a.observe(50,false,false,false,ms(400)),1,"10 stamina * 15% = 1.5 -> 1 (rem 50)");
+    a.last=Some(50);
+    assert_eq!(a.observe(40,false,false,false,ms(500)),2,"10 stamina * 15% + rem 50 = 2");
+    a.last=Some(40);
+    assert_eq!(a.observe(20,false,true,false,ms(600)),0,"dodge clears skill window");
+    a.last=Some(20);
+    assert_eq!(a.observe(10,false,false,false,ms(700)),0,"stamina after dodge is not refunded");
+    assert_eq!(a.observe(100,true,false,false,ms(1000)),0);
+    assert_eq!(a.observe(80,false,false,false,ms(2300)),0,"expired window");
 }
 #[test]
 fn footwork_refunds_one_drop_per_dodge_or_critical() {
@@ -1210,8 +1283,8 @@ mod tests {
     #[test]
     fn effect_ids_do_not_overlap() {
         let ids:Vec<_>=player_ids().collect();
-        assert_eq!(ids.len(),13+usize::from(embers::FRENZY_STACKS));
-        assert!([SPIRIT_RESONANCE,ARTS_ATTACK,ARTS_COST,BULWARK].into_iter().all(|id|ids.contains(&id)));
+        assert_eq!(ids.len(),14+usize::from(embers::FRENZY_STACKS));
+        assert!([SPIRIT_RESONANCE,SPIRIT_LINK,ARTS_ATTACK,ARTS_COST,BULWARK].into_iter().all(|id|ids.contains(&id)));
         assert!(!ids.contains(&EXECUTION_RELIEF),"the relief expires on its own, sync never strips it");
         assert_eq!(frenzy_effect(embers::FRENZY_STACKS),FIRST+131);
         let mut all=ids.clone();all.extend([BLOOD,FROST,POISON,ROT,FLASH,PHALANX_CAST,HUNTER_MARK,SPIRIT_COMMAND,CHAIN_MARK,CHAIN_RESIDENT+1,EXECUTION+1,EXECUTION_RELIEF]);
@@ -1298,5 +1371,12 @@ mod tests {
         assert_eq!(observe_ailments([2,5],&mut bursts,now+Duration::from_secs(17)),2);
         assert_eq!([0,1,2,3].map(venom_effect),[Some(POISON),Some(ROT),Some(BLOOD),Some(FROST)]);
         assert_eq!(venom_effect(4),None);
+    }
+    #[test]
+    fn spirit_link_transfers_mitigated_half_without_double_healing() {
+        assert_eq!(spirit_link_transfer(500,true,2000),(0,500),"when SPIRIT_LINK already cut 1000->500, transfer 500 to spirit with 0 extra player heal");
+        assert_eq!(spirit_link_transfer(500,true,120),(0,120),"capped by spirit spare HP");
+        assert_eq!(spirit_link_transfer(1000,false,2000),(500,500),"fallback path without SpEffect refunds 500 and transfers 500");
+        assert_eq!(spirit_link_transfer(500,true,0),(0,0));
     }
 }

@@ -116,8 +116,10 @@ static class AdvancedAffixAssets {
                     string stats=weapon?$"属性要求：无\\n补正组合：{build}\\n基础攻击力（+0，未质变，未计属性补正）：\\n{string.Join('　',Damage.Select((e,i)=>DamageLabels[i]+" "+I(basis,"attackBase"+e)))}\\n重量：{basis["weight"].Value}\\n质变后伤害构成以装备面板为准。":$"防具类型：{Types[profile]}\\n重量：{basis["weight"].Value}\\n{string.Join('　',new[]{"neutral","magic","fire","thunder","dark"}.Select((e,i)=>(i==0?"物理":DamageLabels[i])+"减伤 "+((1-F(basis,e+"DamageCutRate"))*100).ToString("0.0",CultureInfo.InvariantCulture)+"%"))}";
                     foreach(int fmgId in weapon?new[]{11,21,25}:new[]{12,22,26}) {
                         if(text[fmgId].Entries.Any(e=>e.ID==id))throw new Exception("Advanced affix text collision");
-                        string value=fmgId is 11 or 12?name:fmgId is 21 or 22?info:detail[4]+"\\n\\n"+info;
-                        text[fmgId].Entries.Add(new FMG.Entry(id,fmgId==25?AffixTextFix.Fit(value.Replace("\\n","\n")):value.Replace("\\n","\n")));
+                        string infoText=info.Replace("\\n","\n");
+                        string value=fmgId is 11 or 12?name:fmgId is 21 or 22?infoText
+                            :AffixTextFix.FitTop(infoText,detail[4].Replace("\\n","\n"),fmgId==25?AffixTextFix.WeaponCaptionLines:AffixTextFix.ProtectorCaptionLines);
+                        text[fmgId].Entries.Add(new FMG.Entry(id,value));
                     }
                     catalog.Add($"{kind}|{id}|{baseId}|{tier}|{name}|{profile}");
                     detailLines.Add(string.Join('\t',new[]{(tag|(uint)id).ToString(),detail[1],name,info,detail[4]+"\\n\\n"+info,stats,detail[6]}));rarities.Add($"{tag|(uint)id}\t{tier}");

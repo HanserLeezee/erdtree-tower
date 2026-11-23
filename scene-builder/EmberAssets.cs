@@ -12,13 +12,13 @@ static class EmberAssets {
     const float BarrierCut=0.5f,MeditationToughness=0f,GlintstoneCost=0.75f,MoonAttack=1.3f;
     // 灵唤师的共鸣：召唤物在场时玩家造成的伤害 ×1.4（与 src/embers.rs 的 SPIRIT_RESONANCE_PERCENT 一致；何时挂上由运行时控制）
     const float ResonanceAttack=1.4f;
-    // 战技的精粹（与 src/embers.rs 的 ARTS_* 一致）：战技造成的伤害 ×1.25（复制原版只对战技生效的增伤 312310，与战技伤害词条同一模板）、战技专注消耗 ×0.5；持有即常驻
-    const float ArtsAttack=1.25f,ArtsCost=0.5f;
-    const float ExecutionSeconds=10f,ExecutionStamina=0.5f,RevengeRate=1.3f,FrenzyStep=0.02f,CommandAttack=1.35f,CommandCut=0.75f;
+    // 战技的精粹（与 src/embers.rs 的 ARTS_* 一致）：战技造成的伤害 ×1.20（复制原版只对战技生效的增伤 312310，与战技伤害词条同一模板）、战技专注消耗 ×0.85；持有即常驻（战技精力 -15% 由运行时处理）
+    const float ArtsAttack=1.20f,ArtsCost=0.85f;
+    const float ExecutionSeconds=10f,ExecutionStamina=0.5f,RevengeRate=1.3f,FrenzyStep=0.02f,CommandAttack=1.30f,CommandCut=0.80f,SpiritLinkCut=0.50f;
     const int Buildup=40,FrenzyStacks=40,FlashVfx=1605000;
     // 叠层余烬（与 src/embers.rs 的常量一致）
     const float HarvestStep=0.01f;
-    const float SlayerHp=0.05f,SlayerAttack=0.04f,SoulStep=0.03f,ChainStep=0.05f,KeeperAttack=0.03f,KeeperCut=0.02f;
+    const float SlayerHp=0.05f,SlayerAttack=0.04f,SoulStep=0.006f,ChainStep=0.05f,KeeperAttack=0.03f,KeeperCut=0.02f;
     const int CriticalState=288,CriticalOnly=367;
     static readonly string[] Kept=["spCategory","categoryPriority","effectTargetOpposeTarget","effectTargetFriendlyTarget","effectTargetSelfTarget","effectTargetSelf","effectTargetFriend","effectTargetEnemy","effectTargetPlayer","effectTargetAI","effectTargetLive","effectTargetGhost"];
     static void Set(PARAM.Row r,string key,object value)=>r[key].Value=Convert.ChangeType(value,r[key].Value.GetType());
@@ -83,11 +83,15 @@ static class EmberAssets {
         // 前 8 层编号保留；新增层使用 +100 至 +131，避开其他余烬效果。
         for(int stack=1;stack<=FrenzyStacks;stack++)rows.Add(Player(p,(stack<=8?First+30+stack:First+100+stack-9),$"Tower ember frenzy {stack}",1f+FrenzyStep*stack,-1f));
         var flash=Enemy(p,First+40,"Tower ember flash",1f);Set(flash,"vfxId",FlashVfx);rows.Add(flash);
-        // 孤王的契约（原灵唤铃的号令）：仅场上 1 组本机召唤物时挂在召唤物身上，伤害 +35%、受到的伤害 -25%（持续回血由运行时处理）
+        // 孤王的契约（原灵唤铃的号令）：仅场上 1 组本机召唤物时挂在召唤物身上，伤害 +30%、受到的伤害 -20%（持续回血由运行时处理）
         var command=Enemy(p,First+50,"Tower ember spirit command",-1f);
         foreach(var element in new[]{"physics","magic","fire","thunder","dark"})Set(command,element+"AttackPowerRate",CommandAttack);
         foreach(var cut in new[]{"slash","blow","thrust","neutral","magic","fire","thunder","dark"})Set(command,cut+"DamageCutRate",CommandCut);
         rows.Add(command);
+        // 仿身泪滴的替身：本机存活召唤物（生命 > 1）在场时挂在玩家身上，先直接减免 50% 伤害（防秒杀），再由运行时将等量伤害扣到召唤物身上
+        var link=Player(p,First+51,"Tower ember spirit link",1f,-1f);
+        foreach(var cut in new[]{"slash","blow","thrust","neutral","magic","fire","thunder","dark"})Set(link,cut+"DamageCutRate",SpiritLinkCut);
+        rows.Add(link);
         // 处刑之链：常驻 → 致命一击时触发 → 1 秒的标记（没有任何效果，只供运行时识别）
         var chain=new PARAM.Row(p.Rows.Single(r=>r.ID==350500)){ID=First+5,Name="Tower ember chain"};
         Set(chain,"iconId",-1);Set(chain,"spCategory",0);Set(chain,"categoryPriority",0);rows.Add(chain);

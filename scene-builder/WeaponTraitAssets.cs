@@ -125,16 +125,22 @@ static class WeaponTraitAssets {
         var dest=Path.Combine(output,"regulation.bin");
         SoulsFormats.Cryptography.RegulationDecryptor.EncryptERRegulation(dest,reg);
         if(new FileInfo(dest).Length>=4799*1024)throw new Exception("regulation.bin exceeds the game budget");
-        string Update(int id,string text,string sep,int lang){
-            if(oldTraits.TryGetValue(id,out int legacy))text=text.Replace(sep+Labels[legacy][lang],"");
+        string UpdateBlock(int id,string block,string sep,int lang){
+            if(oldTraits.TryGetValue(id,out int legacy))block=block.Replace(sep+Labels[legacy][lang],"");
             var slots=picks[id];
-            if(!slots.Any(k=>k>=0))return text;
-            var suffix=Regex.Match(text,@"(?:</font>)+$").Value;
-            var lines=text[..^suffix.Length].Split(sep);
+            if(!slots.Any(k=>k>=0))return block;
+            var suffix=Regex.Match(block,@"(?:</font>)+$").Value;
+            var lines=block[..^suffix.Length].Split(sep);
             int offset=lines.Length-slots.Length;
             if(offset<0)throw new Exception($"Missing weapon affix lines {id}");
             for(int i=0;i<slots.Length;i++)if(slots[i]>=0)lines[offset+i]=Label(slots[i],int.Parse(variants[id][3]),lang);
             return string.Join(sep,lines)+suffix;
+        }
+        string Update(int id,string text,string sep,int lang){
+            string para=sep+sep;int split=text.IndexOf(para,StringComparison.Ordinal);
+            if(split>0&&text[..split].StartsWith("<font ",StringComparison.Ordinal)&&text[..split].EndsWith("</font>",StringComparison.Ordinal))
+                return UpdateBlock(id,text[..split],sep,lang)+text[split..];
+            return UpdateBlock(id,text,sep,lang);
         }
         var details=File.ReadAllLines(Path.Combine(input,"affix-v2-details.tsv"));
         for(int i=0;i<details.Length;i++){

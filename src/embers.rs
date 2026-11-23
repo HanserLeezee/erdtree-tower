@@ -26,21 +26,21 @@ pub const ECHO_CUT_PERCENT:u32=15;
 pub const FEAST_PER_FIGHT:u8=1;
 pub const THORNS_PERCENT:u32=40;
 // 召唤流余烬（只在身上带着骨灰时出现）
-pub const SPIRIT_SHARE_PERCENT:u32=30;
+pub const SPIRIT_SHARE_PERCENT:u32=50;
 pub const SPIRIT_BURST_RADIUS:f32=6.0;
 pub const SPIRIT_BURST_PERCENT:u32=20;
 pub const SPIRIT_FEAST_HEAL_PERCENT:u32=20;
 pub const SPIRIT_FEAST_FP_PERCENT:u32=20;
-pub const SPIRIT_COMMAND_PERCENT:u32=35;
-pub const SPIRIT_COMMAND_CUT_PERCENT:u32=25;
+pub const SPIRIT_COMMAND_PERCENT:u32=30;
+pub const SPIRIT_COMMAND_CUT_PERCENT:u32=20;
 pub const SPIRIT_COMMAND_REGEN_PERCENT:u32=2;
 /// 灵唤师的共鸣：召唤物在场时，玩家自己造成的伤害提高（召唤物的伤害不变）
 pub const SPIRIT_RESONANCE_PERCENT:u32=40;
 // 叠层余烬：层数由战斗中的事件累积，整局保留（Run::ember_stacks），不设上限
-/// 噬魂者：击倒普通敌人、精英、Boss 分别得魂点，每满 SOUL_POINTS 点一层
-pub const SOUL_POINTS:u32=5;
+/// 噬魂者：击倒普通敌人、精英、Boss 分别得 1 / 3 / 10 魂，每 1 魂一层，每层攻击 +0.6%（千分比 6）
+pub const SOUL_POINTS:u32=1;
 pub const SOUL_KILL:[u32;3]=[1,3,10];
-pub const SOUL_STEP_PERCENT:u32=3;
+pub const SOUL_STEP_PERMILLE:u32=6;
 pub const CHAIN_STEP_PERCENT:u32=5;
 pub const CHAIN_ROOM_LIMIT:u8=3;
 pub const SLAYER_HP_PERCENT:u32=5;
@@ -54,9 +54,10 @@ pub const BARRIER_CUT_PERCENT:u32=50;
 pub const GLINTSTONE_FP_PERCENT:u32=25;
 pub const MOON_FP_PERCENT:u32=70;
 pub const MOON_ATTACK_PERCENT:u32=30;
-/// 战技的精粹：战技造成的伤害提高、战技消耗的专注降低（百分比）
-pub const ARTS_ATTACK_PERCENT:u32=25;
-pub const ARTS_FP_CUT_PERCENT:u32=50;
+/// 战技的精粹：战技造成的伤害提高、战技消耗的专注与精力降低（百分比）
+pub const ARTS_ATTACK_PERCENT:u32=20;
+pub const ARTS_FP_CUT_PERCENT:u32=15;
+pub const ARTS_STAMINA_CUT_PERCENT:u32=15;
 /// 直接扣敌人生命的余烬对 Boss 每次最多扣最大生命的 1%
 pub const BOSS_CAP_PERCENT:u32=1;
 /// 处刑者的血宴：按敌人类型分别乘 1.02、1.05、1.10；点数仅用于显示，旧存档点数按原规则保留。
@@ -67,9 +68,10 @@ pub const LAST_STAND_HP_PERCENT:u32=40;
 pub const MARTYR_FP_PERCENT:u32=200;
 /// 黄金树的恩泽：治疗类祷告（含给队友的、持续回复的）回复量提高的百分比
 pub const MERCY_HEAL_PERCENT:i32=50;
-/// 战斗法师：受到的伤害按智力、信仰较高者每点降低 0.4%（千分比 4），最低保留 5%；一局最多转换 BATTLEMAGE_WEAPONS 把武器
+/// 战斗法师：受到的伤害按智力、信仰较高者每点降低 0.4%（千分比 4），最低保留 5%；一局最多转换 BATTLEMAGE_WEAPONS 把武器（旧存档最多保留 BATTLEMAGE_MAX_SLOTS 把）
 pub const BATTLEMAGE_CUT_PERMILLE:u32=4;
-pub const BATTLEMAGE_WEAPONS:usize=8;
+pub const BATTLEMAGE_WEAPONS:usize=2;
+pub const BATTLEMAGE_MAX_SLOTS:usize=8;
 /// 智力 / 信仰（取高）为 points 时受到的伤害倍率
 pub fn battlemage_cut(points:u32)->f32 {(1.0-(points.min(1000)*BATTLEMAGE_CUT_PERMILLE) as f32/1000.0).max(0.05)}
 impl crate::Run {
@@ -181,15 +183,15 @@ impl Ember {
         Self::Footwork=>"黑刀刺客的身法",Self::SpiritResonance=>"灵唤师的共鸣",Self::Pouch=>"行商的无底囊",Self::Arts=>"战技的精粹",Self::Bulwark=>"坩埚骑士的铁壁",Self::Breaker=>"鲜血骑士的破势",Self::Harvest=>"处刑者的血宴",Self::LastStand=>"红狮子的不退",Self::Martyr=>"殉道者的苦修",Self::Mercy=>"黄金树的恩泽",Self::Battlemage=>"战斗法师",Self::Stride=>"已移除的余烬",
     }}
     pub fn effect(self)->String {match self {
-        Self::VenomFletch=>format!("弓弩命中随机附加 {VENOM_BUILDUP} 点异常\n（中毒、腐败、出血或冻伤）\n目标每存在 1 种异常状态\n弓弩伤害 +{VENOM_STEP_PERCENT}%（最多 +{}%）",VENOM_STEP_PERCENT*VENOM_MAX_AILMENTS),
+        Self::VenomFletch=>format!("弓弩命中随机附加 {VENOM_BUILDUP} 点异常\n目标每存在 1 种异常状态\n弓弩伤害 +{VENOM_STEP_PERCENT}%"),
         Self::HunterMark=>format!("弓弩命中同一目标 {HUNTER_MARK_HITS} 次标记猎物\n持续 {HUNTER_MARK_SECONDS} 秒，猎物受伤 +{HUNTER_MARK_DAMAGE_PERCENT}%\n击杀被标记目标回复 {HUNTER_MARK_HEAL_PERCENT}% 生命\n与 {HUNTER_MARK_FP_PERCENT}% 专注"),
         Self::HeavyCast=>format!("施放魔法或祷告时\n基础消耗每有 1 点专注\n伤害提高 {}%",HEAVY_CAST_PERMILLE as f32/10.0),
-        Self::Phalanx=>format!("普攻命中敌人时\n回复 {PHALANX_FP_PERCENT}% 最大专注（至少 {PHALANX_FP_MIN} 点）\n{PHALANX_CHANCE_PERCENT}% 概率召唤卡利亚剑阵\n冷却 {PHALANX_COOLDOWN_SECONDS} 秒"),
+        Self::Phalanx=>format!("普攻命中敌人时回复 {PHALANX_FP_PERCENT}% 最大专注\n概率召唤卡利亚剑阵"),
         Self::Mind=>format!("最大生命增加\n相当于最大专注的 {MIND_HP_TIMES} 倍"),
         Self::Glintblade=>"魔法命中敌人时\n召唤一把魔力辉剑追击它\n每次施法最多一把".into(),
-        Self::Capture=>format!("投掷壶命中残血敌人可捕捉\n{CAPTURE_FROM_PERCENT}% 生命时 {CAPTURE_BASE_CHANCE}%，{CAPTURE_SURE_PERCENT}% 以下必定\n视为击杀，并获得其骨灰\nBoss 也能捕捉"),
+        Self::Capture=>"投掷壶命中残血敌人可捕捉\n视为击杀，并获得其骨灰".into(),
         Self::Tent=>"每个篝火可以免费使用一次\n圣杯瓶补给，不占营地服务次数".into(),
-        Self::FrostShackle=>"敌人触发冻伤后，持续 10 秒\n行动速度 -50%，造成伤害 -20%\n再次触发刷新持续时间，不叠加".into(),
+        Self::FrostShackle=>"敌人触发冻伤后，持续 10 秒\n行动速度 -50%，造成伤害 -20%".into(),
         Self::Execution=>format!("致命一击后 {EXECUTION_SECONDS} 秒内\n精力消耗 -{EXECUTION_STAMINA_CUT}%"),
         Self::Bloodlord=>format!("每次命中积累\n{BUILDUP} 点出血"),
         Self::Frost=>format!("每次命中积累\n{BUILDUP} 点冻伤"),
@@ -206,9 +208,9 @@ impl Ember {
         Self::SpiritBurst=>format!("召唤物倒下或消失时，对 {SPIRIT_BURST_RADIUS} 米内敌人\n造成其最大生命 {SPIRIT_BURST_PERCENT}% 的伤害\n对 Boss 最多 {BOSS_CAP_PERCENT}%"),
         Self::SpiritFeast=>format!("敌人倒下时\n召唤物回复 {SPIRIT_FEAST_HEAL_PERCENT}% 生命\n你回复 {SPIRIT_FEAST_FP_PERCENT}% 专注"),
         Self::SpiritCommand=>format!("场上仅有 1 组召唤物时\n召唤物伤害 +{SPIRIT_COMMAND_PERCENT}%，减伤 {SPIRIT_COMMAND_CUT_PERCENT}%\n且每秒回复 {SPIRIT_COMMAND_REGEN_PERCENT}% 最大生命"),
-        Self::SpiritTwin=>"每场战斗可召唤任意数量骨灰\n所有召唤物同时在场\n胜利时各组存活分别返还骨灰".into(),
-        Self::SoulEater=>format!("击倒得魂：小怪{} 精英{} Boss{}\n联机造成过伤害即可参与击杀得魂\n每 {SOUL_POINTS} 魂一层，每层攻击 +{SOUL_STEP_PERCENT}%\n层数不设上限，整局保留",SOUL_KILL[0],SOUL_KILL[1],SOUL_KILL[2]),
-        Self::Chain=>format!("每次致命一击叠一层，每关最多 {CHAIN_ROOM_LIMIT} 层\n每层致命一击伤害 +{CHAIN_STEP_PERCENT}%\n总层数不设上限，整局保留"),
+        Self::SpiritTwin=>"每场战斗可同时召唤\n任意数量骨灰".into(),
+        Self::SoulEater=>format!("击倒得魂：小怪{} 精英{} Boss{}\n每层攻击 +{}%",SOUL_KILL[0],SOUL_KILL[1],SOUL_KILL[2],SOUL_STEP_PERMILLE as f32/10.0),
+        Self::Chain=>format!("每次致命一击使致命一击伤害 +{CHAIN_STEP_PERCENT}%\n每房间最多 {CHAIN_ROOM_LIMIT} 层"),
         Self::Godslayer=>format!("每赢一场精英战或 Boss 战叠一层\n每层最大生命 +{SLAYER_HP_PERCENT}%、攻击 +{SLAYER_ATTACK_PERCENT}%\n层数不设上限，整局保留"),
         Self::SpiritKeeper=>format!("召唤物击倒敌人叠一层\n每层召唤物伤害 +{KEEPER_ATTACK_PERCENT}%\n受到的伤害 -{KEEPER_CUT_PERCENT}%（逐层乘算）\n层数不设上限，整局保留"),
         Self::Barrier=>format!("施放法术或祷告时\n受到的伤害降低 {BARRIER_CUT_PERCENT}%"),
@@ -216,21 +218,21 @@ impl Ember {
         Self::Glintstone=>format!("法术与祷告消耗的专注\n降低 {GLINTSTONE_FP_PERCENT}%"),
         Self::Footwork=>"翻滚、后撤步与致命一击\n不消耗精力".into(),
         Self::Pouch=>"飞刀、投掷壶等投掷道具\n使用后不再消耗".into(),
-        Self::Arts=>format!("战技伤害 +{ARTS_ATTACK_PERCENT}%\n战技消耗的专注 -{ARTS_FP_CUT_PERCENT}%"),
-        Self::Bulwark=>"使用大盾格挡时不消耗精力\n不影响负重、翻滚与移动速度".into(),
+        Self::Arts=>format!("战技伤害 +{ARTS_ATTACK_PERCENT}%\n战技消耗的专注与精力 -{ARTS_FP_CUT_PERCENT}%"),
+        Self::Bulwark=>"大盾举盾时不再消耗精力".into(),
         Self::Stride=>"已移除，不再提供效果".into(),
-        Self::Battlemage=>format!("可在铁匠处免费让近战武器\n获得智力或信仰 S 补正\n受到的伤害降低\n智力、信仰取高 ×{}%",BATTLEMAGE_CUT_PERMILLE as f32/10.0),
+        Self::Battlemage=>format!("可在铁匠处免费让 {BATTLEMAGE_WEAPONS} 把近战武器\n获得智力或信仰 S 补正\n受到的伤害根据智力或信仰等级降低"),
         Self::Mercy=>format!("治疗类祷告的回复量\n提高 {MERCY_HEAL_PERCENT}%"),
         Self::Martyr=>format!("受到伤害时回复专注\n失去最大生命的 1%\n回复最大专注的 {}%",MARTYR_FP_PERCENT as f32/100.0),
         Self::LastStand=>format!("生命低于 {LAST_STAND_HP_PERCENT}% 时\n韧性（强韧度）提高 {LAST_STAND_POISE_PERCENT}%"),
-        Self::Harvest=>format!("致命一击击杀敌人时\n最大生命提高：小怪 {}%\n精英 {}%、Boss {}%\n在当前最大生命上逐次乘算\n不设上限，整局保留",HARVEST_POINTS[0],HARVEST_POINTS[1],HARVEST_POINTS[2]),
-        Self::Breaker=>"敌人出血、冻伤、睡眠、发狂发作时\n压低架势，5 秒内下一次削韧命中触发失衡\nBoss 与普通敌人均无触发冷却".into(),
+        Self::Harvest=>format!("致命一击击杀敌人时最大生命提高\n小怪 {}%、精英 {}%、Boss {}%",HARVEST_POINTS[0],HARVEST_POINTS[1],HARVEST_POINTS[2]),
+        Self::Breaker=>"敌人触发异常时\n下一次攻击可以使敌人失衡".into(),
         Self::FullMoon=>format!("专注不低于 {MOON_FP_PERCENT}% 时\n造成的伤害提高 {MOON_ATTACK_PERCENT}%"),
         Self::SpiritResonance=>format!("召唤物在场时\n你造成的伤害 +{SPIRIT_RESONANCE_PERCENT}%"),
     }}
     /// 品质：余烬只有史诗（2）与传说（3），按强度定，决定抽到的概率与奖励卡的颜色
     pub fn quality(self)->u8 {match self {
-        Self::Rise|Self::SpiritTwin|Self::Miquella|Self::Feast|Self::Godslayer|Self::Meditation|Self::SpiritResonance|Self::Breaker|Self::Harvest|Self::Battlemage|Self::Tent|Self::Capture|Self::Mind=>3,
+        Self::Rise|Self::SpiritTwin|Self::Miquella|Self::Feast|Self::Chain|Self::Godslayer|Self::Meditation|Self::SpiritResonance|Self::Bulwark|Self::Breaker|Self::Harvest|Self::Battlemage|Self::Tent|Self::Capture|Self::Mind=>3,
         _=>2,
     }}
     /// 只影响敌人的余烬：联机客机上不生效（敌人由房主计算）
@@ -241,7 +243,10 @@ impl Ember {
         let r=stack_rates(self,stacks)?;
         let percent=|rate:f32|((rate-1.0)*100.0).round() as i64;
         Some(match self {
-            Self::SoulEater=>format!("攻击 +{}%",percent(r.attack)),
+            Self::SoulEater=>{
+                let tenths=u64::from(stacks)*u64::from(SOUL_STEP_PERMILLE);
+                if tenths%10==0 {format!("攻击 +{}%",tenths/10)} else {format!("攻击 +{}.{}%",tenths/10,tenths%10)}
+            },
             Self::Chain=>format!("致命一击伤害 +{}%",percent(r.attack)),
             Self::Godslayer=>format!("最大生命 +{}%、攻击 +{}%",percent(r.hp),percent(r.attack)),
             Self::Harvest=>format!("最大生命 +{}%",percent(r.hp)),
@@ -259,12 +264,13 @@ impl Ember {
     pub fn classes(self)->Option<&'static [crate::Class]> {
         use crate::Class::*;
         match self {
-            Self::Bulwark|Self::Chain=>Some(&[Vagabond]),
-            Self::Frenzy|Self::Arts|Self::LastStand=>Some(&[Hero]),
+            Self::Bulwark=>Some(&[Vagabond]),
+            Self::Thorns|Self::LastStand=>Some(&[Vagabond,Hero]),
+            Self::Chain=>Some(&[Vagabond,Hero,Samurai]),
             Self::Mercy=>Some(&[Prophet,Confessor]),
             Self::Stride=>Some(&[Astrologer,Prophet,Confessor]),
             Self::Bloodlord|Self::Frost|Self::Footwork|Self::Breaker|Self::HunterMark|Self::VenomFletch=>Some(&[Samurai]),
-            Self::Barrier|Self::Meditation|Self::Glintstone|Self::FullMoon|Self::Martyr|Self::Battlemage|Self::HeavyCast=>Some(&[Astrologer,Prophet]),
+            Self::Barrier|Self::Meditation|Self::Glintstone|Self::FullMoon|Self::Battlemage|Self::HeavyCast=>Some(&[Astrologer,Prophet]),
             Self::Glintblade|Self::Phalanx=>Some(&[Astrologer]),
             Self::SpiritLink|Self::SpiritBurst|Self::SpiritFeast|Self::SpiritCommand|Self::SpiritTwin|Self::SpiritKeeper|Self::SpiritResonance|Self::Capture=>Some(&[Confessor]),
             _=>None,
@@ -336,7 +342,7 @@ pub fn stack_rates(ember:Ember,stacks:u32)->Option<Rates> {
     let step=|percent:u32|1.0+(percent as f32)*(stacks as f32)/100.0;
     let plain=Rates{attack:1.0,hp:1.0,cut:1.0};
     Some(match ember {
-        Ember::SoulEater=>Rates{attack:step(SOUL_STEP_PERCENT),..plain},
+        Ember::SoulEater=>Rates{attack:1.0+(SOUL_STEP_PERMILLE as f32)*(stacks as f32)/1000.0,..plain},
         Ember::Chain=>Rates{attack:step(CHAIN_STEP_PERCENT),..plain},
         Ember::Godslayer=>Rates{attack:step(SLAYER_ATTACK_PERCENT),hp:step(SLAYER_HP_PERCENT),..plain},
         Ember::Battlemage=>Rates{cut:battlemage_cut(stacks),..plain},
@@ -618,7 +624,7 @@ mod tests {
         assert!(!pool(&[],true,true,Some(crate::Class::Samurai),false).contains(&Ember::SpiritTwin));
         let mut run=crate::Run::new(1,crate::Class::Confessor);run.embers.push(Ember::SpiritTwin);
         assert!(crate::Run::decode(&run.encode().unwrap()).unwrap().embers.contains(&Ember::SpiritTwin));
-        assert_eq!(Ember::SpiritTwin.effect(),"每场战斗可召唤任意数量骨灰\n所有召唤物同时在场\n胜利时各组存活分别返还骨灰");
+        assert_eq!(Ember::SpiritTwin.effect(),"每场战斗可同时召唤\n任意数量骨灰");
     }
     use super::*;
     #[test]
@@ -646,7 +652,7 @@ mod tests {
     #[test]
     fn every_quality_has_embers_and_rolls_follow_the_odds() {
         assert!(Ember::ALL.iter().all(|e|matches!(e.quality(),2|3)),"embers are only epic or legendary");
-        assert_eq!(Ember::ALL.iter().filter(|e|e.quality()==3).count(),13);
+        assert_eq!(Ember::ALL.iter().filter(|e|e.quality()==3).count(),15);
         assert_eq!(odds(crate::affixes::QUALITY_START),[0,0,85,15]);assert_eq!(odds(crate::affixes::QUALITY_END),[0,0,72,28]);
         let mut counts=[0u32;4];
         for seed in 0..20000u64 {counts[usize::from(offer_by_quality(seed,&[],true,true,None,[0,0,50,50]).unwrap().quality())]+=1;}
@@ -662,7 +668,7 @@ mod tests {
     }
     #[test]
     fn battlemage_cuts_damage_by_the_higher_mind_stat_and_records_weapons() {
-        assert_eq!(Ember::Battlemage.effect(),"可在铁匠处免费让近战武器\n获得智力或信仰 S 补正\n受到的伤害降低\n智力、信仰取高 ×0.4%");
+        assert_eq!(Ember::Battlemage.effect(),"可在铁匠处免费让 2 把近战武器\n获得智力或信仰 S 补正\n受到的伤害根据智力或信仰等级降低");
         assert!((battlemage_cut(40)-0.84).abs()<1e-6&&(battlemage_cut(80)-0.68).abs()<1e-6&&(battlemage_cut(0)-1.0).abs()<1e-6&&(battlemage_cut(500)-0.05).abs()<1e-6);
         let mut run=crate::Run::new(3,crate::Class::Astrologer);
         assert!(run.battlemage_convert(2000000,0).is_err(),"needs the ember");
@@ -670,7 +676,7 @@ mod tests {
         run.battlemage_convert(2000000,0).unwrap();run.battlemage_convert(2000000,1).unwrap();assert_eq!(run.battlemage,vec![(2000000,1)],"switches the stat");
         assert!(run.battlemage_convert(3000000,2).is_err());
         for i in 1..BATTLEMAGE_WEAPONS as u32 {run.battlemage_convert(3000000+i*100,0).unwrap();}
-        assert!(run.battlemage_convert(9000000,0).is_err(),"at most eight weapons");
+        assert!(run.battlemage_convert(9000000,0).is_err(),"at most two weapons");
         assert_eq!(crate::Run::decode(&run.encode().unwrap()).unwrap().battlemage,run.battlemage);
         assert!(Ember::Battlemage.quality()==3&&Ember::Battlemage.classes()==Some(&[crate::Class::Astrologer,crate::Class::Prophet][..]));
     }
@@ -685,12 +691,12 @@ mod tests {
         assert_eq!(martyr_fp(200,1000,150),60,"20% of health lost restores 40% of focus");
         assert_eq!(martyr_fp(5000,1000,150),150,"never more than the whole pool");
         assert_eq!((martyr_fp(0,1000,150),martyr_fp(100,0,150),martyr_fp(100,1000,0)),(0,0,0));
-        assert!(Ember::Martyr.quality()==2&&Ember::Martyr.classes()==Some(&[crate::Class::Astrologer,crate::Class::Prophet][..]));
+        assert!(Ember::Martyr.quality()==2&&Ember::Martyr.classes().is_none());
     }
     #[test]
     fn last_stand_is_a_berserker_ember_with_the_tuned_text() {
         assert_eq!(Ember::LastStand.effect(),"生命低于 40% 时\n韧性（强韧度）提高 200%");
-        assert!(Ember::LastStand.quality()==2&&Ember::LastStand.classes()==Some(&[crate::Class::Hero][..])&&!Ember::LastStand.stacking());
+        assert!(Ember::LastStand.quality()==2&&Ember::LastStand.classes()==Some(&[crate::Class::Vagabond,crate::Class::Hero][..])&&!Ember::LastStand.stacking());
     }
     #[test]
     fn harvest_compounds_on_execution_kills_by_enemy_rank() {
@@ -718,7 +724,12 @@ mod tests {
     fn class_embers_only_reach_their_own_classes() {
         use crate::Class;
         let general=Ember::ALL.iter().filter(|e|e.classes().is_none()).count();
-        assert_eq!(general,16);
+        assert_eq!(general,18);
+        assert_eq!(Ember::Thorns.classes(),Some(&[Class::Vagabond,Class::Hero][..]));
+        assert_eq!(Ember::LastStand.classes(),Some(&[Class::Vagabond,Class::Hero][..]));
+        assert_eq!(Ember::Chain.classes(),Some(&[Class::Vagabond,Class::Hero,Class::Samurai][..]));
+        assert!(Ember::Arts.classes().is_none()&&Ember::Frenzy.classes().is_none()&&Ember::Martyr.classes().is_none());
+        assert_eq!(Ember::Bulwark.classes(),Some(&[Class::Vagabond][..]));
         for class in Class::PLAYABLE {
             let mut drawn=vec![];
             while let Some(e)=offer(drawn.len() as u64*29,&drawn,true,true,Some(class)) {
@@ -910,17 +921,19 @@ mod tests {
         let mut stacks=Stacks::default();
         assert!(stacks.gain(&[Ember::Frenzy],Gain::Critical).is_empty());assert!(stacks.is_empty(),"no stacking ember held");
         let held=[Ember::SoulEater,Ember::Chain,Ember::Godslayer,Ember::SpiritKeeper];
-        for _ in 0..4 {assert!(stacks.gain(&held,Gain::Kill{rank:0,spirit:false}).is_empty());}
+        for _ in 0..4 {assert_eq!(stacks.gain(&held,Gain::Kill{rank:0,spirit:false}),vec![Ember::SoulEater]);}
         assert_eq!(stacks.gain(&held,Gain::Kill{rank:0,spirit:false}),vec![Ember::SoulEater]);
         assert_eq!(stacks.gain(&held,Gain::Kill{rank:2,spirit:true}),vec![Ember::SoulEater,Ember::SpiritKeeper]);
-        assert_eq!((stacks.level(Ember::SoulEater),stacks.level(Ember::SpiritKeeper)),(3,1));
-        assert_eq!(stacks.gain(&held,Gain::Kill{rank:1,spirit:false}),vec![],"3 souls: 18 in total");
+        assert_eq!((stacks.level(Ember::SoulEater),stacks.level(Ember::SpiritKeeper)),(15,1));
+        assert_eq!(stacks.gain(&held,Gain::Kill{rank:1,spirit:false}),vec![Ember::SoulEater],"18 souls in total");
         assert_eq!(stacks.gain(&held,Gain::Critical),vec![Ember::Chain]);
         assert_eq!(stacks.gain(&held,Gain::Slain),vec![Ember::Godslayer]);
         for _ in 0..100 {for event in [Gain::Kill{rank:2,spirit:true},Gain::Critical,Gain::Slain] {stacks.gain(&held,event);}}
-        assert_eq!(held.map(|e|stacks.level(e)),[203,101,101,101],"no cap");
+        assert_eq!(held.map(|e|stacks.level(e)),[1018,101,101,101],"no cap");
         assert_eq!(stacks.gain(&held,Gain::Critical),vec![Ember::Chain]);
         assert!(Ember::ALL.iter().all(|e|e.stacking()==e.stack_bonus(1).is_some()));
+        assert_eq!(Ember::SoulEater.stack_bonus(1).unwrap(),"攻击 +0.6%");
+        assert_eq!(Ember::SoulEater.stack_bonus(5).unwrap(),"攻击 +3%");
         assert_eq!(Ember::Godslayer.stack_bonus(8).unwrap(),"最大生命 +40%、攻击 +32%");
         assert_eq!(Ember::Chain.stack_bonus(50).unwrap(),"致命一击伤害 +250%");
         assert_eq!(Ember::SpiritKeeper.stack_bonus(10).unwrap(),"召唤物伤害 +30%、受到的伤害 -18%");
@@ -930,7 +943,7 @@ mod tests {
     }
     #[test]
     fn buffed_ember_values_and_growth_match_the_requested_balance() {
-        assert_eq!((SOUL_POINTS,SOUL_STEP_PERCENT),(5,3));
+        assert_eq!((SOUL_POINTS,SOUL_STEP_PERMILLE),(1,6));
         assert_eq!((SLAYER_HP_PERCENT,SLAYER_ATTACK_PERCENT),(5,4));
         assert_eq!(EXECUTION_SECONDS,10);
         assert_eq!((CHAIN_STEP_PERCENT,CHAIN_ROOM_LIMIT),(5,3));
@@ -938,12 +951,12 @@ mod tests {
         assert_eq!(u32::from(FRENZY_STACKS)*FRENZY_STEP_PERCENT,80);
         assert_eq!(BUILDUP,40);
         assert_eq!((BARRIER_CUT_PERCENT,MOON_ATTACK_PERCENT),(50,30));
-        assert_eq!((SPIRIT_BURST_PERCENT,SPIRIT_FEAST_HEAL_PERCENT,SPIRIT_FEAST_FP_PERCENT),(20,20,20));
+        assert_eq!((SPIRIT_BURST_PERCENT,SPIRIT_FEAST_HEAL_PERCENT,SPIRIT_FEAST_FP_PERCENT,SPIRIT_SHARE_PERCENT),(20,20,20,50));
         assert_eq!(wound_percent(Ember::SpiritBurst),Some(20));
         assert_eq!(BOSS_CAP_PERCENT,1,"the existing boss cap is unchanged");
         let mut stacks=Stacks::default();
         for _ in 0..5 {stacks.gain(&[Ember::SoulEater],Gain::Kill{rank:0,spirit:false});}
-        assert_eq!(stacks.level(Ember::SoulEater),1);
+        assert_eq!(stacks.level(Ember::SoulEater),5);
         assert!((stacks.rates(Ember::SoulEater).unwrap().attack-1.03).abs()<1e-6);
         for (rank,expected) in [(0,1.02),(1,1.05),(2,1.10)] {
             let mut stacks=Stacks::default();stacks.gain(&[Ember::Harvest],Gain::CriticalKill{rank});
@@ -958,17 +971,19 @@ mod tests {
         assert_eq!(Ember::Barrier.effect(),"施放法术或祷告时\n受到的伤害降低 50%");
         assert_eq!(Ember::FullMoon.effect(),"专注不低于 70% 时\n造成的伤害提高 30%");
         assert_eq!(Ember::SpiritResonance.effect(),"召唤物在场时\n你造成的伤害 +40%");
-        assert_eq!(Ember::Arts.effect(),"战技伤害 +25%\n战技消耗的专注 -50%");
-        assert!(Ember::Arts.quality()==2&&!Ember::Arts.needs_spirit()&&!Ember::Arts.needs_casting());
+        assert_eq!(Ember::Arts.effect(),"战技伤害 +20%\n战技消耗的专注与精力 -15%");
+        assert!(Ember::Arts.quality()==2&&!Ember::Arts.needs_spirit()&&!Ember::Arts.needs_casting()&&ARTS_STAMINA_CUT_PERCENT==15);
+        assert_eq!(Ember::Chain.quality(),3);
         assert!(Ember::Pouch.quality()==2&&!Ember::Pouch.needs_spirit()&&!Ember::Pouch.needs_casting()&&!Ember::Pouch.affects_enemies());
-        assert_eq!(Ember::Bulwark.effect(),"使用大盾格挡时不消耗精力\n不影响负重、翻滚与移动速度");
-        assert!(Ember::Bulwark.quality()==2&&!Ember::Bulwark.needs_spirit()&&!Ember::Bulwark.needs_casting());
-        assert_eq!(Ember::Breaker.effect(),"敌人出血、冻伤、睡眠、发狂发作时\n压低架势，5 秒内下一次削韧命中触发失衡\nBoss 与普通敌人均无触发冷却");
+        assert_eq!(Ember::Bulwark.effect(),"大盾举盾时不再消耗精力");
+        assert!(Ember::Bulwark.quality()==3&&!Ember::Bulwark.needs_spirit()&&!Ember::Bulwark.needs_casting());
+        assert_eq!(Ember::Breaker.effect(),"敌人触发异常时\n下一次攻击可以使敌人失衡");
         assert!(Ember::Breaker.quality()==3&&!Ember::Breaker.needs_spirit()&&!Ember::Breaker.needs_casting());
         assert!(Ember::SpiritResonance.needs_spirit()&&Ember::SpiritResonance.quality()==3&&!Ember::SpiritResonance.affects_enemies());
         assert_eq!(Ember::Frenzy.effect(),"每次命中攻击 +2%，最多 +80%\n受伤时清零");
         assert_eq!(Ember::SpiritCommand.name(),"孤王的契约");
-        assert_eq!(Ember::SpiritCommand.effect(),"场上仅有 1 组召唤物时\n召唤物伤害 +35%，减伤 25%\n且每秒回复 2% 最大生命");
+        assert_eq!(Ember::SpiritCommand.effect(),"场上仅有 1 组召唤物时\n召唤物伤害 +30%，减伤 20%\n且每秒回复 2% 最大生命");
+        assert_eq!(Ember::SpiritLink.effect(),"召唤物在场时\n你受到伤害的 50%\n改由召唤物承受");
         assert!(Ember::ALL.iter().all(|e|e.effect().lines().all(|l|l.chars().count()<=20)),"card lines must fit");
     }
 }

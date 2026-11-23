@@ -102,8 +102,8 @@ static class EquipmentStyleAssets {
                     entry.Text=Color(plain,colors[tier]);
                 } else if(table.EndsWith("Caption")) {
                     if(!affixed.Contains((kind,entry.ID)))continue;
-                    int split=plain.LastIndexOf("\n\n");
-                    entry.Text=split<0?Color(plain,colors[tier]):plain[..(split+2)]+Color(plain[(split+2)..],colors[tier]);
+                    int split=plain.IndexOf("\n\n",StringComparison.Ordinal);
+                    entry.Text=split<0?Color(plain,colors[tier]):Color(plain[..split],colors[tier])+plain[split..];
                 } else entry.Text=Color(plain,colors[tier]);
                 if(Plain(entry.Text)!=before)throw new Exception("Color markup changed item text");colored++;
             }

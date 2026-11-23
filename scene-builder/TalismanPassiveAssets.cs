@@ -51,8 +51,10 @@ static class TalismanPassiveAssets {
                 foreach(var v in variants) {
                     if(ids.Contains(v.id))throw new Exception("Talisman text ID collision");
                     string original=text.GetValueOrDefault(v.basis,"");
+                    string extra=string.Join("\n",v.kinds.Select(k=>en?English(k,v.tier):AffixAssets.DescribeEffect(k,v.tier)));
                     string value=key=="AccessoryName"?(en?$"{new[]{"Common","Rare","Epic","Legendary"}[v.tier]} {original}":$"{new[]{"普通","稀有","史诗","传说"}[v.tier]}·{original}")
-                        :original+"\n\n"+string.Join("\n",v.kinds.Select(k=>en?English(k,v.tier):AffixAssets.DescribeEffect(k,v.tier)));
+                        :key=="AccessoryCaption"?AffixTextFix.FitTop(extra,original,AffixTextFix.AccessoryCaptionLines,en?AffixTextFix.EnglishWrapWidth:0)
+                        :original+"\n\n"+extra;
                     fmg.Entries.Add(new FMG.Entry(v.id,value));
                 }
                 fmg.Entries.Sort((a,b)=>a.ID.CompareTo(b.ID));file.Bytes=fmg.Write();
