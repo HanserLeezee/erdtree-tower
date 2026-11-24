@@ -251,7 +251,7 @@ pub fn observe_spawn(data:&[u8;0x110]) {
     let bullet=i32::from_le_bytes(data[0x14..0x18].try_into().unwrap());
     // 命中后分裂出来的子弹体，生成数据里的归属可能不是玩家（岩石球就是这样）：是自己弹体的子弹体也照收
     if from!=owner&&!SPAWNS.try_lock().is_ok_and(|s|s.iter().any(|p|hit_child(p.bullet)==Some(bullet)&&p.at.elapsed()<Duration::from_secs(5))) {return;}
-    if bullet==HAIMA_BURST||bullet==SHELL_ROW||bullet==BLAST_ROW {return;}
+    if bullet==HAIMA_BURST {return;}
     let behavior=i32::from_le_bytes(data[0x08..0x0c].try_into().unwrap());
     let magic=i32::from_le_bytes(data[0x0c..0x10].try_into().unwrap());
     let goods=i32::from_le_bytes(data[0x18..0x1c].try_into().unwrap());
@@ -403,7 +403,7 @@ pub fn draw_hud(ui:&hudhook::imgui::Ui,icon:&mut dyn FnMut(u32)->Option<hudhook:
 fn apply_burst(world:&mut WorldChrMan,combat:&mut Combat,handle:FieldInsHandle,damage:i32,now:Instant,
     forward:&mut Option<&mut dyn FnMut(FieldInsHandle,i32)>) {
     let amount=damage.saturating_mul(BURST_FACTOR);
-    burst_visual(world,&handle);
+    if let Some(chr)=world.chr_ins_by_handle_mut(&handle){burst_fx(chr);}
     if let Some(send)=forward.as_mut() {
         send(handle,amount);
         combat.pending.push((handle,amount,now));
@@ -561,7 +561,7 @@ fn spawn_haima(world:&WorldChrMan,pos:[f32;3])->Option<Result<(),i32>> {
         // 不带原魔法的编号，免得游戏按魔法去生成弹体
         data[0x0c..0x10].copy_from_slice(&(-1i32).to_le_bytes());
         data[0x18..0x1c].copy_from_slice(&(-1i32).to_le_bytes());
-        data[0x14..0x18].copy_from_slice(&SHELL_ROW.to_le_bytes());
+        data[0x14..0x18].copy_from_slice(&HAIMA_SHOT.to_le_bytes());
         data[0x1c..0x20].copy_from_slice(&(-1i32).to_le_bytes());
         data[0x20..0x28].fill(0xff);
         // 朝向矩阵（与 star_stream 相同的排法）：right / up / forward，forward 朝正下方
@@ -574,33 +574,6 @@ fn spawn_haima(world:&WorldChrMan,pos:[f32;3])->Option<Result<(),i32>> {
     })
 }
 
-/// 爆炸的炮弹借用两行没人用的原版弹体（参数里没有任何地方引用）：复制海摩大炮的炮弹与爆炸，去掉攻击，
-/// 这样有特效和冲击，不会动到海摩大炮本身（联机时别人放的海摩大炮也不受影响）
-const SHELL_ROW:i32=10405099;
-const BLAST_ROW:i32=10500199;
-fn prepare_burst_rows()->bool {
-    static READY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
-    if READY.load(Ordering::Acquire) {return true;}
-    let Ok(params)=(unsafe {SoloParamRepository::instance_mut()}) else{return false};
-    for (from,to,hit) in [(HAIMA_SHOT,SHELL_ROW,BLAST_ROW),(HAIMA_BURST,BLAST_ROW,-1)] {
-        let Some(source)=params.get::<Bullet>(from as u32).map(|r|std::ptr::from_ref(r)) else{return false};
-        let Some(row)=params.get_mut::<Bullet>(to as u32) else{return false};
-        unsafe {std::ptr::copy_nonoverlapping(source,std::ptr::from_mut(row),1);}
-        row.set_atk_id_bullet(-1);
-        if hit>0 {row.set_hit_bullet_id(hit);}
-    }
-    READY.store(true,Ordering::Release);
-    super::log("STARSURGE burst rows ready");
-    true
-}
-/// 在敌人头顶砸下一发没有伤害的海摩炮弹；不行就退回只播命中特效
-pub fn burst_visual(world:&mut WorldChrMan,handle:&FieldInsHandle) {
-    let pos=world.chr_ins_by_handle(handle).map(|c|{let q=c.modules.physics.position;[q.0,q.1,q.2]});
-    let shot=pos.filter(|_|prepare_burst_rows()).and_then(|pos|spawn_haima(world,pos));
-    if !matches!(shot,Some(Ok(()))) {
-        if let Some(chr)=world.chr_ins_by_handle_mut(handle) {burst_fx(chr);}
-    }
-}
 /// Play the Haima impact without modifying attack parameters shared by other casters.
 pub fn burst_fx(chr:&mut ChrIns) {
     let Ok(params)=(unsafe {SoloParamRepository::instance()}) else{return};

@@ -3534,9 +3534,8 @@ fn host_embers(state:&mut Runtime,world:&mut WorldChrMan) {
                 if let Some((h,_,_))=foes.iter().find(|f|f.2==b.slot)
                     && let Some(chr)=world.chr_ins_by_handle_mut(h)
                     && chr.modules.data.hp>0 && !chr.chr_flags1c5.death_flag() && !chr.chr_flags1c5.is_invincible() {
+                    super::starsurge::burst_fx(chr);
                     chr.modules.data.hp=chr.modules.data.hp.saturating_sub(b.amount.min(chr.modules.data.max_hp.saturating_mul(2))).max(0);
-                    let h=*h;
-                    super::starsurge::burst_visual(world,&h);
                 }
             }
         }
