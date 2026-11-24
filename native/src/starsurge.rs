@@ -534,6 +534,8 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         // 联机时也扫（商人房的铃珠猎人、宝箱房的伏击等都不在名单里）；别人打的由 last_hit_by 排除
         if let Some(me)=me {
             for chr in world.chr_sets.iter().flatten().flat_map(|set|set.characters()) {
+                // 只看已经加载好、正在场上的角色：切图卸载地图时角色表里会有正在销毁的角色，碰它们的数据会闪退
+                if !matches!(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status,eldenring::cs::ChrLoadStatus::Active|eldenring::cs::ChrLoadStatus::ReadyForActivation) {continue;}
                 let h=chr.field_ins_handle;
                 // 测伤人偶、商人等不会动的角色不算（它们被设成不能移动）
                 if players.contains(&h)||spirits.contains(&h)||all.contains(&h)||scarab==Some(h)||chr.modules.data.hp<=0||chr.debug_flags.disabled_movement() {continue;}

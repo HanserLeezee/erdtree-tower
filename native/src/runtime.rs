@@ -2334,7 +2334,9 @@ fn tick_locked() {
         // 星辉术士：营地的测伤人偶不交给 starsurge；商人房、宝箱房等名单外的战斗靠它扫身边的敌人（联机也算）
         // 联机成员：名单外的敌人没有转发通道，打满只出特效、不在本机扣额外的血（扣了也会被房主同步盖掉）；叠层照常
         let member=state.party.as_ref().is_some_and(|p|!p.host());
-        if member {super::starsurge::fight_unsynced(world);}else{super::starsurge::fight(world,&[],state.party.is_some(),None);}
+        // 房间还在加载（刚开始切图、地图正在卸载）时不扫：这时场上的角色、弹体可能正在销毁
+        let settled=state.room.as_ref().is_none_or(|r|!r.view.loading);
+        if settled {if member {super::starsurge::fight_unsynced(world);}else{super::starsurge::fight(world,&[],state.party.is_some(),None);}}
         super::frost_shackle::observe(world,key,&foes,held.contains(&erdtree_tower::embers::Ember::FrostShackle));
         super::embers::clear_practice_critical();
     } else {
