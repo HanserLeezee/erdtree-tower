@@ -213,6 +213,15 @@ fn far_from_player(data:&[u8;0x110])->bool {
     let me=PLAYER_POS.each_ref().map(|v|f32::from_bits(v.load(Ordering::Relaxed)));
     at.iter().chain(me.iter()).all(|v|v.is_finite())&&me!=[0.0;3]&&distance(at,me)>FOLLOW_REACH
 }
+/// 玩家施法但归属记在别处的弹体，那个归属（10 秒内有效）
+static PROXIES:Mutex<Vec<(u64,Instant)>>=Mutex::new(Vec::new());
+fn proxy_of_mine(handle:u64)->bool {PROXIES.lock().is_ok_and(|p|p.iter().any(|(h,t)|*h==handle&&t.elapsed()<Duration::from_secs(10)))}
+/// 生成在玩家身边（FOLLOW_REACH 内）
+fn near_player(data:&[u8;0x110])->bool {
+    let at=[0x80,0x84,0x88].map(|o|f32::from_le_bytes(data[o..o+4].try_into().unwrap()));
+    let me=PLAYER_POS.each_ref().map(|v|f32::from_bits(v.load(Ordering::Relaxed)));
+    at.iter().chain(me.iter()).all(|v|v.is_finite())&&me!=[0.0;3]&&distance(at,me)<=FOLLOW_REACH
+}
 static SPAWNS:Mutex<Vec<Spawned>>=Mutex::new(Vec::new());
 static NEXT_CAST:AtomicU64=AtomicU64::new(1);
 /// 诊断日志计数（各自有上限，避免刷屏）
@@ -250,7 +259,16 @@ pub fn observe_spawn(data:&[u8;0x110]) {
     if owner==0 {return;}
     let bullet=i32::from_le_bytes(data[0x14..0x18].try_into().unwrap());
     // 命中后分裂出来的子弹体，生成数据里的归属可能不是玩家（岩石球就是这样）：是自己弹体的子弹体也照收
-    if from!=owner&&!SPAWNS.try_lock().is_ok_and(|s|s.iter().any(|p|hit_child(p.bullet)==Some(bullet)&&p.at.elapsed()<Duration::from_secs(5))) {return;}
+    // 有的魔法（如罪恶荆棘）弹体生成时归属不是玩家本人：魔法编号认得出、又生成在玩家身边的，也算自己的；记下这个归属，命中时 last_hit_by 可能就是它
+    if from!=owner&&!SPAWNS.try_lock().is_ok_and(|s|s.iter().any(|p|hit_child(p.bullet)==Some(bullet)&&p.at.elapsed()<Duration::from_secs(5))) {
+        let magic=i32::from_le_bytes(data[0x0c..0x10].try_into().unwrap());
+        let goods=i32::from_le_bytes(data[0x18..0x1c].try_into().unwrap());
+        if sorcery(goods).or_else(||sorcery(magic)).is_none()||!near_player(data) {return;}
+        if from!=0&&let Ok(mut proxies)=PROXIES.try_lock() {
+            proxies.retain(|(_,t)|t.elapsed()<Duration::from_secs(10));
+            if !proxies.iter().any(|(h,_)|*h==from)&&proxies.len()<16 {proxies.push((from,Instant::now()));}
+        }
+    }
     if bullet==HAIMA_BURST {return;}
     let behavior=i32::from_le_bytes(data[0x08..0x0c].try_into().unwrap());
     let magic=i32::from_le_bytes(data[0x0c..0x10].try_into().unwrap());
@@ -500,7 +518,7 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         let before=match combat.hp.iter_mut().find(|(h,_)|h==handle) {Some(entry)=>std::mem::replace(&mut entry.1,hp),None=>{combat.hp.push((*handle,hp));continue;}};
         // 联机：成员这边敌人的 last_hit_by 是空的（生命来自房主同步），这时只按自己的弹体认；记着别人打的就不算
         let attacker=chr.last_hit_by;
-        if hp>=before || multiplayer && !attacker.is_empty() && handle_bits(&attacker)!=owner {continue;}
+        if hp>=before || multiplayer && !attacker.is_empty() && handle_bits(&attacker)!=owner && !proxy_of_mine(handle_bits(&attacker)) {continue;}
         let attacker_unknown=multiplayer&&attacker.is_empty();
         // 爆炸自己扣的血不算新的伤害判定：掉血里先扣掉它（0.6 秒内到账）
         let mut drop=before-hp;
