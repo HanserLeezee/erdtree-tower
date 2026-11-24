@@ -706,8 +706,54 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
         row.set_value_magnification(1.0);
     }
     for i in stock.len() as u32..MAX_STOCK {params.get_mut::<ShopLineupParam>(GOODS+i).unwrap().set_equip_id(-1);}
+    let offers=shop_offers(run,node,&stock);
+    super::card_affixes::set_shop_offers(offers);
     super::log(format!("Native rune shop stock: {stock:?}"));
     Ok(erdtree_tower::ShopStock{node,items:stock.iter().map(|s|[i32::from(s.kind),s.id,s.price,i32::from(s.quantity)]).collect()})
+}
+pub fn shop_offers(run:&Run,node:usize,stock:&[Stock])->std::collections::HashMap<u32,(u32,u32)> {
+    let mut offers=std::collections::HashMap::new();
+    for (slot,item) in stock.iter().enumerate() {
+        if item.quantity<=0 {continue;}
+        let id=match item.kind {
+            0=>item.id as u32,
+            2=>0x20000000|item.id as u32,
+            _=>continue,
+        };
+        if let Some(seed)=erdtree_tower::weapon_rolls::shop_identity(run,node,slot,id) {
+            offers.entry(super::card_affixes::variant(id)).or_insert(seed);
+        }
+    }
+    offers
+}
+#[test]
+fn shop_offers_generate_stable_roll_identities_for_weapons_and_quality_talismans() {
+    let mut found_weapon=false;
+    let mut found_talisman=false;
+    for seed in 0..80 {
+        let run=Run::new_personal(seed,erdtree_tower::Class::Samurai,7);
+        let rows=stock(&run);
+        let offers=shop_offers(&run,8,&rows);
+        assert_eq!(offers,shop_offers(&run,8,&rows));
+        for item in &rows {
+            if item.quantity<=0 {continue;}
+            if item.kind==0 && erdtree_tower::weapon_rolls::slot_count(item.id as u32/10000*10000).is_some() {
+                let &(a,b)=offers.get(&(item.id as u32/10000*10000)).unwrap();
+                let lines=super::instance_description::roll_lines(a,item.id as u32,b,0).unwrap();
+                assert!(!lines.is_empty());
+                found_weapon=true;
+            }
+            if item.kind==2 && erdtree_tower::talisman_passives::variant(0x20000000|item.id as u32).is_some() {
+                let id=0x20000000|item.id as u32;
+                let &(a,b)=offers.get(&id).unwrap();
+                let lines=super::instance_description::roll_lines(a,id,b,0).unwrap();
+                assert!(!lines.is_empty());
+                found_talisman=true;
+            }
+        }
+        if found_weapon&&found_talisman {break;}
+    }
+    assert!(found_weapon&&found_talisman);
 }
 pub fn reset_arrived_stock(count:usize)->Result<(),String> {
     if count>MAX_STOCK as usize{return Err("商店库存数量超限".into());}

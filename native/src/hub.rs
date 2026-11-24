@@ -290,6 +290,7 @@ impl Hub {
             let player=world.main_player.as_mut().unwrap();
             super::blessings::Blessings::clear_run(&mut player.chr_ins);
             super::loadout::reset(unsafe {player.player_game_data.as_mut()},self.chosen)?;
+            super::card_affixes::reset(self.owner)?;
             // 背包（含砥石刀）已清空：上一局留下的质变解锁一起关掉，不能不拿砥石刀就质变
             if let Err(error)=super::whetblades::sync_owned(){super::log(format!("Whetblade sync after reset: {error}"));}
             super::native_talk::set_flag(45000880,false)?;

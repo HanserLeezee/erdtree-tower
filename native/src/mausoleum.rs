@@ -70,13 +70,36 @@ pub fn equipped(data:&PlayerGameData)->Result<Weapon,String> {
     let chosen=Weapon{id:id as u32,gem};
     if count(&inventory(data)?,chosen)==0{return Err("这件装备不能复制".into());}Ok(chosen)
 }
-pub fn request_copy(data:&PlayerGameData,receipt:&erdtree_tower::mausoleum::Receipt)->Result<(),String> {
+fn source_sort(data:&PlayerGameData,target:Weapon)->Option<u32> {
+    let slot=data.equipment.chr_asm.equipment.active_right_weapon_slot() as usize;
+    if let Some(index)=data.equipment.equipment_item_idx_list.get(slot).copied()
+        && let Some(entry)=data.equipment.equip_inventory_data.items_data.entry_at_slot(index).and_then(|e|e.as_option())
+        && entry.quantity>0 && entry.item_id.category()==ItemCategory::Weapon && entry.item_id.param_id()==target.id {
+        return Some(entry.sort_id);
+    }
+    let manager=unsafe {CSGaitemImp::instance()}.ok()?;
+    for entry in data.equipment.equip_inventory_data.items_data.normal_entries().iter().filter_map(|e|e.as_option()) {
+        if entry.quantity==0||entry.item_id.category()!=ItemCategory::Weapon||entry.item_id.param_id()!=target.id {continue;}
+        let Some(weapon)=manager.gaitem_ins_by_handle(&entry.gaitem_handle).and_then(|w|w.as_subclass::<CSWepGaitemIns>()) else{continue};
+        let gem_handle=weapon.gem_slot_table.gem_slots[0].gaitem_handle;
+        let gem=if gem_handle.is_indexed(){
+            manager.gaitem_ins_by_handle(&gem_handle).and_then(|g|g.item_id.param_id()).map_or(-1,|id|id as i32)
+        }else{-1};
+        if gem==target.gem {return Some(entry.sort_id);}
+    }
+    None
+}
+pub fn request_copy(data:&mut PlayerGameData,receipt:&erdtree_tower::mausoleum::Receipt)->Result<(),String> {
     if !receipt.weapon.valid()||receipt.target<2{return Err("复制记录无效".into());}
     let held=count(&inventory(data)?,receipt.weapon);
     if held>=receipt.target{return Ok(());}
     if held+1!=receipt.target{return Err("原武器数量发生变化，暂停复制以防重复领取".into());}
     if data.equipment.equip_inventory_data.items_data.is_normal_items_full(){return Err("背包已满，请整理后再复制".into());}
-    crate::items::give(&[(receipt.weapon.id as i32,1,receipt.weapon.gem)])
+    let inherited=source_sort(data,receipt.weapon)
+        .map(|sort|crate::card_affixes::identity(data.character_id,receipt.weapon.id,sort));
+    crate::card_affixes::grant(data,receipt.weapon.id,inherited,|_|{
+        crate::items::give(&[(receipt.weapon.id as i32,1,receipt.weapon.gem)])
+    })
 }
 #[cfg(test)]
 mod tests {

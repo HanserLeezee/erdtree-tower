@@ -1357,11 +1357,12 @@ fn finish_victory_cleanup(state:&mut Runtime,world:&mut WorldChrMan) {
     let runes=world.main_player.as_ref().map(|p|unsafe {p.player_game_data.as_ref()}.rune_count);
     super::log(format!("Party native death drain completed host={host} entities={replicas:?} runes={runes:?}"));
     if host{return;} // Only members sweep desynchronized replicas.
+    // 含「0 血却未触发死亡标记」的僵尸副本（Issue #10）：不只清 hp>0，也要清 hp==0 && !death_flag。
     let stray:Vec<u32>=world.chr_sets.iter().flatten().flat_map(|set|set.characters()).filter(|chr|ids.contains(&chr.event_entity_id)
-        &&chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag()&&!chr.debug_flags.character_disabled()&&enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status))
+        &&!chr.chr_flags1c5.death_flag()&&!chr.debug_flags.character_disabled()&&enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status))
         .map(|chr|chr.event_entity_id).collect();
     for &entity in &stray {if let Err(error)=super::enemies::request_map_entity(entity,false){super::log(error);}}
-    if !stray.is_empty() {super::log(format!("Party victory: removed {} enemies still alive locally {:?}",stray.len(),stray));}
+    if !stray.is_empty() {super::log(format!("Party victory: removed {} enemies still active locally {:?}",stray.len(),stray));}
 }
 fn stray_sweep_due(waited:Duration)->bool {waited>=Duration::from_secs(8)}
 /// 本局结束后留在场上的敌人：玩家活着时（复活回到大赐福，或通关）5 秒后撤下，最多留 15 秒
@@ -2352,7 +2353,7 @@ fn tick_locked() {
     let spirit_alive=super::embers::living_spirit(world);
     let spirit_link=super::embers::linkable_spirit(world);
     let ember_state=if practice {&state.ember_practice}else{&state.ember_fight};
-    if let Some(player)=world.main_player.as_mut(){let greatshield_guard=super::embers::bulwark_guard(player);let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);super::auras::sync(&mut player.chr_ins);super::law::sync(&mut player.chr_ins,contract_run,state.law_fight.overtime());super::embers::sync(&mut player.chr_ins,contract_run,ember_state,spirit_alive,spirit_link,greatshield_guard);let data=player.player_game_data.as_ptr();super::starsurge::sync(&mut player.chr_ins,contract_run);super::weapon_glow::sync(&mut player.chr_ins,unsafe {&*data},super::weapon_glow::clock());super::affix_stack::sync(&mut player.chr_ins,unsafe {&*data});}
+    if let Some(player)=world.main_player.as_mut(){let greatshield_guard=super::embers::bulwark_guard(player);let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);super::auras::sync(&mut player.chr_ins);super::law::sync(&mut player.chr_ins,contract_run,state.law_fight.overtime());super::embers::sync(&mut player.chr_ins,contract_run,ember_state,spirit_alive,spirit_link,greatshield_guard);let data=player.player_game_data.as_ptr();if !game.warp_requested&&i32::from(player.current_block_id)!=-1&&state.hub.as_ref().is_none_or(|h|!h.active){super::card_affixes::observe(unsafe {&*data},super::native_talk::shop_menu_open(),super::native_talk::sell_menu_open());}super::starsurge::sync(&mut player.chr_ins,contract_run);super::weapon_glow::sync(&mut player.chr_ins,unsafe {&*data},super::weapon_glow::clock());super::affix_stack::sync(&mut player.chr_ins,unsafe {&*data});}
     // 处决期间敌人不再无敌，我方照旧无敌（旅程进行中）
     super::throw_guard::sync(world,contract_run.is_some_and(|run|!matches!(run.phase,Phase::Dead|Phase::Won)));
     if let Some(player)=world.main_player.as_mut(){super::auras::countdown(&mut player.chr_ins,false);}
@@ -2494,13 +2495,19 @@ fn tick_locked() {
             if let Err(error)=super::loadout::clear_spent_ashes(player_data){super::log_repeating(error);}
         }
     }
+    // 每帧按当前角色刷新 legacy owner 与光环/称号：hub 可能已由暂停/自动档/重连/暂退返回路径提前建好，
+    // 不能嵌在 hub.is_none() 里，否则旅程档案四个页签会永久提示“载入角色”且光环/称号不会加载。
+    if super::legacy::owner()!=Some(identity) {
+        super::legacy::set_owner(identity);
+        super::name_tags::load(identity);
+        super::auras::load(identity);
+    }
     if state.hub.is_none() {
         if state.hub_failed.is_some_and(|(owner,at)|owner==identity&&at.elapsed()<Duration::from_secs(5)){return;}
-        super::legacy::set_owner(identity);
         match super::hub::Hub::new(identity,player_data.archetype) {
             Ok(hub)=>{
                 if let Ok(mut path)=SESSION_PATH.lock(){*path=Some(super::hub::path(identity,"json"));}
-                state.hub=Some(hub);state.hub_failed=None;super::name_tags::load(identity);super::auras::load(identity);
+                state.hub=Some(hub);state.hub_failed=None;
             },
             Err(error)=>{state.hub_failed=Some((identity,Instant::now()));report(&mut state,format!("旅程存档加载失败，未重置角色：{error}"));return;},
         }
@@ -3513,6 +3520,9 @@ fn equipped_build(data:&eldenring::cs::PlayerGameData)->Vec<super::reward_ui::Ge
             return super::reward_ui::weapon_summary(roll);
         }
         let id = u32::try_from(equipment.equipment_param_ids[slot]).ok()?;
+        if ready && erdtree_tower::weapon_rolls::slot_count(id / 10000 * 10000).is_some() {
+            return None;
+        }
         super::reward_ui::affix_summary(id)
     }).chain((12..=15).filter_map(|slot| {
         let id = u32::try_from(equipment.equipment_param_ids[slot]).ok()?;
@@ -3683,21 +3693,31 @@ fn member_combat(state:&mut Runtime,world:&mut WorldChrMan) {
     let party_players=state.party.as_ref().map_or(0,|p|p.gate.members().len());
     state.growth.tick(world,key,step,&handles,party_players);
     super::scaling::trace_boss_hp(world,run,id,"guest",&handles);
-    // 诊断：本机副本生命已到 0 却没有死亡（与房主不同步、卡在原地），每只敌人记一次
+    // 诊断与兜底：本机副本生命已到 0 却没有死亡（与房主不同步、卡在原地继续攻击），每只敌人记一次；
+    // 非 Boss 副本持续 2.5 秒仍停在 0 血无死亡标记时直接本地隐藏，避免僵尸怪持续攻击客机（Boss 留给胜利清理，不打断二阶段）。
     {
-        // (战斗, 实体, 第一次看到 0 生命的时间, 已记录)；正常死亡在同一时刻就有死亡标记，持续 1.5 秒才算卡住
-        static STUCK:std::sync::Mutex<Vec<((u64,u8,usize,u32),Instant,bool)>>=std::sync::Mutex::new(Vec::new());
+        // (战斗, 实体, 第一次看到 0 生命的时间, 阶段: 0=观察 1=已记日志 2=已隐藏)
+        static STUCK:std::sync::Mutex<Vec<((u64,u8,usize,u32),Instant,u8)>>=std::sync::Mutex::new(Vec::new());
         for handle in &handles {
-            let Some(chr)=world.chr_ins_by_handle(handle) else{continue};
-            if chr.modules.data.hp>0||chr.chr_flags1c5.death_flag() {continue;}
+            let Some(chr)=world.chr_ins_by_handle_mut(handle) else{continue};
             let entry=(key.0,key.1,key.2,chr.event_entity_id);
             let Ok(mut seen)=STUCK.lock() else{continue};
+            if chr.modules.data.hp>0||chr.chr_flags1c5.death_flag()||chr.debug_flags.character_disabled() {
+                seen.retain(|(e,_,_)|*e!=entry);
+                continue;
+            }
             if seen.len()>256 {seen.clear();}
-            let index=match seen.iter().position(|(e,_,_)|*e==entry) {Some(i)=>i,None=>{seen.push((entry,Instant::now(),false));seen.len()-1}};
-            if !seen[index].2&&seen[index].1.elapsed()>=Duration::from_millis(1500) {
-                seen[index].2=true;
+            let index=match seen.iter().position(|(e,_,_)|*e==entry) {Some(i)=>i,None=>{seen.push((entry,Instant::now(),0));seen.len()-1}};
+            let elapsed=seen[index].1.elapsed();
+            if seen[index].2==0&&elapsed>=Duration::from_millis(1500) {
+                seen[index].2=1;
                 let grown=chr.special_effect.entries().any(|e|e.param_id==super::scaling::GROWTH_FIRST+i32::from(step));
                 super::log(format!("TOWER_PARTY member copy at 0 hp without death: entity={} max_hp={} growth_step={step} grown={grown}",chr.event_entity_id,chr.modules.data.max_hp));
+            }
+            if seen[index].2<2&&!super::enemies::boss_npc(chr.npc_param_id)&&elapsed>=Duration::from_millis(2500) {
+                seen[index].2=2;
+                chr.debug_flags.set_character_disabled(true);
+                super::log(format!("TOWER_PARTY disabled undead member copy at 0 hp: entity={}",chr.event_entity_id));
             }
         }
     }
@@ -4758,7 +4778,7 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
         }
         let copy=next.regional_event.mausoleum.as_mut().unwrap();
         if !copy.lowered||!copy.opened{return Ok(());}
-        let data=unsafe {world.main_player.as_ref().ok_or("角色未加载")?.player_game_data.as_ref()};
+        let data=unsafe {world.main_player.as_mut().ok_or("角色未加载")?.player_game_data.as_mut()};
         if let Some((_,choice))=room.hub_choice() {
             if choice==2&&copy.receipt.is_none(){set_flag(room.base()+994,true)?;return Ok(());}
             if choice==1 {
@@ -6014,7 +6034,7 @@ fn request_travel_with(
         state.event_start=None;
         let shop_stock=if kind == erdtree_tower::NodeKind::Shop {
             Some(super::native_shop::prepare(run,id,true,unsafe {&mut *player.player_game_data.as_ptr()})?)
-        }else{None};
+        }else{super::card_affixes::clear_shop_offers();None};
         if kind == erdtree_tower::NodeKind::Chest {
             super::loot::prepare(run, id,unsafe {player.player_game_data.as_ref()})?;
         }

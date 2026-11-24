@@ -3,6 +3,17 @@ use fromsoftware_shared::FromStatic;
 use std::sync::atomic::{AtomicBool,Ordering};
 pub static END_ALLOWED:AtomicBool=AtomicBool::new(false);
 pub static END_REQUESTED:AtomicBool=AtomicBool::new(false);
+static SHOP_MENU_OPEN:AtomicBool=AtomicBool::new(false);
+static SELL_MENU_OPEN:AtomicBool=AtomicBool::new(false);
+static OWNED_MENU_OPEN:AtomicBool=AtomicBool::new(false);
+pub fn shop_menu_open()->bool {SHOP_MENU_OPEN.load(Ordering::Acquire)}
+pub fn sell_menu_open()->bool {SELL_MENU_OPEN.load(Ordering::Acquire)}
+pub fn owned_menu_open()->bool {OWNED_MENU_OPEN.load(Ordering::Acquire)}
+fn sync_inventory_before_menu_close(shop:bool,sell:bool) {
+    if let Ok(player)=unsafe {eldenring::cs::PlayerIns::local_player()} {
+        super::card_affixes::observe(unsafe {player.player_game_data.as_ref()},shop,sell);
+    }
+}
 
 pub struct NativeTalk {
     script: TalkScript,
@@ -25,6 +36,17 @@ pub struct NativeTalk {
 }
 impl Drop for NativeTalk {
     fn drop(&mut self) {
+        if self.service==2&&self.state==3 {
+            sync_inventory_before_menu_close(true,false);
+            SHOP_MENU_OPEN.store(false,Ordering::Release);
+        }
+        if matches!(self.state,7|8) {
+            if self.service==2&&self.menu_kind==6 {
+                sync_inventory_before_menu_close(false,true);
+                SELL_MENU_OPEN.store(false,Ordering::Release);
+            }
+            OWNED_MENU_OPEN.store(false,Ordering::Release);
+        }
         if matches!(self.state,22..=24){super::custom_event_ui::close();}
         if self.spirit_session.is_some() {if let Err(error)=self.suspend(){super::log(format!("Spirit menu cleanup: {error}"));}}
     }
@@ -159,6 +181,17 @@ impl NativeTalk {
     pub fn active(&self) -> bool { self.state != 0 }
     pub fn suspend(&mut self)->Result<(),String> {
         if !self.active(){return Ok(());}
+        if self.service==2&&self.state==3 {
+            sync_inventory_before_menu_close(true,false);
+            SHOP_MENU_OPEN.store(false,Ordering::Release);
+        }
+        if matches!(self.state,7|8) {
+            if self.service==2&&self.menu_kind==6 {
+                sync_inventory_before_menu_close(false,true);
+                SELL_MENU_OPEN.store(false,Ordering::Release);
+            }
+            OWNED_MENU_OPEN.store(false,Ordering::Release);
+        }
         if matches!(self.state,22..=24){super::custom_event_ui::close();}
         for event in [67,18,35] {self.event(event,&[])?;}
         self.spirit_session=None;
@@ -352,7 +385,7 @@ impl NativeTalk {
                     }
                     if let Some((event,args,menu))=smith_menu(choice) {
                         if choice==1 {super::smith::configure_menu()?;}
-                        self.event(event,&args)?;self.menu_kind=menu;self.state=7;
+                        self.event(event,&args)?;self.menu_kind=menu;OWNED_MENU_OPEN.store(true,Ordering::Release);self.state=7;
                     } else {self.state=0;}
                     return Ok(());
                 }
@@ -379,18 +412,18 @@ impl NativeTalk {
                         self.event(17,&confirmation_dialog(22001000))?;
                         self.state=9;return Ok(());
                     }
-                    if let Some((event,args,menu))=attendant_menu(choice) {self.event(event,&args)?;self.menu_kind=menu;self.state=7;} else {self.state=0;}
+                    if let Some((event,args,menu))=attendant_menu(choice) {self.event(event,&args)?;self.menu_kind=menu;OWNED_MENU_OPEN.store(true,Ordering::Release);self.state=7;} else {self.state=0;}
                     return Ok(());
                 }
                 if self.service==2&&choice==2 {
-                    self.event(46,&[-1,-1])?;self.menu_kind=6;self.state=7;return Ok(());
+                    self.event(46,&[-1,-1])?;self.menu_kind=6;SELL_MENU_OPEN.store(true,Ordering::Release);OWNED_MENU_OPEN.store(true,Ordering::Release);self.state=7;return Ok(());
                 }
                 if self.service==2&&choice==3 {
                     let player=unsafe {eldenring::cs::PlayerIns::local_player()}.map_err(|_|"角色未加载")?;
                     if super::smith::remaining(unsafe {player.player_game_data.as_ref()})==0 {return self.dialog(NO_STONE);}
                     super::smith::configure_menu()?;
                     let (event,args,menu)=smith_menu(1).unwrap();
-                    self.event(event,&args)?;self.menu_kind=menu;self.state=7;return Ok(());
+                    self.event(event,&args)?;self.menu_kind=menu;OWNED_MENU_OPEN.store(true,Ordering::Release);self.state=7;return Ok(());
                 }
                 // 原生调灵每次消耗一块强化石。
                 if self.service==0&&choice==6{
@@ -417,6 +450,7 @@ impl NativeTalk {
                     super::native_shop::refresh_weapon_levels(unsafe {player.player_game_data.as_ref()})?;
                     self.log_shop_tear("open");
                     self.event(22, &[super::native_shop::GOODS as i32, (super::native_shop::GOODS+super::native_shop::MAX_STOCK-1) as i32])?;
+                    SHOP_MENU_OPEN.store(true,Ordering::Release);
                     self.state = 3;
                 } else if self.service == 0 {
                     // 日志：联机有人反馈小红帽被一人用过之后别人补不了瓶，记下每次请求与被拒的原因
@@ -486,7 +520,7 @@ impl NativeTalk {
                     self.state = 0;
                 }
             },
-            3 => if self.query(59, &[5, 0])? == 0 { if self.service==2 {self.log_shop_tear("close");} self.state = 0; },
+            3 => if self.query(59, &[5, 0])? == 0 { if self.service==2 {sync_inventory_before_menu_close(true,false);SHOP_MENU_OPEN.store(false,Ordering::Release);self.log_shop_tear("close");} self.state = 0; },
             4 => if self.query(58, &[0])? == 0 { self.state = 0; },
             15 => if self.query(59,&[1,0])?==0 {self.state=0;},
             16 => if self.query(58,&[0])?==0 {
@@ -515,6 +549,11 @@ impl NativeTalk {
             7 => self.state=8,
             8 => {
                 if self.query(59,&[self.menu_kind,0])?==0 && self.query(58,&[0])?==0 {
+                    if self.service==2&&self.menu_kind==6 {
+                        sync_inventory_before_menu_close(false,true);
+                        SELL_MENU_OPEN.store(false,Ordering::Release);
+                    }
+                    OWNED_MENU_OPEN.store(false,Ordering::Release);
                     self.spirit_session=None;self.state=0;
                 } else if let Some(session)=self.spirit_session.as_mut()
                     && let Ok(player)=(unsafe {eldenring::cs::PlayerIns::local_player()}) {

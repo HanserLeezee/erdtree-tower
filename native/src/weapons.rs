@@ -133,6 +133,17 @@ fn swap_right(data: &mut PlayerGameData, slot: usize, old: i32, next: u32, verb:
     } else {
         -1
     };
+    let old_sort = data
+        .equipment
+        .equipment_item_idx_list
+        .get(slot)
+        .and_then(|&index| data.equipment.equip_inventory_data.items_data.entry_at_slot(index))
+        .and_then(|entry| entry.as_option())
+        .filter(|entry| entry.quantity > 0 && old >= 0 && entry.item_id.param_id() / 10000 == old as u32 / 10000)
+        .map(|entry| entry.sort_id);
+    let inherited = old_sort
+        .filter(|_| old >= 0 && old as u32 / 10000 == next / 10000)
+        .map(|sort| super::card_affixes::identity(data.character_id, old as u32, sort));
     let id = ItemId::new(ItemCategory::Weapon, next).map_err(|e| e.to_string())?;
     if matching_copy(data, id, gem).is_none() {
         if data
@@ -143,7 +154,9 @@ fn swap_right(data: &mut PlayerGameData, slot: usize, old: i32, next: u32, verb:
         {
             return Err("背包已满，未强化或扣款".into());
         }
-        super::items::give(&[(next as i32, 1, gem)])?;
+        super::card_affixes::grant(data, next, inherited, |_| {
+            super::items::give(&[(next as i32, 1, gem)])
+        })?;
     }
     let index = matching_copy(data, id, gem).ok_or("强化副本尚未进入背包，请重试；未扣款")?;
     let equipped_handle = data
@@ -182,7 +195,11 @@ fn swap_right(data: &mut PlayerGameData, slot: usize, old: i32, next: u32, verb:
     super::log(format!(
         "Weapon {verb} copy: {old} -> {next}, slot={slot}, gem={gem}"
     ));
+    let keep_original = data.equipment.chr_asm.gaitem_handles.contains(&handle);
     remove_original(data, handle, gem_handle, remove_fn);
+    if !keep_original && let Some(sort) = old_sort {
+        super::card_affixes::forget(old as u32, sort);
+    }
     Ok(())
 }
 

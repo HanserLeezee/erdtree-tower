@@ -70,10 +70,18 @@ pub fn instance(character: u32, sort: u32, weapon: u32) -> Option<Roll> {
 }
 
 pub fn card_identity(run: &Run, node: usize, slot: usize, item: u32) -> Option<(u32,u32)> {
+    item_identity(run, 0x63617264, node, slot, item)
+}
+
+pub fn shop_identity(run: &Run, node: usize, slot: usize, item: u32) -> Option<(u32,u32)> {
+    item_identity(run, 0x73686f70, node, slot, item)
+}
+
+fn item_identity(run: &Run, salt: u64, node: usize, slot: usize, item: u32) -> Option<(u32,u32)> {
     let variant = if item >> 28 == 0 { item / 10000 * 10000 } else { item };
     if !SPECS.contains_key(&variant) && crate::talisman_passives::variant(variant).is_none() {return None;}
     let seed = [u64::from(run.act), node as u64, slot as u64, u64::from(variant)].into_iter()
-        .fold(run.reward_seed() ^ 0x63617264, |seed, value| crate::mix(seed ^ value));
+        .fold(run.reward_seed() ^ salt, |seed, value| crate::mix(seed ^ value));
     Some(((seed >> 32) as u32, seed as u32))
 }
 
@@ -95,6 +103,20 @@ fn weapon_pool(spec: Spec, charged_slash: bool) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shop_identity_is_stable_and_distinct_from_cards() {
+        let run = Run::new_personal(42, crate::Class::Samurai, 19);
+        let reloaded = Run::decode(&run.encode().unwrap()).unwrap();
+        for item in [160030000u32, 160030008, 537970914] {
+            let shop0 = shop_identity(&run, 8, 0, item).unwrap();
+            assert_eq!(shop0, shop_identity(&reloaded, 8, 0, item).unwrap());
+            assert_ne!(shop0, shop_identity(&run, 8, 1, item).unwrap());
+            assert_ne!(shop0, card_identity(&run, 8, 0, item).unwrap());
+        }
+        assert_eq!(shop_identity(&run, 8, 0, 160030000), shop_identity(&run, 8, 0, 160030008));
+        assert!(shop_identity(&run, 8, 0, 1000000).is_none());
+    }
+
     #[test]
     fn paired_instance_test() {
         let roll = |sort, id| instance(0, sort, id).unwrap();

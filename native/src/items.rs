@@ -164,7 +164,7 @@ pub fn check_reward(data:&eldenring::cs::PlayerGameData,id:u32)->Result<u64,Stri
     Ok(before)
 }
 pub fn give_reward(data:&mut eldenring::cs::PlayerGameData,id:u32)->Result<(),String> {
-    give_reward_with_ash(data,id,-1)
+    super::card_affixes::grant(data,id,None,|data|give_reward_with_ash(data,id,-1))
 }
 pub fn give_reward_with_ash(data:&mut eldenring::cs::PlayerGameData,id:u32,gem:i32)->Result<(),String> {
     let before=check_reward(data,id)?;
