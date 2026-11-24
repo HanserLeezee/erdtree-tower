@@ -26,7 +26,7 @@ fn boss_guarantees_one_gold_and_rolls_the_other_two_normally() {
 #[test]
 fn new_boss_pages_give_any_weapon_at_legendary_quality() {
     let mut bases=std::collections::HashSet::new();let mut outside=0;let mut total=0;
-    for class in Class::PLAYABLE {for seed in 0..120 {
+    for class in Class::PLAYABLE {for seed in 0..400 {
         let run=Run::new(seed,class);assert_eq!(run.boss_reward_rules,2);
         for node in (0..run.nodes.len()).filter(|n|run.nodes[*n].kind==NodeKind::Boss) {
             let offers=rewards::offers(&run,node);assert_eq!(offers,rewards::offers(&run,node),"stable");
