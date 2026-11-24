@@ -391,6 +391,13 @@ pub fn draw_hud(ui:&hudhook::imgui::Ui,icon:&mut dyn FnMut(u32)->Option<hudhook:
     let (layers,cap)=((packed>>32) as u32,packed as u32);
     // 只要是星辉术士、原生状态栏在显示就画（没有叠层时显示 0/3）
     let visible=shown&&OWNER.load(Ordering::Relaxed)!=0&&cap>0&&native_hud_shown();
+    // 诊断：显示条件变化时记一行（查 ESC 菜单等场合不显示的原因）
+    {
+        static LAST:AtomicU64=AtomicU64::new(u64::MAX);
+        let state=unsafe {eldenring::cs::CSFeManImp::instance()}.ok().map_or(9,|fe|fe.hud_state as u64);
+        let key=u64::from(shown)|u64::from(OWNER.load(Ordering::Relaxed)!=0)<<1|u64::from(cap>0)<<2|state<<3;
+        if LAST.swap(key,Ordering::Relaxed)!=key {super::log(format!("STARSURGE_HUD shown={shown} owner={} cap={cap} layers={layers} hud_state={state} visible={visible}",OWNER.load(Ordering::Relaxed)!=0));}
+    }
     // 跟原生状态栏一样淡入（0.25 秒）淡出（0.4 秒）
     let alpha={
         let Ok(mut fade)=HUD_FADE.lock() else{return};

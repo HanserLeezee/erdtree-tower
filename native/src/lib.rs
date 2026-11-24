@@ -707,7 +707,8 @@ impl ImguiRenderLoop for TowerPreview {
         }
         if let Some(view) = &view {
             if let Some(dummy)=&view.dummy {dummy::draw_hud(ui,dummy);}
-            starsurge::draw_hud(ui,&mut |icon|rewards.icon(icon),view.ready&&!view.travelling);
+            // 事件房（shared_event）里 view.ready 是 false，但角色在场景里，叠层也要显示
+            starsurge::draw_hud(ui,&mut |icon|rewards.icon(icon),(view.ready||view.shared_event)&&!view.travelling);
             let travelling_notice=view.travelling||view.run.as_ref().is_some_and(|r|r.retry_node.is_some());
             let in_live_world=travelling_notice||view.room.is_some()||view.shared_event
                 ||view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}));
