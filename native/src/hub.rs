@@ -348,6 +348,7 @@ impl Hub {
             let reward_seed=match fixed {Some(seed)=>seed,None=>super::party::random_entropy()?};
             let mut run=Run::new_personal(seed,class,reward_seed);run.enable_contracts();
             super::run_clock::new_run(self.owner,&run);
+            super::starsurge::new_run(self.owner);
             run.set_law(std::mem::take(&mut self.law))?;
             run.set_endless(std::mem::take(&mut self.endless))?;
             if !run.law.is_empty()||run.endless {super::log(format!("TOWER_LAW start code={} score={} endless={}",run.law.code(),run.law.score(),run.endless));}

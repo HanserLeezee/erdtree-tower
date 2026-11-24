@@ -4,7 +4,7 @@
 //!    叠层期间身上有魔法之境的蓝色上升线条；屏幕左上（图标栏下方一行）显示「图标 当前层/上限」。
 //!    命中识别：生成弹体时（作者 star_stream 的钩子）记下施法者与魔法；敌人掉血时，0.7 秒内落在 6 米内的自己的弹体算命中。
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64,Ordering};
+use std::sync::atomic::{AtomicBool,AtomicU64,Ordering};
 use std::time::{Duration,Instant};
 use eldenring::cs::{Bullet,ChrIns,ChrInsExt,FieldInsHandle,SoloParamRepository,SpEffectParam,WorldChrMan};
 use fromsoftware_shared::FromStatic;
@@ -171,23 +171,31 @@ struct Combat {cycle:Cycle,live:Vec<Live>,hp:Vec<(FieldInsHandle,i32)>,counted:V
     /// 这段时间里明显偏小的掉血算爆炸余波，不当作新的伤害判定（否则会一帧接一帧连锁引爆）
     echo:Vec<(FieldInsHandle,Instant,i32)>,
     /// 当前挂着的增伤行；下一帧要核对的增伤；爆炸后要核对的敌人（编号、爆炸前生命、时间）
-    row:Option<i32>,verify:Option<(i32,u32)>,burst_check:Option<(FieldInsHandle,i32,Instant)>,}
+    row:Option<i32>,verify:Option<(i32,u32)>,applied_at:Option<Instant>,burst_check:Option<(FieldInsHandle,i32,Instant)>,}
 /// 叠层显示：高 32 位为当前层数，低 32 位为上限
 static HUD:AtomicU64=AtomicU64::new(0);
 fn publish_hud(layers:u32,cap:u32) {HUD.store((u64::from(layers)<<32)|u64::from(cap),Ordering::Relaxed);}
 static RUN_SEED:Mutex<Option<u64>>=Mutex::new(None);
-/// 叠层存盘：退出游戏、读档继续同一局（包括进入下一大层）时接着用。一行「种子 叠层」
-fn stacks_path()->std::path::PathBuf {super::LOG_PATH.with_file_name("starsurge-stacks.txt")}
+/// 叠层存盘：退出游戏、读档继续同一局（包括进入下一大层）时接着用。按存档槽、角色分开（和其它存档一样用 hub::path），一行「种子 叠层」；
+/// 开新的一局时（hub 里 new_run）清掉，同一个固定种子重开也不会带上上一局的层数
+fn stacks_path()->Option<std::path::PathBuf> {super::legacy::owner().map(|owner|super::hub::path(owner,"starsurge"))}
 fn load_stacks(seed:u64)->Cycle {
-    std::fs::read_to_string(stacks_path()).ok().and_then(|text|{
+    stacks_path().and_then(|path|std::fs::read_to_string(path).ok()).and_then(|text|{
         let (s,cycle)=text.trim().split_once(' ')?;
         (s.parse::<u64>().ok()?==seed).then(||Cycle::decode(cycle)).flatten()
     }).unwrap_or_default()
 }
 fn save_stacks(seed:u64,cycle:&Cycle) {
-    let _=std::fs::write(stacks_path(),format!("{seed} {}",cycle.encode()));
+    if let Some(path)=stacks_path() {let _=std::fs::write(path,format!("{seed} {}",cycle.encode()));}
 }
-fn clear_stacks() {let _=std::fs::remove_file(stacks_path());}
+fn clear_stacks() {if let Some(path)=stacks_path() {let _=std::fs::remove_file(path);}}
+/// 开新的一局：清掉存盘和内存里的叠层（hub 开局时调用，和 run_clock::new_run 一起）
+pub fn new_run(owner:(u32,i32)) {
+    let _=std::fs::remove_file(super::hub::path(owner,"starsurge"));
+    if let Ok(mut combat)=COMBAT.lock() {*combat=None;}
+    if let Ok(mut seed)=RUN_SEED.lock() {*seed=None;}
+    publish_hud(0,0);
+}
 static COMBAT:Mutex<Option<Combat>>=Mutex::new(None);
 /// 本机星辉术士的 FieldInsHandle（按 u64 读）；不是星辉术士时为 0
 static OWNER:AtomicU64=AtomicU64::new(0);
@@ -213,6 +221,8 @@ fn far_from_player(data:&[u8;0x110])->bool {
     let me=PLAYER_POS.each_ref().map(|v|f32::from_bits(v.load(Ordering::Relaxed)));
     at.iter().chain(me.iter()).all(|v|v.is_finite())&&me!=[0.0;3]&&distance(at,me)>FOLLOW_REACH
 }
+/// 队友、骨灰的句柄（fight 每帧更新）：它们生成的弹体永远不算自己的
+static OTHERS:Mutex<Vec<u64>>=Mutex::new(Vec::new());
 /// 玩家施法但归属记在别处的弹体，那个归属（10 秒内有效）
 static PROXIES:Mutex<Vec<(u64,Instant)>>=Mutex::new(Vec::new());
 fn proxy_of_mine(handle:u64)->bool {PROXIES.lock().is_ok_and(|p|p.iter().any(|(h,t)|*h==handle&&t.elapsed()<Duration::from_secs(10)))}
@@ -264,7 +274,9 @@ pub fn observe_spawn(data:&[u8;0x110]) {
         let magic=i32::from_le_bytes(data[0x0c..0x10].try_into().unwrap());
         let goods=i32::from_le_bytes(data[0x18..0x1c].try_into().unwrap());
         if sorcery(goods).or_else(||sorcery(magic)).is_none()||!near_player(data) {return;}
-        if from!=0&&let Ok(mut proxies)=PROXIES.try_lock() {
+        // 队友（另一个星辉术士站在身边施法）、骨灰的弹体不认
+        if from==0||OTHERS.try_lock().map_or(true,|o|o.contains(&from)) {return;}
+        if let Ok(mut proxies)=PROXIES.try_lock() {
             proxies.retain(|(_,t)|t.elapsed()<Duration::from_secs(10));
             if !proxies.iter().any(|(h,_)|*h==from)&&proxies.len()<16 {proxies.push((from,Instant::now()));}
         }
@@ -333,6 +345,9 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>) {
     if let Ok(mut combat)=COMBAT.lock() {
         let combat=combat.get_or_insert_with(||restore_combat(Some(seed)));
         publish_hud(combat.cycle.layers,combat.cycle.cap().max(SINGLE_CAP));
+        // 读档、换层后增伤要马上挂上，不等进战斗
+        let layers=combat.cycle.layers;
+        apply_buff(chr,layers,combat);
     }
 }
 fn restore_combat(seed:Option<u64>)->Combat {
@@ -364,8 +379,11 @@ fn apply_buff(chr:&mut ChrIns,layers:u32,combat:&mut Combat) {
         let rate=unsafe {SoloParamRepository::instance()}.ok().and_then(|p|p.get::<SpEffectParam>(id as u32).map(|r|(r.magic_attack_rate(),r.fire_attack_rate())));
         super::log(format!("STARSURGE_BUFF verify row={id} layers={expected} present={present} rate={rate:?}"));
     }
-    if layers==combat.applied {return;}
-    combat.applied=layers;
+    // 读档、切图会清掉身上的特效：层数没变但增伤丢了也要重新挂上
+    let lost=layers>0&&combat.applied_at.is_some_and(|t|t.elapsed()>Duration::from_secs(1))
+        &&combat.row.is_some_and(|id|!chr.special_effect.entries().any(|e|e.param_id==id));
+    if layers==combat.applied&&!lost {return;}
+    combat.applied=layers;combat.applied_at=Some(Instant::now());
     let old=combat.row.take();
     if layers>0 {
         let next=if old==Some(BUFF) {BUFF_ALT}else{BUFF};
@@ -414,7 +432,7 @@ pub fn draw_hud(ui:&hudhook::imgui::Ui,icon:&mut dyn FnMut(u32)->Option<hudhook:
         static LAST:AtomicU64=AtomicU64::new(u64::MAX);
         let state=unsafe {eldenring::cs::CSFeManImp::instance()}.ok().map_or(9,|fe|fe.hud_state as u64);
         let key=u64::from(shown)|u64::from(OWNER.load(Ordering::Relaxed)!=0)<<1|u64::from(cap>0)<<2|state<<3;
-        if LAST.swap(key,Ordering::Relaxed)!=key {super::log(format!("STARSURGE_HUD shown={shown} owner={} cap={cap} layers={layers} hud_state={state} visible={visible}",OWNER.load(Ordering::Relaxed)!=0));}
+        if DIAG&&LAST.swap(key,Ordering::Relaxed)!=key {super::log(format!("STARSURGE_HUD shown={shown} owner={} cap={cap} layers={layers} hud_state={state} visible={visible}",OWNER.load(Ordering::Relaxed)!=0));}
     }
     // 跟原生状态栏一样淡入（0.25 秒）淡出（0.4 秒）
     let alpha={
@@ -441,7 +459,9 @@ fn apply_burst(world:&mut WorldChrMan,combat:&mut Combat,handle:FieldInsHandle,d
     forward:&mut Option<&mut dyn FnMut(FieldInsHandle,i32)>) {
     let amount=damage.saturating_mul(BURST_FACTOR);
     if let Some(chr)=world.chr_ins_by_handle_mut(&handle){burst_fx(chr);}
-    if let Some(send)=forward.as_mut() {
+    if UNSYNCED.load(Ordering::Relaxed) {
+        // 只出特效（见 fight_unsynced）
+    } else if let Some(send)=forward.as_mut() {
         send(handle,amount);
         combat.pending.push((handle,amount,now));
     } else {
@@ -474,6 +494,13 @@ pub fn trajectory_distance(pos:[f32;3],vel:[f32;3],foe:[f32;3])->f32 {
 }
 
 /// 战斗中每帧调用：foes 为本场敌人
+/// 打满只出特效、不扣额外的血（联机成员打名单外的敌人：没有转发通道，本机扣的血会被房主同步盖掉）
+static UNSYNCED:AtomicBool=AtomicBool::new(false);
+pub fn fight_unsynced(world:&mut WorldChrMan) {
+    UNSYNCED.store(true,Ordering::Relaxed);
+    fight(world,&[],true,None);
+    UNSYNCED.store(false,Ordering::Relaxed);
+}
 pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:bool,mut forward:Option<&mut dyn FnMut(FieldInsHandle,i32)>) {
     let owner=OWNER.load(Ordering::Relaxed);
     let Ok(mut guard)=COMBAT.lock() else{return};
@@ -481,6 +508,11 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
     let seed=RUN_SEED.lock().ok().and_then(|s|*s);
     let combat=guard.get_or_insert_with(||restore_combat(seed));
     let now=Instant::now();
+    // 队友和所有骨灰（本机、远程）：它们的弹体、它们打的伤害都不算自己的
+    let spirits:Vec<FieldInsHandle>=world.summon_buddy_manager.groups.iter().flat_map(|pair|pair.second.iter())
+        .map(|group|unsafe {group.chr_ins.as_ref()}.field_ins_handle).collect();
+    let teammates:Vec<u64>=world.player_chr_set.characters().map(|p|handle_bits(&p.chr_ins.field_ins_handle)).filter(|h|*h!=owner).collect();
+    if let Ok(mut others)=OTHERS.lock() {*others=teammates.iter().copied().chain(spirits.iter().map(handle_bits)).collect();}
     // 商人、事件房间等没有名单的场合：身边 60 米内所有活着的非玩家角色都算（名单敌人照旧在前）
     let foes:Vec<FieldInsHandle>={
         let mut all:Vec<_>=foes.iter().map(|f|f.0).collect();
@@ -492,7 +524,7 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
             for chr in world.chr_sets.iter().flatten().flat_map(|set|set.characters()) {
                 let h=chr.field_ins_handle;
                 // 测伤人偶、商人等不会动的角色不算（它们被设成不能移动）
-                if players.contains(&h)||all.contains(&h)||scarab==Some(h)||chr.modules.data.hp<=0||chr.debug_flags.disabled_movement() {continue;}
+                if players.contains(&h)||spirits.contains(&h)||all.contains(&h)||scarab==Some(h)||chr.modules.data.hp<=0||chr.debug_flags.disabled_movement() {continue;}
                 let q=chr.modules.physics.position;
                 if distance([q.0,q.1,q.2],me)<=NEARBY_REACH {all.push(h);}
             }
@@ -523,7 +555,8 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         let before=match combat.hp.iter_mut().find(|(h,_)|h==handle) {Some(entry)=>std::mem::replace(&mut entry.1,hp),None=>{combat.hp.push((*handle,hp));continue;}};
         // 联机：成员这边敌人的 last_hit_by 是空的（生命来自房主同步），这时只按自己的弹体认；记着别人打的就不算
         let attacker=chr.last_hit_by;
-        if hp>=before || multiplayer && !attacker.is_empty() && handle_bits(&attacker)!=owner && !proxy_of_mine(handle_bits(&attacker)) {continue;}
+        let by=handle_bits(&attacker);
+        if hp>=before || multiplayer && !attacker.is_empty() && by!=owner && (teammates.contains(&by)||!proxy_of_mine(by)) {continue;}
         let attacker_unknown=multiplayer&&attacker.is_empty();
         // 爆炸自己扣的血不算新的伤害判定：掉血里先扣掉它（0.6 秒内到账）
         let mut drop=before-hp;
