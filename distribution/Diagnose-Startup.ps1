@@ -241,6 +241,21 @@ function Invoke-StartupDiagnostics([string]$Root,[string]$GameDirectory,[switch]
     $steam = @(Get-Process -Name 'steam' -ErrorAction SilentlyContinue)
     Add-Line ("Steam 运行中: " + ($steam.Count -gt 0))
     if ($steam.Count -eq 0) { [void]$suspects.Add('检测到 Steam 未在运行') }
+    if ($env:OS -eq 'Windows_NT') {
+        foreach ($pair in @(@('MOD 安装目录', $root), @('游戏目录', $GameDirectory))) {
+            if (!$pair[1]) { continue }
+            try {
+                $driveRoot = [IO.Path]::GetPathRoot($pair[1])
+                if ($driveRoot -and $driveRoot -match '^[A-Za-z]:\\?$') {
+                    $fmt = [IO.DriveInfo]::new($driveRoot).DriveFormat
+                    Add-Line ("$($pair[0]) 所在磁盘 ($driveRoot) 文件系统: $fmt")
+                    if ($fmt -and $fmt -ine 'NTFS') {
+                        [void]$suspects.Add("$($pair[0]) 位于 $fmt 分区（$driveRoot），不支持 NTFS 目录联接，会导致启动报“函数不正确”；请移动到 NTFS 分区后重试")
+                    }
+                }
+            } catch {}
+        }
+    }
 
     # 2. 游戏目录与残留 DLL 扫描
     Add-Section '2. 游戏目录文件与残留 DLL 扫描'
@@ -292,14 +307,21 @@ function Invoke-StartupDiagnostics([string]$Root,[string]$GameDirectory,[switch]
     }
     if (!$compatHit) { Add-Line '未发现针对 eldenring/me3/yafsml 的 AppCompatFlags\Layers 条目。' }
     $ifeo = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\eldenring.exe'
+    $maxLoaderThreads = $null
     if (Test-Path -LiteralPath $ifeo) {
         $vals = (Get-ItemProperty -LiteralPath $ifeo -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' }
         foreach ($v in $vals) {
             Add-Line ("  [IFEO] $($v.Name) = $($v.Value)")
+            if ($v.Name -eq 'MaxLoaderThreads') { $maxLoaderThreads = $v.Value }
             if ($v.Name -match 'Mitigation|Debugger') { [void]$suspects.Add("IFEO 对 eldenring.exe 启用了 $($v.Name)") }
         }
     } else {
         Add-Line '未发现 eldenring.exe 的 IFEO 策略项。'
+    }
+    if ($maxLoaderThreads -eq 1) {
+        Add-Line '  [并行加载] 已通过 MaxLoaderThreads=1 关闭 eldenring.exe 的 Windows DLL 并行加载。'
+    } else {
+        Add-Line '  [并行加载] 未设置 MaxLoaderThreads=1（若崩在 me3_mod_host.dll / YAFSML 且未出画面，可在启动器「设置 → 问题修复」一键关闭法环并行加载）。'
     }
 
     # 4. 音频设备与常见第三方注入/覆盖/音效/反作弊进程
@@ -344,6 +366,9 @@ function Invoke-StartupDiagnostics([string]$Root,[string]$GameDirectory,[switch]
                 Add-Line "  异常代码: $hexCode | 崩溃位置: $loc"
                 if ($summary.FaultOffset -eq 0x1ebcef9) {
                     [void]$suspects.Add("最新转储命中已知 Wwise 初始化崩点 eldenring.exe+0x1EBCEF9 (MoWwiseMan.cpp:883)")
+                }
+                if ($summary.FaultModule -and $summary.FaultModule -match '^(me3_mod_host|me3|yafsml).*\.dll$') {
+                    [void]$suspects.Add("最新转储崩在 $($summary.FaultModule)（常见原因为 Windows DLL 并行加载工作线程未分配 TLS 与加载器冲突）：请在启动器「设置 → 问题修复」点击「一键关闭法环并行加载」，或给 HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\eldenring.exe 写入 REG_DWORD MaxLoaderThreads = 1 后重试")
                 }
             } else {
                 Add-Line '  (转储内无 ExceptionStream)'
@@ -415,7 +440,7 @@ function Invoke-StartupDiagnostics([string]$Root,[string]$GameDirectory,[switch]
                 } else {
                     Add-Line '结果: 裸跑 eldenring.exe 存活超过 12 秒（未在初始化阶段崩溃），正在自动关闭测试进程。'
                     try { $proc.CloseMainWindow() | Out-Null; if (!$proc.WaitForExit(3000)) { $proc.Kill() } } catch {}
-                    [void]$suspects.Add('裸跑 eldenring.exe 正常存活，但加载器启动失败：重点排查安全软件/反作弊对注入拦截，或 ME3/YAFSML 日志报错')
+                    [void]$suspects.Add('裸跑 eldenring.exe 正常存活，但加载器启动失败：重点排查 Windows DLL 并行加载冲突（在启动器「设置 → 问题修复」点击「一键关闭法环并行加载」写入 MaxLoaderThreads=1）、安全软件/反作弊拦截，或 ME3/YAFSML 日志报错')
                 }
             } catch {
                 Add-Line ("裸跑测试执行失败: " + $_.Exception.Message)

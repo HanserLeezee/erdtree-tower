@@ -131,6 +131,10 @@ pub fn may_spawn_paced(networked:bool,monster_node:bool,held:bool,roles:&[Role],
     if previous.iter().filter(|o|**o!=Outcome::Victory).count()>=SOLO_CAP {return false;}
     true
 }
+/// all_at_once：如「坚持 30 秒」大混战，单人也直接全部同场刷新，不受 SOLO_CAP=2 限制。
+pub fn may_spawn_group(all_at_once:bool,networked:bool,monster_node:bool,held:bool,roles:&[Role],index:usize,previous:&[Outcome])->bool {
+    all_at_once||may_spawn_paced(networked,monster_node,held,roles,index,previous)
+}
 
 /// 玩家世界坐标与区块局部坐标的差值，即引擎当前的浮点原点偏移（按 8m / 32m 步进切换）。
 pub fn floating_origin(world:[f32;3],block:[f32;3])->Option<[f32;3]> {
@@ -363,5 +367,12 @@ mod tests {
         assert!(!Pacing::Together.waits(&alive_full));
         assert!(may_spawn_paced(false,false,true,&duo,1,&[Waiting]),"boss duos are untouched");
         assert!(!may_spawn_paced(true,false,true,&pair,1,&[Waiting]),"party elites follow the same pacing");
+        // 「坚持 30 秒」大混战：单人也需 2 精英 + 6 普怪全部同场，不受 SOLO_CAP=2 截断
+        let survival=[Strong,Strong,Weak,Weak,Weak,Weak,Weak,Weak];
+        for i in 0..survival.len() {
+            let prev=vec![Waiting;i];
+            assert_eq!(may_spawn_group(false,false,false,false,&survival,i,&prev),i<SOLO_CAP,"normal solo event keeps SOLO_CAP");
+            assert!(may_spawn_group(true,false,false,false,&survival,i,&prev),"survival all_at_once spawns all 8 foes in solo (index={i})");
+        }
     }
 }

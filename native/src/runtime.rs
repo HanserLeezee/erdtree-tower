@@ -235,6 +235,8 @@ type MemberSpawnGaps=((u64,u64,u8,usize),Vec<erdtree_tower::encounter::SpawnGap>
 struct Pending {
     entity_base:Option<i32>,
     networked:bool,
+    /// 是否跳过单人同场上限（SOLO_CAP=2）与分波等待，一次性全部出场（用于「坚持 30 秒」大混战）
+    all_at_once:bool,
     spirits:super::spirits::Spirits,
     foes: Vec<Foe>,
     next_run: Run,
@@ -4573,7 +4575,7 @@ fn tick_custom_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::
             let params=unsafe {SoloParamRepository::instance()}.map_err(|_|"怪物参数未加载")?;
             if roster.iter().any(|e|params.get::<NpcParam>(e.npc as u32).is_none()||params.get::<NpcThinkParam>(e.think).is_none()) {return Err("生存挑战敌人参数缺失".into());}
             state.pending=Some(Pending {
-                entity_base:None,networked:false,
+                entity_base:None,networked:false,all_at_once:true,
                 spirits:Default::default(),foes:roster.into_iter().map(|spec|Foe{spec,fight:Encounter::default(),requested:None,entity_address:None,respawn:None,spawn_gap:Default::default(),grace:None,graced:false,spawn_protection:Default::default(),spawn_check:Default::default()}).collect(),
                 next_run:run.clone(),block:room.block,completed:false,stall:None,godskin_pace:Default::default(),
             });
@@ -4857,7 +4859,7 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
             let params=unsafe {SoloParamRepository::instance()}.map_err(|_|"怪物参数未加载")?;
             if roster.iter().any(|e|params.get::<NpcParam>(e.npc as u32).is_none()||params.get::<NpcThinkParam>(e.think).is_none()) {return Err("事件守卫参数缺失".into());}
             state.pending=Some(Pending {
-                entity_base:None,networked:false,
+                entity_base:None,networked:false,all_at_once:false,
                 spirits:Default::default(),foes:roster.into_iter().map(|spec|Foe{spec,fight:Encounter::default(),requested:None,entity_address:None,respawn:None,spawn_gap:Default::default(),grace:None,graced:false,spawn_protection:Default::default(),spawn_check:Default::default()}).collect(),
                 next_run:run.clone(),block:room.block,completed:false,stall:None,godskin_pace:Default::default(),
             });
@@ -5107,7 +5109,7 @@ fn request_spawn(state: &mut Runtime, world: &mut WorldChrMan, id: usize) -> Res
     vitals.fp = super::travel::combat_fp(run.class, vitals.fp, vitals.max_fp);
     let description = roster.iter().map(|e| e.name).collect::<Vec<_>>().join("、");
     state.pending = Some(Pending {
-        entity_base:None,networked:state.party.is_some(),
+        entity_base:None,networked:state.party.is_some(),all_at_once:false,
         spirits:Default::default(),
         foes: roster.into_iter().map(|spec| Foe { spec, fight: Encounter::default(), requested: None, entity_address: None, respawn: None,spawn_gap:Default::default(),grace:None,graced:false,spawn_protection:Default::default(),spawn_check:Default::default() }).collect(),
         next_run, block: i32::from(player.current_block_id), completed: false, stall: None,godskin_pace:Default::default(),
@@ -5207,7 +5209,7 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
             (outcomes[j],health)
         }).collect();
         let held=super::enemies::paced_combatant(&pending.foes[i].spec)&&pacing.waits(&earlier);
-        let eligible=erdtree_tower::encounter::may_spawn_paced(pending.networked,monster_node,held,&roles,i,&outcomes);
+        let eligible=erdtree_tower::encounter::may_spawn_group(pending.all_at_once,pending.networked,monster_node,held,&roles,i,&outcomes);
         if !pending.foes[i].spawn_gap.allows(now,eligible) {
             outcomes.push(Outcome::Waiting);
             continue;
@@ -5452,6 +5454,11 @@ fn retire_group(pending:&Pending,world:&mut WorldChrMan){
         }
     }
     for foe in &pending.foes {
+        if !pending.networked&&foe.fight.handle().is_none()&&foe.requested.is_some()
+            &&world.debug_chr_creator.spawn&&world.debug_chr_creator.init_data.npc_param_id==foe.spec.npc {
+            world.debug_chr_creator.spawn=false;
+            world.debug_chr_creator.last_created_chr=None;
+        }
         if let Some(chr)=foe.fight.handle().and_then(|h|world.chr_ins_by_handle_mut(&h)) {
             if foe.entity_address==Some(std::ptr::from_ref(chr) as usize){
                 if let Some(previous)=foe.spawn_protection.previous {chr.debug_flags.set_disabled_hit(previous);chr.debug_flags.set_disabled_secondary_actions(false);}

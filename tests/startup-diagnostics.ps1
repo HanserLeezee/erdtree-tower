@@ -116,8 +116,36 @@ try {
     # 4. Run full Invoke-StartupDiagnostics end-to-end and verify report contents
     $reportPath = Invoke-StartupDiagnostics -Root $tmp -GameDirectory $game
     $reportText = [IO.File]::ReadAllText($reportPath)
-    foreach ($needle in @('重点疑似原因','dinput8.dll','0xC0000005','eldenring.exe+0x1EBCEF9','bad_audio_hook.dll')) {
+    foreach ($needle in @('重点疑似原因','dinput8.dll','0xC0000005','eldenring.exe+0x1EBCEF9','bad_audio_hook.dll','MaxLoaderThreads=1')) {
         if (!$reportText.Contains($needle)) { throw "Report missing expected diagnostic item: $needle" }
+    }
+
+    # 5. Verify me3_mod_host.dll crash dump triggers the MaxLoaderThreads=1 parallel-loader suspect hint
+    $me3DumpPath = Join-Path $game 'eldenring.exe.5678.dmp'
+    $ms2 = New-Object System.IO.MemoryStream
+    $bw2 = New-Object System.IO.BinaryWriter($ms2)
+    $bw2.Write([uint32]0x504D444D); $bw2.Write([uint32]0x0000A793); $bw2.Write([uint32]2); $bw2.Write([uint32]32)
+    $bw2.Write([uint32]0); $bw2.Write([uint32]0); $bw2.Write([uint64]0)
+    $bw2.Write([uint32]4); $bw2.Write([uint32]112); $bw2.Write([uint32]64)
+    $bw2.Write([uint32]6); $bw2.Write([uint32]168); $bw2.Write([uint32]200)
+    while ($ms2.Position -lt 64) { $bw2.Write([byte]0) }
+    $bw2.Write([uint32]1)
+    $mStart = $ms2.Position
+    $bw2.Write([uint64]0x7FF810000000); $bw2.Write([uint32]0x00200000); $bw2.Write([uint32]0); $bw2.Write([uint32]0); $bw2.Write([uint32]400)
+    while ($ms2.Position -lt ($mStart + 108)) { $bw2.Write([byte]0) }
+    while ($ms2.Position -lt 200) { $bw2.Write([byte]0) }
+    $bw2.Write([uint32]42); $bw2.Write([uint32]0); $bw2.Write([uint32]0xC0000005L); $bw2.Write([uint32]0); $bw2.Write([uint64]0); $bw2.Write([uint64]0x7FF810012345)
+    while ($ms2.Position -lt 400) { $bw2.Write([byte]0) }
+    $me3Path = 'E:\ErdtreeTower\loader\me3\bin\me3_mod_host.dll'
+    $me3Bytes = [Text.Encoding]::Unicode.GetBytes($me3Path)
+    $bw2.Write([uint32]$me3Bytes.Length); $bw2.Write($me3Bytes); $bw2.Write([uint16]0)
+    [IO.File]::WriteAllBytes($me3DumpPath, $ms2.ToArray())
+    $bw2.Dispose(); $ms2.Dispose()
+    [IO.File]::SetLastWriteTimeUtc($me3DumpPath, [DateTime]::UtcNow.AddMinutes(5))
+    $reportPath2 = Invoke-StartupDiagnostics -Root $tmp -GameDirectory $game
+    $reportText2 = [IO.File]::ReadAllText($reportPath2)
+    foreach ($needle in @('me3_mod_host.dll+0x12345','MaxLoaderThreads = 1','并行加载')) {
+        if (!$reportText2.Contains($needle)) { throw "ME3 crash report missing expected item: $needle" }
     }
     Write-Output 'Startup diagnostics tests passed: BOM, syntax, proxy DLL scan, MDMP exception/module parser, and report generation.'
 } finally {
