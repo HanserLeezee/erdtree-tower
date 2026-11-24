@@ -36,7 +36,21 @@ unsafe extern "system" {
     fn GetSystemTime(time:*mut SystemTime);
     fn GetModuleFileNameW(module:*mut std::ffi::c_void,path:*mut u16,size:u32)->u32;
     fn GetModuleHandleW(name:*const u16)->*mut std::ffi::c_void;
+    fn GetProcAddress(module:*mut std::ffi::c_void,name:*const i8)->*mut std::ffi::c_void;
 }
+static WINE_VERSION:LazyLock<Option<String>>=LazyLock::new(|| {
+    let ntdll:Vec<u16>="ntdll.dll".encode_utf16().chain(Some(0)).collect();
+    let module=unsafe {GetModuleHandleW(ntdll.as_ptr())};
+    if module.is_null() {return None;}
+    let proc=unsafe {GetProcAddress(module,b"wine_get_version\0".as_ptr().cast())};
+    if proc.is_null() {return None;}
+    let version:unsafe extern "C" fn()->*const std::ffi::c_char=unsafe {std::mem::transmute(proc)};
+    let ptr=unsafe {version()};
+    if ptr.is_null() {return Some("unknown".into());}
+    Some(unsafe {std::ffi::CStr::from_ptr(ptr)}.to_string_lossy().into_owned())
+});
+pub fn wine_version()->Option<&'static str> {WINE_VERSION.as_deref()}
+pub fn running_under_wine()->bool {WINE_VERSION.is_some()}
 fn backup(path:&Path,index:u8)->PathBuf {path.with_file_name(format!("tower-preview.{index}.log"))}
 fn rotate(path:&Path,limit:u64)->std::io::Result<()> {
     if !path.exists()||path.metadata()?.len()<limit{return Ok(());}
@@ -63,10 +77,14 @@ pub fn startup(address:usize) {
     super::log(format!("DIAGNOSTIC_SWITCHES no_attendant={} stall_victory={}",std::env::var("ERDTREE_TOWER_NO_ATTENDANT").as_deref()==Ok("1"),std::env::var("ERDTREE_TOWER_STALL_VICTORY").as_deref()==Ok("1")));
     let path=|address|module_path(address).map(|p|p.display().to_string()).unwrap_or_else(||"-".into());
     super::log(format!("SESSION_START build={} protocol={} dll=\"{}\" exe=\"{}\" log=\"{}\"",env!("TOWER_BUILD_ID"),erdtree_tower::party_handshake::VERSION,path(address),path(0),super::LOG_PATH.display()));
-    for name in ["ersc.dll","dxgi.dll","d3d12.dll","dinput8.dll","ReShade64.dll","nvngx_dlssg.dll"] {
+    for name in ["ersc.dll","dxgi.dll","d3d12.dll","d3d12core.dll","dinput8.dll","ReShade64.dll","nvngx_dlssg.dll"] {
         let wide:Vec<_>=name.encode_utf16().chain(Some(0)).collect();
         let handle=unsafe {GetModuleHandleW(wide.as_ptr())};
         if !handle.is_null(){super::log(format!("MODULE name={name} path=\"{}\"",path(handle as usize)));}
+    }
+    if let Some(wine)=wine_version() {
+        let deck=std::env::var("SteamDeck").as_deref()==Ok("1");
+        super::log(format!("RUNTIME platform=wine/proton version={wine} steam_deck={deck}"));
     }
     super::log(format!("LAUNCH preview={} seamless={} probe={}",std::env::var("ERDTREE_TOWER_PREVIEW").as_deref()==Ok("1"),std::env::var("ERDTREE_TOWER_SEAMLESS_ENTRY").as_deref()==Ok("1"),std::env::var("ERDTREE_TOWER_SEAMLESS_PROBE").as_deref()==Ok("1")));
 }

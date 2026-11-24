@@ -769,6 +769,10 @@ impl ImguiRenderLoop for TowerPreview {
     }
 }
 
+fn effective_renderer(configured:erdtree_tower::options::Renderer,wine:bool)->erdtree_tower::options::Renderer {
+    if wine {erdtree_tower::options::Renderer::Game} else {configured}
+}
+
 fn install_dx12(address:usize)->bool {
     let result=Hudhook::builder().with::<ImguiDx12Hooks>(TowerPreview::new()).with_hmodule(HINSTANCE(address as _)).build().apply();
     match result {Ok(())=>{log("DX12 hooks installed");true},Err(error)=>{log(format!("DX12 hook installation failed: {error:?}"));false}}
@@ -812,7 +816,13 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
             return;
         }
         render_diagnostics::install();
-        if options::get().renderer==erdtree_tower::options::Renderer::Window {
+        let configured_renderer=options::get().renderer;
+        let wine=diagnostics::running_under_wine();
+        let renderer=effective_renderer(configured_renderer,wine);
+        if wine&&configured_renderer==erdtree_tower::options::Renderer::Window {
+            log("Wine/Proton detected; forcing in-process DX12 renderer instead of DirectComposition window");
+        }
+        if renderer==erdtree_tower::options::Renderer::Window {
             use hudhook::mh::{MH_Initialize,MH_STATUS};
             match unsafe{MH_Initialize()} {
                 MH_STATUS::MH_OK|MH_STATUS::MH_ERROR_ALREADY_INITIALIZED=>overlay_gpu::install(address),
@@ -927,5 +937,13 @@ mod tests {
         assert!(SupportedVersion::from_lang_version(LANG_ID_EN, "2.7.2.a").is_none());
         assert!(SupportedVersion::from_lang_version(LANG_ID_JP, "2.7.1.0").is_none());
         assert!(SupportedVersion::from_lang_version(0x12, "2.7.2.0").is_none());
+    }
+    #[test]
+    fn wine_forces_game_dx12_renderer() {
+        use erdtree_tower::options::Renderer;
+        assert_eq!(effective_renderer(Renderer::Window, true), Renderer::Game);
+        assert_eq!(effective_renderer(Renderer::Game, true), Renderer::Game);
+        assert_eq!(effective_renderer(Renderer::Window, false), Renderer::Window);
+        assert_eq!(effective_renderer(Renderer::Game, false), Renderer::Game);
     }
 }
