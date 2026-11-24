@@ -16,7 +16,7 @@ namespace Tower.Launcher
     /// </summary>
     sealed class MainForm : Form
     {
-        public const string Title = "黄金树爬塔启动器";
+        public static string Title => LauncherLanguage.Pick("黄金树爬塔启动器", "黃金樹爬塔啟動器", "Erdtree Tower Launcher");
         const string PageHost = "tower.launcher";
         static readonly Color Backdrop = Color.FromArgb(16, 16, 18);
 
@@ -68,7 +68,7 @@ namespace Tower.Launcher
             catch (Exception error)
             {
                 Log.Write("界面初始化失败：" + error);
-                MessageBox.Show(this, "启动器界面加载失败：" + error.Message, Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, LauncherLanguage.Pick("启动器界面加载失败：", "啟動器介面載入失敗：", "Failed to load launcher interface: ") + error.Message, Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Close();
             }
         }
@@ -79,7 +79,7 @@ namespace Tower.Launcher
             if (File.Exists(Path.Combine(paths.LibDir, "WebView2Loader.dll"))) CoreWebView2Environment.SetLoaderDllFolderPath(paths.LibDir);
             if (!WebViewInstalled())
             {
-                var answer = MessageBox.Show(this, "启动器界面需要 Microsoft Edge WebView2 运行库（Windows 11 自带，Windows 10 大多已装）。\n\n是否打开微软官网下载？装好后重新打开启动器即可。",
+                var answer = MessageBox.Show(this, LauncherLanguage.Pick("启动器界面需要 Microsoft Edge WebView2 运行库（Windows 11 自带，Windows 10 大多已装）。\n\n是否打开微软官网下载？装好后重新打开启动器即可。", "啟動器介面需要 Microsoft Edge WebView2 執行庫（Windows 11 自帶，Windows 10 大多已裝）。\n\n是否開啟微軟官網下載？裝好後重新開啟啟動器即可。", "The launcher requires Microsoft Edge WebView2 Runtime. Open Microsoft's download page? Reopen the launcher after installation."),
                     Title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
                 if (answer == DialogResult.Yes) TowerHost.OpenUrl("https://go.microsoft.com/fwlink/p/?LinkId=2124703");
                 Close();
@@ -87,7 +87,7 @@ namespace Tower.Launcher
             }
             if (!File.Exists(Path.Combine(paths.UiDir, "index.html")))
             {
-                MessageBox.Show(this, "启动器界面文件缺失（launcher\\ui）。请重新下载完整包，或用 Start-Tower.cmd 启动。", Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, LauncherLanguage.Pick("启动器界面文件缺失（launcher\\ui）。请重新下载完整包，或用 Start-Tower.cmd 启动。", "啟動器介面檔案缺失（launcher\\ui）。請重新下載完整包，或用 Start-Tower.cmd 啟動。", "Launcher interface files (launcher\\ui) are missing. Download the full pack again or use Start-Tower.cmd."), Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Close();
                 return;
             }

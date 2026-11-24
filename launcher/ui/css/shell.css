@@ -34,6 +34,18 @@
 }
 
 /* 背景暗化遮罩（官方各页面实测值不同，见 --bg-dim） */
+.localized-tower-title { display: none; }
+html:is([lang="en-US"], [lang="zh-TW"]) #bgTitle { visibility: hidden; }
+html:is([lang="en-US"], [lang="zh-TW"]) #bgTitle[src] + .localized-tower-title {
+  display: block;
+  position: absolute;
+  top: 29%;
+  left: 10%;
+  font: 600 clamp(30px, 5vw, 82px)/1.1 Georgia, "Microsoft JhengHei", serif;
+  color: #ead4a3;
+  text-shadow: 0 2px 6px #191205;
+  pointer-events: none;
+}
 .bg::after {
   content: "";
   position: absolute;

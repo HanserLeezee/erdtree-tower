@@ -20,6 +20,7 @@ namespace Tower.Launcher
         public bool AliyunFallback { get; set; }
         public bool AutoCheck { get; set; } = true;
         public bool CloseExit { get; set; }
+        public string LauncherLanguage { get; set; } = "自动 / Auto";
         public string WindowSize { get; set; } = LauncherWindowSize.Default;
 
         public static HostSettings Load(string path)

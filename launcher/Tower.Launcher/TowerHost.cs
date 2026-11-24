@@ -56,6 +56,7 @@ namespace Tower.Launcher
             this.paths = paths;
             this.form = form;
             settings = HostSettings.Load(paths.SettingsFile);
+            UpdateLauncherLanguage();
             settings.Network = NetworkProfile.Detect(GameDir());
             // 跳转由 HttpReleaseSource 自己跟，保证每一跳都带 Range
             http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(5) };
@@ -184,6 +185,12 @@ namespace Tower.Launcher
             }
             switch (key)
             {
+                case "launcherLanguage":
+                    var choice = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+                    if (choice != "English" && choice != "简体中文" && choice != "繁體中文" && choice != "自动 / Auto") return;
+                    settings.LauncherLanguage = choice!;
+                    UpdateLauncherLanguage();
+                    break;
                 case "network":
                     PushStatus();
                     return;
@@ -206,8 +213,8 @@ namespace Tower.Launcher
                 case "aliyunFallback":
                     var enableAliyun = value.ValueKind == JsonValueKind.True;
                     if (enableAliyun && !settings.AliyunFallback && MessageBox.Show(form,
-                        "请尽量不要开启阿里云备用节点，除非 Cloudflare 和 GitHub 下载均失败。\n\n开启后，仅在主线路失败时尝试阿里云，不参与自动测速。仍要开启吗？",
-                        "开启阿里云备用节点", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                        LauncherLanguage.Pick("请尽量不要开启阿里云备用节点，除非 Cloudflare 和 GitHub 下载均失败。\n\n开启后，仅在主线路失败时尝试阿里云，不参与自动测速。仍要开启吗？", "請儘量不要開啟阿里雲備用節點，除非 Cloudflare 和 GitHub 下載均失敗。\n\n開啟後，僅在主線路失敗時嘗試阿里雲，不參與自動測速。仍要開啟嗎？", "Enable Aliyun only if both Cloudflare and GitHub downloads fail. It is a fallback and does not participate in automatic speed testing. Enable it?"),
+                        LauncherLanguage.Pick("开启阿里云备用节点", "開啟阿里雲備用節點", "Enable Aliyun backup server"), MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
                     { PushValues(InstallState.Load(paths.InstallDir)); return; }
                     settings.AliyunFallback = enableAliyun;
                     source = CreateSource();
@@ -223,6 +230,19 @@ namespace Tower.Launcher
         }
 
         string OptionsFile => Path.Combine(paths.InstallDir, TowerOptions.FileName);
+
+        void UpdateLauncherLanguage()
+        {
+            var choice = settings.LauncherLanguage;
+            if (choice == "自动 / Auto")
+            {
+                var options = TowerOptions.Read(OptionsFile);
+                choice = options.TryGetValue("language", out var configured) && configured != "auto"
+                    ? configured : System.Globalization.CultureInfo.CurrentUICulture.Name;
+            }
+            LauncherLanguage.Select(choice);
+            form.Text = MainForm.Title;
+        }
 
         // ---------------- 无缝联机 ----------------
 
@@ -281,7 +301,7 @@ namespace Tower.Launcher
 
         void AddPlugins(bool folder)
         {
-            var answer = MessageBox.Show(form, "插件是第三方程序，会随游戏一起运行，可以做任何事。\n只添加你信任的来源；插件和无缝联机、爬塔之间的兼容性也无法保证。\n\n继续添加？",
+            var answer = MessageBox.Show(form, LauncherLanguage.Pick("插件是第三方程序，会随游戏一起运行，可以做任何事。\n只添加你信任的来源；插件和无缝联机、爬塔之间的兼容性也无法保证。\n\n继续添加？", "外掛是第三方程式，會隨遊戲一起執行，可以做任何事。\n只新增你信任的來源；外掛和無縫聯機、爬塔之間的相容性也無法保證。\n\n繼續新增？", "Plugins run third-party code with the game. Add only trusted plugins. Compatibility with the tower and Seamless Co-op is not guaranteed. Continue?"),
                 MainForm.Title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (answer != DialogResult.Yes) return;
             var added = new List<string>();
@@ -289,13 +309,13 @@ namespace Tower.Launcher
             {
                 if (folder)
                 {
-                    using var dialog = new FolderBrowserDialog { Description = "选择插件自己的文件夹（顶层要有 .dll）", ShowNewFolderButton = false };
+                    using var dialog = new FolderBrowserDialog { Description = LauncherLanguage.Pick("选择插件自己的文件夹（顶层要有 .dll）", "選擇外掛自己的資料夾（頂層要有 .dll）", "Select the plugin folder containing a top-level .dll"), ShowNewFolderButton = false };
                     if (dialog.ShowDialog(form) != DialogResult.OK) return;
                     added.AddRange(plugins.AddFolder(dialog.SelectedPath));
                 }
                 else
                 {
-                    using var dialog = new OpenFileDialog { Title = "选择插件 DLL", Filter = "DLL 插件 (*.dll)|*.dll", Multiselect = true };
+                    using var dialog = new OpenFileDialog { Title = LauncherLanguage.Pick("选择插件 DLL", "選擇外掛 DLL", "Select plugin DLL"), Filter = LauncherLanguage.Pick("DLL 插件 (*.dll)|*.dll", "DLL 外掛 (*.dll)|*.dll", "DLL plugins (*.dll)|*.dll"), Multiselect = true };
                     if (dialog.ShowDialog(form) != DialogResult.OK) return;
                     foreach (var file in dialog.FileNames) added.Add(plugins.AddDll(file));
                 }
@@ -315,7 +335,7 @@ namespace Tower.Launcher
         void RemovePlugin(string path)
         {
             if (path.Length == 0) return;
-            if (MessageBox.Show(form, $"移除插件 {path}？\n复制进模组 plugins 文件夹的文件也会删除。", MainForm.Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            if (MessageBox.Show(form, LauncherLanguage.Pick($"移除插件 {path}？\n复制进模组 plugins 文件夹的文件也会删除。", $"移除外掛 {path}？\n複製進模組 plugins 資料夾的檔案也會刪除。", $"Remove {path}? The copy in the mod's plugins folder will also be deleted."), MainForm.Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             try { plugins.Remove(path); }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { Toast("移除失败（游戏还在运行？）：" + e.Message, "error", 6000); }
             PluginsChanged("已移除");
@@ -343,6 +363,7 @@ namespace Tower.Launcher
             try
             {
                 TowerOptions.Write(OptionsFile, key, text);
+                if (key == "language") UpdateLauncherLanguage();
                 // 关调试时连旧的 tower-debug.enable 标记文件一起删，否则游戏里仍然算开着
                 var flag = Path.Combine(paths.InstallDir, "tower-debug.enable");
                 if (key == "debug" && text == "0" && File.Exists(flag)) File.Delete(flag);
@@ -447,6 +468,7 @@ namespace Tower.Launcher
                 ["prompts"] = TowerOptions.PromptLabel(options),
                 ["renderer"] = TowerOptions.RendererLabel(options),
                 ["language"] = TowerOptions.LanguageLabel(options),
+                ["launcherLanguage"] = settings.LauncherLanguage,
                 ["plugins"] = plugins.List().Select(p => new Dictionary<string, object?> { ["path"] = p.Path, ["name"] = p.Name, ["enabled"] = p.Enabled, ["exists"] = p.Exists }).ToList(),
                 ["mode"] = settings.Mode == HostSettings.Seamless ? "无缝联机" : "单人",
                 ["network"] = NetworkProfile.Label(settings.Network),
@@ -566,8 +588,8 @@ namespace Tower.Launcher
                     if (installedState == null) throw new InvalidOperationException("请先安装完整整合包再切换版本");
                     if (target.UpdateKind != "package") throw new InvalidOperationException("这是仅更新启动器的发布，请选择完整整合包版本");
                     if (!resume && MessageBox.Show(form,
-                        $"将模组切换到 {Label(target)}，保留当前启动器和个人存档。\n\n旧版本不保证兼容新版本的角色及旅程进度，请先备份存档；建议新开旅程，联机全队使用相同版本。\n\n是否继续？",
-                        "切换模组版本", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.OK) {
+                        LauncherLanguage.Pick($"将模组切换到 {Label(target)}，保留当前启动器和个人存档。\n\n旧版本不保证兼容新版本的角色及旅程进度，请先备份存档；建议新开旅程，联机全队使用相同版本。\n\n是否继续？", $"將模組切換到 {Label(target)}，保留當前啟動器和個人存檔。\n\n舊版本不保證相容新版本的角色及旅程進度，請先備份存檔；建議新開旅程，聯機全隊使用相同版本。\n\n是否繼續？", $"Switch to {Label(target)} and keep the launcher and saves? Back up saves first. Older versions may not support newer characters or journeys. Start a fresh run and match versions in co-op."),
+                        LauncherLanguage.Pick("切换模组版本", "切換模組版本", "Switch mod version"), MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.OK) {
                         Progress(kind, "cancelled"); return;
                     }
                 }
@@ -982,7 +1004,7 @@ namespace Tower.Launcher
                 var dlcWarning = DlcLaunchCheck.Warning(gameDir, settings.Mode == HostSettings.Seamless, dlcMode);
                 if (dlcWarning != null)
                 {
-                    var choice = MessageBox.Show(form, dlcWarning, "DLC 内容启动警告", MessageBoxButtons.OKCancel,
+                    var choice = MessageBox.Show(form, dlcWarning, LauncherLanguage.Pick("DLC 内容启动警告", "DLC 內容啟動警告", "DLC launch warning"), MessageBoxButtons.OKCancel,
                         MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
                     Log.Write("DLC 启动警告：" + (choice == DialogResult.OK ? "用户确认继续" : "用户取消启动"));
                     if (choice != DialogResult.OK) return;
@@ -1149,7 +1171,7 @@ namespace Tower.Launcher
         string? ChooseGameDir(bool forLaunch = false)
         {
             if (launching && !forLaunch || GameRunning() || lobbyConnecting && !forLaunch) { Toast("请退出游戏并完成当前联机操作后再更换目录", "warn"); return null; }
-            using var dialog = new FolderBrowserDialog { Description = NetworkProfile.Label(settings.Network) + "：选择 Game 文件夹（里面有 eldenring.exe）", ShowNewFolderButton = false };
+            using var dialog = new FolderBrowserDialog { Description = NetworkProfile.Label(settings.Network) + LauncherLanguage.Pick("：选择 Game 文件夹（里面有 eldenring.exe）", "：選擇 Game 資料夾（裡面有 eldenring.exe）", ": Select the Game folder containing eldenring.exe"), ShowNewFolderButton = false };
             var current = GameDir();
             if (current != null) dialog.SelectedPath = current;
             while (dialog.ShowDialog(form) == DialogResult.OK)
@@ -1157,7 +1179,7 @@ namespace Tower.Launcher
                 var dir = dialog.SelectedPath;
                 if (!HasGame(dir) && HasGame(Path.Combine(dir, "Game"))) dir = Path.Combine(dir, "Game");
                 if (HasGame(dir)) { SaveGameDir(dir); return dir; }
-                MessageBox.Show(form, "这个文件夹里没有 eldenring.exe。\n请选择游戏安装目录里的 Game 文件夹，例如：\n…\\steamapps\\common\\ELDEN RING\\Game",
+                MessageBox.Show(form, LauncherLanguage.Pick("这个文件夹里没有 eldenring.exe。\n请选择游戏安装目录里的 Game 文件夹，例如：\n…\\steamapps\\common\\ELDEN RING\\Game", "這個資料夾裡沒有 eldenring.exe。\n請選擇遊戲安裝目錄裡的 Game 資料夾，例如：\n…\\steamapps\\common\\ELDEN RING\\Game", "eldenring.exe not found. Select the Game folder in your Elden Ring installation, for example …\\steamapps\\common\\ELDEN RING\\Game."),
                     MainForm.Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             return null;
@@ -1186,16 +1208,16 @@ namespace Tower.Launcher
         {
             if (GameRunning() || launching || running != null || LocalAssetPreparationBusy())
             { Toast("请先退出游戏，并等待启动或更新任务结束后再修复。", "warn"); return; }
-            using var dialog = new OpenFileDialog { Title = "选择卡在地图界面的角色记录（tower-槽位-角色编号.json）",
-                Filter = "爬塔角色记录|tower-*.json", CheckFileExists = true,
+            using var dialog = new OpenFileDialog { Title = LauncherLanguage.Pick("选择卡在地图界面的角色记录（tower-槽位-角色编号.json）", "選擇卡在地圖介面的角色記錄（tower-槽位-角色編號.json）", "Select the stuck character record (tower-slot-character.json)"),
+                Filter = LauncherLanguage.Pick("爬塔角色记录|tower-*.json", "爬塔角色記錄|tower-*.json", "Tower character records|tower-*.json"), CheckFileExists = true,
                 InitialDirectory = SaveRecovery.Folders(paths.InstallDir).Skip(1).FirstOrDefault(Directory.Exists) ?? paths.InstallDir };
             if (dialog.ShowDialog(form) != DialogResult.OK) return;
-            if (MessageBox.Show(form, "将备份所选角色的爬塔记录，并将地图阶段的旅程转为暂存。\n下次请先单独读档，返回大赐福后选择继续旅程。\n\n不会清空角色或改写装备，也不会跳过房间。联机恢复需队友的旅程进度一致。\n此功能不能修复游戏线程卡死或资源加载故障。\n\n记录：" + dialog.FileName,
-                "修复地图卡档", MessageBoxButtons.OKCancel, MessageBoxIcon.Information, MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
+            if (MessageBox.Show(form, LauncherLanguage.Pick("将备份所选角色的爬塔记录，并将地图阶段的旅程转为暂存。\n下次请先单独读档，返回大赐福后选择继续旅程。\n\n不会清空角色或改写装备，也不会跳过房间。联机恢复需队友的旅程进度一致。\n此功能不能修复游戏线程卡死或资源加载故障。\n\n记录：", "將備份所選角色的爬塔記錄，並將地圖階段的旅程轉為暫存。\n下次請先單獨讀檔，返回大賜福後選擇繼續旅程。\n\n不會清空角色或改寫裝備，也不會跳過房間。聯機恢復需隊友的旅程進度一致。\n此功能不能修復遊戲執行緒卡死或資源載入故障。\n\n記錄：", "Back up the selected tower record and suspend this journey at map selection? Next time, load solo and resume at Roundtable Hold. Equipment and room progress are preserved. Co-op parties need matching progress. This cannot repair a frozen game thread or failed asset load. Record: ") + dialog.FileName,
+                LauncherLanguage.Pick("修复地图卡档", "修復地圖卡檔", "Repair stuck map"), MessageBoxButtons.OKCancel, MessageBoxIcon.Information, MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
             var backup = SaveRecovery.Prepare(paths.InstallDir, dialog.FileName, GameRunning);
             Log.Write("地图卡档修复暂存已创建，备份：" + backup);
-            MessageBox.Show(form, "已创建恢复暂存。请启动游戏，先单独读入对应角色，在大赐福继续旅程。\n\n备份位置：" + backup,
-                "恢复暂存已准备", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(form, LauncherLanguage.Pick("已创建恢复暂存。请启动游戏，先单独读入对应角色，在大赐福继续旅程。\n\n备份位置：", "已建立恢復暫存。請啟動遊戲，先單獨讀入對應角色，在大賜福繼續旅程。\n\n備份位置：", "Recovery save created. Load the character solo and resume at Roundtable Hold. Backup: ") + backup,
+                LauncherLanguage.Pick("恢复暂存已准备", "恢復暫存已準備", "Recovery save ready"), MessageBoxButtons.OK, MessageBoxIcon.Information);
             OpenFolder(backup);
         }
 

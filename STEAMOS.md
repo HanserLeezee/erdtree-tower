@@ -14,6 +14,7 @@
    - 按 [Mod Engine 3 官方文档](https://me3.help) 安装 Linux 版 `me3`（通常安装到 `~/.local/bin/me3` 或系统 `PATH` 中）；
    - 在终端执行 `me3 --version` 确认可用。
 3. 将黄金树爬塔整合包解压到任意不含单引号的目录（如 `/home/deck/Games/ErdtreeTower`）。
+   如果包内的 `asset-mode.txt` 为 `local-v1`，先在 Windows 用相同版本的游戏和整合包完成一次启动器资源生成，再将生成后的 `scene-assets` 一并复制到 Steam Deck。Linux 启动脚本目前不会代为生成这些资源。
 
 ---
 

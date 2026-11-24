@@ -70,6 +70,8 @@ namespace Tower.Assets
                     !paths.IsSupersetOf(Targets) || !paths.IsSubsetOf(allowed)) throw new InvalidDataException("Invalid asset manifest");
 
                 var state = RestoreState.Load(Path.Combine(folder, ".restore-state.json"), NoLinks);
+                if (manifest.EmberDetailIcons)
+                    EmberDetails.Restore(package, game, state, validation || forceVerify, NoLinks);
                 bool needEnglish = validation || AssetLanguage.NeedsEnglish(package, game);
                 var activeFiles = manifest.Files.Where(f => f.Path != EnglishMenuPath || needEnglish).ToList();
 

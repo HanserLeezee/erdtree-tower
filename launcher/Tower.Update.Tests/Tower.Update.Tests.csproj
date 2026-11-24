@@ -26,6 +26,7 @@
     <Compile Include="../Tower.Launcher/ModLogs.cs" Link="ModLogs.cs" />
     <Compile Include="../Tower.Launcher/SaveRecovery.cs" Link="SaveRecovery.cs" />
     <Compile Include="../Tower.Launcher/DlcLaunchCheck.cs" Link="DlcLaunchCheck.cs" />
+    <Compile Include="../Tower.Launcher/LauncherLanguage.cs" Link="LauncherLanguage.cs" />
     <Compile Include="../Tower.Launcher/LobbyLaunch.cs" Link="LobbyLaunch.cs" />
     <Compile Include="../Tower.Launcher/LobbyBrowse.cs" Link="LobbyBrowse.cs" />
     <Compile Include="../Tower.Launcher/NetworkProfile.cs" Link="NetworkProfile.cs" />

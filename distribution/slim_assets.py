@@ -46,6 +46,17 @@ def prepare(project, stage, game):
                    cwd=project, env=environment, check=True)
     subprocess.run(['dotnet', 'build', str(project / 'distribution/AssetRestore'), '-c', 'Release',
                     '-o', str(validation / 'helper')], check=True)
+    details = validation / 'detail-icons'
+    subprocess.run(['dotnet', 'run', '--project', str(project / 'scene-builder/SceneBuilder.csproj'),
+                    '-c', 'Release', '--no-build', '--', str(game), str(details), str(stage / 'scene-assets'),
+                    'ember-detail-recipes'], cwd=project, env=environment, check=True)
+    for quality in ('hi', 'low'):
+        for suffix in ('dt', 'hd'):
+            shutil.copy2(details / f'ember-{quality}-{suffix}.patch', patches)
+    manifest_path = patches / 'manifest.json'
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    manifest['EmberDetailIcons'] = True
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding='utf-8')
     shutil.copytree(patches, validation / 'asset-patches')
     helper = validation / 'helper/Tower.AssetRestore.exe'
     subprocess.run([str(helper), str(validation), str(game), '--build-validation'], check=True)

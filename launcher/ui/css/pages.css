@@ -250,6 +250,16 @@
   box-shadow: 0 0 0 1px rgba(216, 168, 72, 0.25);
 }
 
+.class-art { position: relative; width: 100%; height: 100%; }
+.class-detail .class-art { height: auto; aspect-ratio: 768 / 356; overflow: hidden; }
+.class-art img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.banner-original, .banner-localized { width: 100%; height: 100%; }
+.banner-localized { display: none; }
+html:is([lang="en-US"], [lang="zh-TW"]) .banner-localized { display: block; }
+html:is([lang="en-US"], [lang="zh-TW"]) .banner-original { display: none; }
+.banner-copy { position: absolute; inset: 0 auto 0 6%; width: 46%; display: flex; flex-direction: column; justify-content: center; gap: 5px; color: #ead4a3; }
+.banner-copy strong { font: 600 clamp(17px, 1.8vw, 29px)/1.05 Georgia, serif; }
+.banner-copy span, .banner-copy small { font-size: 12px; }
 .class-detail .class-row {
   display: flex;
   gap: 14px;

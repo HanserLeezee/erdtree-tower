@@ -427,11 +427,11 @@ static class AffixTextFix {
                     if(!file.Bytes.SequenceEqual(beforeBytes[file.ID]))throw new Exception($"Unrelated FMG changed in {lang}: {file.ID}");
                     continue;
                 }
-                var actual=FMG.Read(file.Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text??"");
+                var actual=FMG.Read(file.Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text);
                 var exp=expected[file.ID];
                 if(actual.Count!=exp.Count)throw new Exception($"FMG entry count changed in {lang}/{file.ID}");
                 foreach(var (id,text) in exp) {
-                    if(actual.GetValueOrDefault(id)!=text)throw new Exception($"Roundtrip mismatch in {lang}/{file.ID}/{id}");
+                    if(!actual.TryGetValue(id,out var writtenText)||writtenText!=text)throw new Exception($"Roundtrip mismatch in {lang}/{file.ID}/{id}");
                     if(table=="ProtectorInfo")continue;
                     int limit=table=="WeaponCaption"?WeaponCaptionLines:table=="ProtectorCaption"?ProtectorCaptionLines:AccessoryCaptionLines;
                     bool isTarget=table=="WeaponCaption"?(weapons.ContainsKey(id)||weapons.ContainsKey(id/10000*10000)):table=="ProtectorCaption"?armors.ContainsKey(id):talismans.ContainsKey(id);

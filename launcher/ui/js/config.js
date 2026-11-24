@@ -66,17 +66,17 @@ window.HOYO_CONFIG = {
       /* 点击轮播图弹出职业介绍（detail 与 native/src/class_ui.rs 的 ROLES 一致，tests/test_launcher_classes.py 检查） */
       carousel: [
         { img: 'assets/img/tower-banner-1.webp', href: 'https://github.com/tamikip/erdtree-tower',
-          detail: { name: '守誓骑士', role: '坦克 · 举盾防守', mechanic: ['誓守', '举盾防御时受到的所有伤害降低 25%（含物理）；防御时精力消耗降低 30%'], kit: '长剑、斧枪、鸢形盾', bias: '直剑、大剑、斧枪、中盾与大盾', accent: 'rgb(196, 160, 96)' } },
+          detail: { name: '守誓骑士', role: '坦克 · 举盾防守', mechanic: ['誓守', '举盾时受到的伤害降低 25%，格挡消耗的精力降低 30%。'], kit: '长剑、斧枪、鸢形盾', bias: '直剑、大剑、斧枪、中盾与大盾', accent: 'rgb(196, 160, 96)' } },
         { img: 'assets/img/tower-banner-2.webp', href: 'https://github.com/tamikip/erdtree-tower',
-          detail: { name: '狂战士', role: '重武器 · 硬抗', mechanic: ['狂血', '受到的削韧降低 30%；生命低于一半时受到的伤害降低 15%'], kit: '巨斧、战斧、大皮盾', bias: '斧、大斧、槌、大槌、特大武器', accent: 'rgb(200, 84, 64)' } },
+          detail: { name: '狂战士', role: '重武器 · 硬抗', mechanic: ['狂血', '受击削韧量 -30%。生命低于 50% 时，受到的伤害降低 15%。'], kit: '巨斧、战斧、大皮盾', bias: '斧、大斧、槌、大槌、特大武器', accent: 'rgb(200, 84, 64)' } },
         { img: 'assets/img/tower-banner-3.webp', href: 'https://github.com/tamikip/erdtree-tower',
-          detail: { name: '影刃', role: '敏捷 · 致命一击', mechanic: ['影步', '致命一击后 10 秒内对敌人的伤害提高 20%；精力恢复速度提高'], kit: '慈悲短剑、长弓、红棘木盾', bias: '刀、匕首、曲剑、弓', accent: 'rgb(150, 172, 190)' } },
+          detail: { name: '影刃', role: '敏捷 · 致命一击', mechanic: ['影步', '精力恢复加快。致命一击后，伤害提高 20%。弓的射速翻倍，射击不再消耗箭。'], kit: '慈悲短剑、长弓、红棘木盾', bias: '刀、匕首、曲剑、弓', accent: 'rgb(150, 172, 190)' } },
         { img: 'assets/img/tower-banner-4.webp', href: 'https://github.com/tamikip/erdtree-tower',
-          detail: { name: '星辉术士', role: '远程法术', mechanic: ['星涌', '每秒回复最大专注的 1%（至少 1 点）；交替使用不同魔法叠层增伤（只用一种魔法最多 3 层），打满时这一发的每次命中都引发爆炸'], kit: '辉石杖、短剑、辉石魔砾、辉石彗星', bias: '法杖与魔法', accent: 'rgb(110, 140, 220)' } },
+          detail: { name: '星辉术士', role: '远程法术', mechanic: ['星涌', '每秒回复最大专注的 1%。魔法命中可叠层增伤。交替使用不同魔法叠满时，该次施法每次命中都会引发爆炸。'], kit: '辉石杖、短剑、辉石魔砾、辉石彗星', bias: '法杖与魔法', accent: 'rgb(110, 140, 220)' } },
         { img: 'assets/img/tower-banner-5.webp', href: 'https://github.com/tamikip/erdtree-tower',
-          detail: { name: '祷誓者', role: '祷告 · 治疗 · 辅助', mechanic: ['圣誓', '祷告专注消耗降低 15%；每秒回复 1% 专注；打赢一场战斗回复 10% 生命'], kit: '短矛、指头圣印记、治疗、招来火焰', bias: '圣印记、祷告与矛', accent: 'rgb(226, 196, 120)' } },
+          detail: { name: '祷誓者', role: '祷告 · 治疗 · 辅助', mechanic: ['圣誓', '祷告消耗的专注降低 15%。每秒回复最大专注的 1%，战斗胜利时回复最大生命的 10%。'], kit: '短矛、指头圣印记、治疗、燃火', bias: '圣印记、祷告', accent: 'rgb(226, 196, 120)' } },
         { img: 'assets/img/tower-banner-6.webp', href: 'https://github.com/tamikip/erdtree-tower',
-          detail: { name: '召唤师', role: '骨灰为核心', mechanic: ['群灵', '召唤物全部阵亡后可以再召唤新的；胜利时每组召唤物独立判断，仍有成员存活就返还对应骨灰（含第二次召唤）；每页奖励都有骨灰，召唤流余烬必定可出'], kit: '短剑、熨斗形盾、圣印记、离群野狼与骸骨民兵的骨灰', bias: '骨灰、轻武器与祷告', accent: 'rgb(140, 196, 170)' } },
+          detail: { name: '召唤师', role: '召唤物为核心', mechanic: ['群灵', '召唤物阵亡后可再次召唤其余召唤物。胜利时，每组只要还有成员存活，返还该组骨灰。'], kit: '短剑、熨斗形盾、圣印记、离群野狼与骸骨民兵的骨灰', bias: '骨灰、轻武器', accent: 'rgb(140, 196, 170)' } },
       ],
       /* 公告：宿主检查更新后换成最新版本的更新说明 */
       news: {
@@ -355,6 +355,7 @@ window.HOYO_CONFIG = {
           {
             title: '界面',
             rows: [
+              { type: 'select', key: 'launcherLanguage', label: '启动器语言 / Launcher language', value: '自动 / Auto', options: ['自动 / Auto', '简体中文', '繁體中文', 'English'], hint: '使用界面语言，无需重启。自动模式优先使用模组的语言设置，其次使用系统语言。' },
               { type: 'select', key: 'windowSize', label: '启动器窗口大小', hint: '立即生效并记住选择，随系统缩放；超出屏幕时自动适配。', value: '1280 × 720', options: ['960 × 540', '1280 × 720', '1600 × 900', '1920 × 1080'] },
               { type: 'switch', key: 'closeExit', label: '启动游戏后关闭启动器', value: false },
               { type: 'switch', key: 'reduceMotion', label: '减少界面动效', hint: '关闭呼吸、闪烁等循环动画', value: false },

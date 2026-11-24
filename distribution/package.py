@@ -111,6 +111,8 @@ for name in ['LICENSE', 'ADDITIONAL-TERMS.md']:
 for name in ['Launch-Preview.ps1', 'Launch-Seamless-Tower.ps1', 'New-PartyConfig.ps1', 'seamless-preset.ini']:
     copy_file(project / name, name)
 copy_file(project / 'THIRD_PARTY_NOTICES.md', 'docs/THIRD_PARTY_NOTICES.md')
+for name in ['launch-steamos.sh', 'STEAMOS.md']:
+    copy_file(project / name, name)
 for name in ['scene-assets', 'licenses']:
     copy_tree(project / name, name)
 copy_tree(source / 'loader/bin', 'loader/bin')

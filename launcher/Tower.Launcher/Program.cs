@@ -21,7 +21,9 @@ namespace Tower.Launcher
             using var single = new Mutex(true, @"Local\ErdtreeTowerLauncher", out var first);
             if (!first)
             {
-                var existing = FindWindow(null, MainForm.Title);
+                var existing = FindWindow(null, "黄金树爬塔启动器");
+                if (existing == IntPtr.Zero) existing = FindWindow(null, "Erdtree Tower Launcher");
+                if (existing == IntPtr.Zero) existing = FindWindow(null, "黃金樹爬塔啟動器");
                 if (existing != IntPtr.Zero) { ShowWindow(existing, 9 /* SW_RESTORE */); SetForegroundWindow(existing); }
                 return;
             }
@@ -57,7 +59,7 @@ namespace Tower.Launcher
         static void Crash(Exception? e)
         {
             Log.Write("未处理的异常：" + e);
-            MessageBox.Show($"启动器出错了：{e?.Message}\n\n详细信息已写入 %LOCALAPPDATA%\\ErdtreeTowerLauncher\\launcher.log", MainForm.Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(LauncherLanguage.Pick($"启动器出错了：{e?.Message}\n\n详细信息已写入 %LOCALAPPDATA%\\ErdtreeTowerLauncher\\launcher.log", $"啟動器出錯了：{e?.Message}\n\n詳細資訊已寫入 %LOCALAPPDATA%\\ErdtreeTowerLauncher\\launcher.log", $"Launcher error: {e?.Message}. Details: %LOCALAPPDATA%\\ErdtreeTowerLauncher\\launcher.log"), MainForm.Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string? className, string windowName);

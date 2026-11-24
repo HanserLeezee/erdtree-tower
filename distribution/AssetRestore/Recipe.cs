@@ -11,6 +11,7 @@ namespace Tower.Assets
         public string OodleHash { get; set; }
         public AssetRecipe[] Files { get; set; }
         public IconRecipe[] Icons { get; set; }
+        public bool EmberDetailIcons { get; set; }
     }
     public sealed class IconRecipe
     {

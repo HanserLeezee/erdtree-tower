@@ -78,7 +78,7 @@ def gilded(canvas, mask, height_box, shadow=6, glow=None, outline=1):
     canvas.alpha_composite(Image.merge('RGBA', (*fill.split(), mask)))
 
 
-def banner(atlas, index):
+def banner(atlas, index, lettering=True):
     name, role, mechanic, accent = ROLES[index]
     W, H = 768, 356
     tile = atlas.crop(((index % 3) * 512, (index // 3) * 512, (index % 3) * 512 + 512, (index // 3) * 512 + 512))
@@ -97,6 +97,8 @@ def banner(atlas, index):
     shade = Image.new('RGBA', (W, H), (6, 5, 4, 0))
     shade.putalpha(ramp((W, H), 430, 120).point(lambda v: round(v * 0.62)))
     back.alpha_composite(shade)
+    if not lettering:
+        return back.convert('RGB')
 
     title = ImageFont.truetype(str(TITLE_FONT), 62)
     body = ImageFont.truetype(str(BODY_FONT), 26)
@@ -141,6 +143,7 @@ if __name__ == '__main__':
     atlas = Image.open(ROOT / 'scene-assets/class-art/classes.png').convert('RGB')
     for i in range(len(ROLES)):
         banner(atlas, i).save(OUT / f'tower-banner-{i + 1}.webp', quality=90, method=6)
+        banner(atlas, i, lettering=False).save(OUT / f'tower-banner-{i + 1}-art.webp', quality=90, method=6)
     title_overlay().save(OUT / 'tower-title.png', optimize=True)
     knight().save(OUT / 'tower-knight.webp', quality=88, method=6)
     print('launcher art written to', OUT)

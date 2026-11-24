@@ -89,8 +89,8 @@
         UI.setLocale(k, CFG.locales[k]);
       });
     }
-    var want = v.lang || 'zh-CN';
-    UI.setLocale(want, CFG.locales ? CFG.locales[want] : null);
+    UI.setLocale('zh-CN', CFG.locales && CFG.locales['zh-CN']);
+    window.launcherLanguage.apply(v.launcherLanguage, v.language);
 
     /* 动效：系统偏好 + 设置强开 */
     var sysReduced = window.matchMedia &&
@@ -448,7 +448,7 @@
       track.id = 'track';
       slides.forEach(function (s) {
         var sl = el('div', 'carousel-slide');
-        sl.innerHTML = '<img src="' + esc(s.img) + '" alt="">';
+        sl.innerHTML = classBanner(s);
         sl.addEventListener('click', function () {
           if (s.detail) openClassDetail(s);
           else if (s.href) bridge.openExternal(s.href);
@@ -836,7 +836,7 @@
     if (!items.length) html += '<p>暂无可显示的更新记录。</p>';
     items.forEach(function (item, index) {
       var published = item.date ? new Date(item.date) : null;
-      var date = published && !isNaN(published.getTime()) ? published.toLocaleDateString('zh-CN') : '';
+      var date = published && !isNaN(published.getTime()) ? published.toLocaleDateString(document.documentElement.lang) : '';
       var notes = window.towerReleaseNotes.render(item.notes || '此版本未提供更新说明。');
       html += '<details class="history-entry"' + (index === 0 ? ' open' : '') + '><summary>' +
         '<span class="history-title">' + esc(window.towerReleaseNotes.title(item.title)) + '</span>' +
@@ -890,6 +890,15 @@
   }
 
   /* 轮播图的职业介绍：插画、定位、专属机制、起手装备与擅长的武器，底部可去项目主页 */
+  function classBanner(slide, cssClass) {
+    var image = '<img src="' + esc(slide.img) + '" alt="">';
+    if (!slide.detail) return image;
+    var art = slide.img.replace(/\.webp$/, '-art.webp');
+    return '<div class="class-art ' + (cssClass || '') + '"><div class="banner-original">' + image + '</div>' +
+      '<div class="banner-localized"><img src="' + esc(art) + '" alt=""><div class="banner-copy"><strong>' +
+      esc(slide.detail.name) + '</strong><span>' + esc(slide.detail.role) + '</span><small>' + esc(slide.detail.mechanic[0]) + '</small></div></div></div>';
+  }
+
   function openClassDetail(slide) {
     var d = slide.detail;
     var row = function (label, value) {
@@ -897,7 +906,7 @@
     };
     openModal(d.name,
       '<div class="class-detail" style="--class-accent:' + esc(d.accent || '') + '">' +
-      '<img class="class-banner" src="' + esc(slide.img) + '" alt="">' +
+      classBanner(slide, 'class-banner') +
       row('定位', d.role) +
       '<div class="class-row mech"><span class="k">专属机制</span><span class="v"><b>' + esc(d.mechanic[0]) + '</b>　' +
         esc(d.mechanic[1]) + '</span></div>' +
@@ -1058,7 +1067,7 @@
         '<button class="lobby-card" data-lobby="code">' + lobbyIcon('key') + '<b>输入房间码</b><i>ROOM CODE</i><span>粘贴好友分享的房间码</span></button>';
       if (L.mine) {
         html += '<div class="lobby-mine lobby-mine-' + esc(L.mine.state) + (L.mine.state === 'open' && !L.mine.ready ? ' lobby-mine-wait' : '') + '">' +
-          '<div class="lobby-mine-head"><i></i>你开的房间<em>MY ROOM</em></div><div class="lobby-mine-name">' + esc(L.mine.name) + '</div>' +
+          '<div class="lobby-mine-head"><i></i>你开的房间<em>MY ROOM</em></div><div class="lobby-mine-name" translate="no">' + esc(L.mine.name) + '</div>' +
           '<div class="lobby-mine-detail">' + esc(L.mine.detail) + '</div>' +
           (L.mine.state === 'open' ? shareCode(L.mine.code) : '') + '</div>';
       }
@@ -1085,7 +1094,7 @@
           return '<li class="lobby-room' + (status.blocked ? ' off' : '') + '" style="--i:' + Math.min(index, 12) + '">' +
             '<div class="lobby-index">' + (index < 9 ? '0' : '') + (index + 1) + '</div>' +
             '<div class="lobby-main"><div class="lobby-name">' + (r.locked ? lobbyIcon('lock') : '') + '<span>' + esc(r.name) + '</span></div>' +
-            '<div class="lobby-meta">房主 ' + esc(r.host || '—') + ' · ' + esc(r.state || '大赐福') + '</div></div>' +
+            '<div class="lobby-meta"><span>房主</span> <span translate="no">' + esc(r.host || '—') + '</span> · <span>' + esc(r.state || '大赐福') + '</span></div></div>' +
             '<span class="lobby-pill ' + status.cls + '">' + status.text + '</span>' +
             '<div class="lobby-seats" title="' + r.players + ' / ' + r.max + ' 人">' + seats + '<b>' + r.players + '/' + r.max + '</b></div>' +
             (r.code ? '<button class="lobby-icon-btn" data-lobby="copyCode" data-code="' + esc(r.code) + '" aria-label="复制房间码" title="复制房间码 ' + esc(roomCode(r.code)) + '">' + lobbyIcon('copy') + '</button>' : '') +
@@ -1300,7 +1309,7 @@
           btn.textContent = o;
           sel.classList.remove('open');
           Array.prototype.forEach.call(list.children, function (c) {
-            c.classList.toggle('on', c.textContent === o);
+            c.classList.toggle('on', c === it);
           });
           onSettingChange(r.key, o);
         });
@@ -1392,8 +1401,8 @@
     }
     list.forEach(function (p) {
       var row = el('div', 'set-row');
-      row.appendChild(el('div', 'label', esc(p.name) + '<span class="hint">' +
-        esc(p.exists ? p.path : p.path + '（文件不见了，启动时会跳过）') + '</span>'));
+      row.appendChild(el('div', 'label', '<span translate="no">' + esc(p.name) + '</span><span class="hint"><span translate="no">' +
+        esc(p.path) + '</span>' + (p.exists ? '' : '（文件不见了，启动时会跳过）') + '</span>'));
       var box = el('div', 'ctrl');
       var sw = el('button', 'sw' + (p.enabled ? ' on' : ''));
       sw.setAttribute('role', 'switch');
@@ -2273,11 +2282,12 @@
       if (msg.type === 'settings' && msg.action === 'values') {
         Object.keys(p).forEach(function (k) { setState[k] = p[k]; });
         if (typeof p.aliyunFallback === 'boolean') saveStore({ aliyunFallback: p.aliyunFallback });
-        /* 语言设为繁体：把页面文字转成繁体（简繁表见 zh-tw.js）；改回别的语言需要重新载入页面才能还原 */
-        if (typeof p.language === 'string') {
-          var traditional = p.language.indexOf('繁體') !== -1;
-          if (traditional) window.towerTraditional.enable();
-          else if (window.towerTraditional.enabled()) location.reload();
+        if (p.launcherLanguage || p.language) {
+          var languageValues = {};
+          if (p.launcherLanguage) languageValues.launcherLanguage = p.launcherLanguage;
+          if (p.language) languageValues.language = p.language;
+          saveStore(languageValues);
+          window.launcherLanguage.apply(setState.launcherLanguage, setState.language);
         }
         if (document.getElementById('setDialog')) renderSettings();
         return;
