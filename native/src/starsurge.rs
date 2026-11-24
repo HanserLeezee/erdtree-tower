@@ -310,6 +310,17 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>) {
     OWNER.store(handle_bits(&chr.field_ins_handle),Ordering::Relaxed);
     {let q=chr.modules.physics.position;for (slot,v) in PLAYER_POS.iter().zip([q.0,q.1,q.2]) {slot.store(v.to_bits(),Ordering::Relaxed);}}
     *guard=Some(seed);
+    drop(guard);
+    // 叠层显示不依赖是否在战斗：每帧按当前记录（没有就读存盘）发布，和生命、专注、精力条一起显示
+    if let Ok(mut combat)=COMBAT.lock() {
+        let combat=combat.get_or_insert_with(||restore_combat(Some(seed)));
+        publish_hud(combat.cycle.layers,combat.cycle.cap().max(SINGLE_CAP));
+    }
+}
+fn restore_combat(seed:Option<u64>)->Combat {
+    let cycle=seed.map(load_stacks).unwrap_or_default();
+    if cycle.layers>0 {super::log(format!("STARSURGE stacks restored layers={} cap={}",cycle.layers,cycle.cap()));}
+    Combat{cycle,..Default::default()}
 }
 
 /// 把一行增伤写成「只对魔法有效、五种属性 ×multiplier」
@@ -378,7 +389,8 @@ fn native_hud_shown()->bool {
 pub fn draw_hud(ui:&hudhook::imgui::Ui,icon:&mut dyn FnMut(u32)->Option<hudhook::imgui::TextureId>,shown:bool) {
     let packed=HUD.load(Ordering::Relaxed);
     let (layers,cap)=((packed>>32) as u32,packed as u32);
-    let visible=shown&&OWNER.load(Ordering::Relaxed)!=0&&layers>0&&cap>0&&native_hud_shown();
+    // 只要是星辉术士、原生状态栏在显示就画（没有叠层时显示 0/3）
+    let visible=shown&&OWNER.load(Ordering::Relaxed)!=0&&cap>0&&native_hud_shown();
     // 跟原生状态栏一样淡入（0.25 秒）淡出（0.4 秒）
     let alpha={
         let Ok(mut fade)=HUD_FADE.lock() else{return};
@@ -386,7 +398,7 @@ pub fn draw_hud(ui:&hudhook::imgui::Ui,icon:&mut dyn FnMut(u32)->Option<hudhook:
         fade.0=if visible {(fade.0+dt/0.25).min(1.0)}else{(fade.0-dt/0.4).max(0.0)};
         fade.0
     };
-    if alpha<=0.0||layers==0||cap==0 {return;}
+    if alpha<=0.0||cap==0 {return;}
     use crate::fancy_text::{Effect,Layer,Style,draw};
     let s=(ui.io().display_size[1]/1080.0).max(0.5);
     let [x,y,size]=HUD_LAYOUT.map(|v|v*s);
@@ -437,11 +449,7 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
     let Ok(mut guard)=COMBAT.lock() else{return};
     if owner==0 {return;}
     let seed=RUN_SEED.lock().ok().and_then(|s|*s);
-    let combat=guard.get_or_insert_with(||{
-        let cycle=seed.map(load_stacks).unwrap_or_default();
-        if cycle.layers>0 {super::log(format!("STARSURGE stacks restored layers={} cap={}",cycle.layers,cycle.cap()));}
-        Combat{cycle,..Default::default()}
-    });
+    let combat=guard.get_or_insert_with(||restore_combat(seed));
     let now=Instant::now();
     // 商人、事件房间等没有名单的场合：身边 60 米内所有活着的非玩家角色都算（名单敌人照旧在前）
     let foes:Vec<FieldInsHandle>={
@@ -449,7 +457,8 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         let scarab=watched_scarab();
         let players:Vec<FieldInsHandle>=world.player_chr_set.characters().map(|p|p.chr_ins.field_ins_handle).chain(world.main_player.iter().map(|p|p.chr_ins.field_ins_handle)).collect();
         let me=world.main_player.as_ref().map(|p|{let q=p.chr_ins.modules.physics.position;[q.0,q.1,q.2]});
-        if !multiplayer && let Some(me)=me {
+        // 联机时也扫（商人房的铃珠猎人、宝箱房的伏击等都不在名单里）；别人打的由 last_hit_by 排除
+        if let Some(me)=me {
             for chr in world.chr_sets.iter().flatten().flat_map(|set|set.characters()) {
                 let h=chr.field_ins_handle;
                 // 测伤人偶、商人等不会动的角色不算（它们被设成不能移动）
@@ -546,7 +555,7 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         }
     }
     let layers=combat.cycle.layers;
-    publish_hud(layers,combat.cycle.cap());
+    publish_hud(layers,combat.cycle.cap().max(SINGLE_CAP));
     if let Some(player)=world.main_player.as_mut() {apply_buff(&mut player.chr_ins,layers,combat);}
 }
 

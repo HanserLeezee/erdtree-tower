@@ -2291,8 +2291,8 @@ fn tick_locked() {
         let flasks=state.flasks.as_ref().map(|f|f.total());
         // Practice never forwards combat rewards or persistent stack gains.
         let _=state.ember_practice.tick(world,key,&held,&foes,true,false,flasks,keeper,false);
-        // 星辉术士：营地的测伤人偶不算叠层（不把它交给 starsurge）
-        if state.party.is_none(){super::starsurge::fight(world,&[],false,None);}
+        // 星辉术士：营地的测伤人偶不交给 starsurge；商人房、宝箱房等名单外的战斗靠它扫身边的敌人（联机也算）
+        super::starsurge::fight(world,&[],state.party.is_some(),None);
         super::frost_shackle::observe(world,key,&foes,held.contains(&erdtree_tower::embers::Ember::FrostShackle));
         super::embers::clear_practice_critical();
     } else {
