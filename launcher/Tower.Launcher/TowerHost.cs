@@ -399,6 +399,8 @@ namespace Tower.Launcher
                 case "crashDumps": _ = CrashDumpsAsync(true); break;
                 case "crashDumpsClean": _ = CleanCrashDumpsAsync(); break;
                 case "crashDumpsFix": FixDumpType(); break;
+                case "loaderThreadsFix": FixLoaderThreads(); break;
+                case "loaderThreadsReset": ResetLoaderThreads(); break;
             }
         }
 
@@ -1278,6 +1280,72 @@ namespace Tower.Launcher
             }
             catch (Win32Exception) { Toast("已取消：修改 Windows 错误报告设置需要管理员权限", "info", 6000); }
             catch (Exception e) { Toast("修改转储设置失败：" + e.Message, "error", 6000); }
+        }
+
+        // ---------------- 关闭 eldenring.exe Windows DLL 并行加载（MaxLoaderThreads = 1） ----------------
+
+        const string IfeoEldenRingKey = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\eldenring.exe";
+
+        static int? LoaderThreadsSetting()
+        {
+            try
+            {
+                using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+                using var key = root.OpenSubKey(IfeoEldenRingKey);
+                if (key?.GetValue("MaxLoaderThreads") is int value) return value;
+            }
+            catch (Exception) { }
+            return null;
+        }
+
+        /// <summary>仅为 eldenring.exe 写入 MaxLoaderThreads = 1，关闭 Windows 并行 DLL 加载（避免无 TLS 工作线程导致 me3_mod_host.dll / YAFSML 崩溃）。</summary>
+        void FixLoaderThreads()
+        {
+            if (LoaderThreadsSetting() == 1)
+            {
+                Toast("eldenring.exe 已关闭 Windows 并行加载（MaxLoaderThreads = 1），无需重复设置", "info", 6000);
+                return;
+            }
+            var key = "HKLM\\" + IfeoEldenRingKey;
+            var command = $"/c reg add \"{key}\" /v MaxLoaderThreads /t REG_DWORD /d 1 /f /reg:64";
+            try
+            {
+                using var process = Process.Start(new ProcessStartInfo("cmd.exe", command) { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden });
+                process?.WaitForExit(15000);
+                if (process != null && process.HasExited && process.ExitCode == 0 && LoaderThreadsSetting() == 1)
+                {
+                    Log.Write("已为 eldenring.exe 写入 IFEO MaxLoaderThreads = 1");
+                    Toast("已为 eldenring.exe 关闭 Windows 并行加载（MaxLoaderThreads = 1），请重新启动游戏", "success", 7000);
+                }
+                else Toast("没有写入成功，请确认已允许管理员权限", "warn", 6000);
+            }
+            catch (Win32Exception) { Toast("已取消：写入 eldenring.exe 注册表项需要管理员权限", "info", 6000); }
+            catch (Exception e) { Toast("写入并行加载修复项失败：" + e.Message, "error", 6000); }
+        }
+
+        /// <summary>仅删除 eldenring.exe 的 MaxLoaderThreads 键值，保留其他 IFEO 设置。</summary>
+        void ResetLoaderThreads()
+        {
+            if (LoaderThreadsSetting() == null)
+            {
+                Toast("eldenring.exe 当前已是默认加载线程设置，无需恢复", "info", 6000);
+                return;
+            }
+            var key = "HKLM\\" + IfeoEldenRingKey;
+            var command = $"/c reg delete \"{key}\" /v MaxLoaderThreads /f /reg:64";
+            try
+            {
+                using var process = Process.Start(new ProcessStartInfo("cmd.exe", command) { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden });
+                process?.WaitForExit(15000);
+                if (process != null && process.HasExited && process.ExitCode == 0 && LoaderThreadsSetting() == null)
+                {
+                    Log.Write("已删除 eldenring.exe 的 IFEO MaxLoaderThreads");
+                    Toast("已恢复 eldenring.exe 的默认加载线程设置", "success", 6000);
+                }
+                else Toast("没有恢复成功，请确认已允许管理员权限", "warn", 6000);
+            }
+            catch (Win32Exception) { Toast("已取消：修改注册表项需要管理员权限", "info", 6000); }
+            catch (Exception e) { Toast("恢复加载线程设置失败：" + e.Message, "error", 6000); }
         }
 
         void OpenModLogs()
