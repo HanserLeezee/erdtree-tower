@@ -11,8 +11,8 @@ fn host_law_must_be_applied_by_every_player_before_travel() {
         gate.report(1,Report::new(&host,0,false,false,true)).unwrap();
         for id in 2..=count {gate.report(id,Report::new(&guest,0,false,false,true)).unwrap();}
         let node=host.available()[0];assert!(gate.enter(&host,node).is_err());
-        let Order::Law{epoch,seed,law}=gate.law_order(&host).unwrap().unwrap() else {panic!("missing law order")};
-        assert_eq!((epoch,seed,law),(0,53,host.law));
+        let Order::Law{epoch,seed,law,endless}=gate.law_order(&host).unwrap().unwrap() else {panic!("missing law order")};
+        assert_eq!((epoch,seed,law,endless),(0,53,host.law,host.endless));
         guest.set_law(law).unwrap();
         for id in 2..=count {gate.report(id,Report::new(&guest,0,false,false,true)).unwrap();}
         assert!(gate.law_order(&host).unwrap().is_none());
@@ -37,7 +37,7 @@ fn every_law_node_survives_party_alignment_and_wire_roundtrip() {
         let mut law=Law::default();for node in 0..=id {law=law.toggle(node);}
         let mut run=Run::new(42,Class::Samurai);run.set_law(law).unwrap();run.align_party_start(53).unwrap();
         assert_eq!(run.law,law);assert_eq!(Run::decode(&run.encode().unwrap()).unwrap().law,law);
-        let payload=erdtree_tower::party_handshake::Payload::Order{session:1,order:Order::Law{epoch:0,seed:53,law}};
+        let payload=erdtree_tower::party_handshake::Payload::Order{session:1,order:Order::Law{epoch:0,seed:53,law,endless:run.endless}};
         let decoded=erdtree_tower::party_handshake::Payload::decode(&payload.encode().unwrap()).unwrap();
         assert!(matches!(decoded,erdtree_tower::party_handshake::Payload::Order{order:Order::Law{law:actual,..},..} if actual==law));
     }
