@@ -22,8 +22,8 @@ struct Tuning {
     /// 黄金律法：护盾间隔（秒）；不屈：回复到最大生命的百分比；傲慢：多久没挨打后触发（秒）
     shield_every:u64,reborn_percent:i64,proud_after:u64,
 }
-const NORMAL:Tuning=Tuning{rot_per_hit:1,leech_permille:10,thorn_percent:8,swift_speed:1.1,shield_every:25,reborn_percent:40,proud_after:8};
-const STRONG:Tuning=Tuning{rot_per_hit:2,leech_permille:15,thorn_percent:12,swift_speed:1.3,shield_every:25,reborn_percent:60,proud_after:6};
+const NORMAL:Tuning=Tuning{rot_per_hit:1,leech_permille:10,thorn_percent:8,swift_speed:1.1,shield_every:25,reborn_percent:40,proud_after:5};
+const STRONG:Tuning=Tuning{rot_per_hit:2,leech_permille:15,thorn_percent:12,swift_speed:1.3,shield_every:25,reborn_percent:60,proud_after:4};
 /// 荆棘：一次反弹最多扣这么多生命（同一帧打出的伤害合算一次）
 const THORN_CAP:i64=100;
 /// 荆棘：远程（法术、祷告、弓箭、投掷物等弹体）打出的伤害按这个百分比反弹（近战的一半）
@@ -38,12 +38,14 @@ const BAR_MARKER_V2:i32=FIRST+98;
 const BAR_MARKER_V3:i32=FIRST+97;
 const BAR_MARKER_V4:i32=FIRST+100;
 const BAR_MARKER_V5:i32=FIRST+101;
+const BAR_MARKER_V6:i32=FIRST+102;
 static BAR_NAMES:std::sync::atomic::AtomicU8=std::sync::atomic::AtomicU8::new(0);
-/// 名称资源版本：1 最早组合，2 扩展组合，3 追加 Boss，4 精英，5 适应
+/// 名称资源版本：1 最早组合，2 扩展组合，3 追加 Boss，4 精英，5 适应，6 预算调整新增组合（260..）
 fn bar_names_version()->u8 {
     let known=BAR_NAMES.load(std::sync::atomic::Ordering::Relaxed);
-    if known==5 {return 5;}
-    let version=unsafe {SoloParamRepository::instance()}.map_or(0,|p|if p.get::<SpEffectParam>(BAR_MARKER_V5 as u32).is_some(){5}
+    if known==6 {return 6;}
+    let version=unsafe {SoloParamRepository::instance()}.map_or(0,|p|if p.get::<SpEffectParam>(BAR_MARKER_V6 as u32).is_some(){6}
+        else if p.get::<SpEffectParam>(BAR_MARKER_V5 as u32).is_some(){5}
         else if p.get::<SpEffectParam>(BAR_MARKER_V4 as u32).is_some(){4}
         else if p.get::<SpEffectParam>(BAR_MARKER_V3 as u32).is_some(){3}
         else if p.get::<SpEffectParam>(BAR_MARKER_V2 as u32).is_some(){2}else if p.get::<SpEffectParam>(BAR_MARKER as u32).is_some(){1}else{0});
@@ -62,14 +64,18 @@ pub fn bar_name(affixes:&[Affix],name:i32)->i32 {
     let version=bar_names_version();
     if affixes.contains(&Affix::Adaptive)&&version<5 {return name;}
     let index=erdtree_tower::boss_affixes::combos().iter().position(|c|c==affixes);
+    if index.is_some_and(|i|i>=erdtree_tower::boss_affixes::PRE_COST_V6_COMBOS)&&version<6 {return name;}
     let late=name-super::enemies::BOSS_NAME_FIRST>=erdtree_tower::boss_affixes::LATE_BOSS_FIRST;
-    let covered=if late {version>=3}else{match version {2..=5=>true,1=>index.is_some_and(|i|i<erdtree_tower::boss_affixes::legacy_combos()),_=>false}};
+    let covered=if late {version>=3}else{match version {2..=6=>true,1=>index.is_some_and(|i|i<erdtree_tower::boss_affixes::legacy_combos()),_=>false}};
     if !covered {return name;}
     erdtree_tower::boss_affixes::bar_name(affixes,name,super::enemies::BOSS_NAME_FIRST).unwrap_or(name)
 }
 pub fn elite_bar_name(affixes:&[Affix],name:i32)->i32 {
-    if affixes.is_empty()||bar_names_version()<4 {return name;}
-    if affixes.contains(&Affix::Adaptive)&&bar_names_version()<5 {return name;}
+    let version=bar_names_version();
+    if affixes.is_empty()||version<4 {return name;}
+    if affixes.contains(&Affix::Adaptive)&&version<5 {return name;}
+    let index=erdtree_tower::boss_affixes::combos().iter().position(|c|c==affixes);
+    if index.is_some_and(|i|i>=erdtree_tower::boss_affixes::PRE_COST_V6_COMBOS)&&version<6 {return name;}
     erdtree_tower::boss_affixes::pool_bar_name(affixes,name,super::enemies::POOL_NAME_FIRST)
         .or_else(||erdtree_tower::boss_affixes::bar_name(affixes,name,super::enemies::BOSS_NAME_FIRST)).unwrap_or(name)
 }

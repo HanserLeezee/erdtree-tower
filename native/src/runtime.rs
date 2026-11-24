@@ -210,6 +210,14 @@ fn initial_view()->View {
         busy:false,enemy_hp:None,prompt:0,ready:false,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![],dummy:None,stats:Default::default(),resource_alert:None}
 }
 
+#[derive(Default)]
+struct SpawnCheck {
+    /// 单人调试刷怪的预期区块局部坐标，用于兜底同帧浮点原点切换导致的 32m 刷飞
+    target_local: Option<[f32;3]>,
+    bound_at: Option<Instant>,
+    verified: bool,
+    fixes: u8,
+}
 struct Foe {
     spec: super::enemies::Enemy,
     fight: Encounter<FieldInsHandle>,
@@ -221,6 +229,7 @@ struct Foe {
     /// 后续波次的出招保护期：从这只敌人绑定上算起（WAVE_GRACE 内禁止攻击，到点放开后记 None 并标记 graced）
     grace:Option<Instant>,graced:bool,
     spawn_protection:super::spawn_grace::HitProtection,
+    spawn_check:SpawnCheck,
 }
 type MemberSpawnGaps=((u64,u64,u8,usize),Vec<erdtree_tower::encounter::SpawnGap>);
 struct Pending {
@@ -3120,7 +3129,7 @@ fn tick_locked() {
         // 双王共命：把超时的那只重置为“待生成”，下一帧在尸体的位置重新生成
         if let Some((index,at))=rise && let Some(pending)=state.pending.as_mut() {
             let foe=&mut pending.foes[index];
-            foe.fight=Encounter::default();foe.requested=None;foe.entity_address=None;foe.respawn=Some(at);
+            foe.fight=Encounter::default();foe.requested=None;foe.entity_address=None;foe.respawn=Some(at);foe.spawn_check=Default::default();
         }
         let runtime=&mut *state;
         if publish_bound_combat(&mut runtime.view,&runtime.pending.as_ref().unwrap().next_run,bound) {
@@ -4249,7 +4258,7 @@ fn battlemage_convert(state:&mut Runtime,world:&WorldChrMan,stat:u8)->Result<Str
     let mut next=run.clone();next.battlemage_convert(row,stat)?;record_checked(&next)?;state.view.run=Some(next);
     let name=if stat==0{"智力"}else{"信仰"};
     super::log(format!("TOWER_EMBER battlemage weapon={row} stat={name}"));
-    Ok(format!("右手武器获得了{name} S 补正，{name}也计入物理伤害。"))
+    Ok(format!("右手武器获得了{name}补正（普通+25／失色+10 达 S），{name}也计入物理伤害。"))
 }
 fn tick_chest_award(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::rooms::Room)->Result<(),String> {
     use super::{loot,chest_award::Receipt,native_talk::{flag,set_flag}};
@@ -4565,7 +4574,7 @@ fn tick_custom_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::
             if roster.iter().any(|e|params.get::<NpcParam>(e.npc as u32).is_none()||params.get::<NpcThinkParam>(e.think).is_none()) {return Err("生存挑战敌人参数缺失".into());}
             state.pending=Some(Pending {
                 entity_base:None,networked:false,
-                spirits:Default::default(),foes:roster.into_iter().map(|spec|Foe{spec,fight:Encounter::default(),requested:None,entity_address:None,respawn:None,spawn_gap:Default::default(),grace:None,graced:false,spawn_protection:Default::default()}).collect(),
+                spirits:Default::default(),foes:roster.into_iter().map(|spec|Foe{spec,fight:Encounter::default(),requested:None,entity_address:None,respawn:None,spawn_gap:Default::default(),grace:None,graced:false,spawn_protection:Default::default(),spawn_check:Default::default()}).collect(),
                 next_run:run.clone(),block:room.block,completed:false,stall:None,godskin_pace:Default::default(),
             });
             state.survival_engaged=None;
@@ -4849,7 +4858,7 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
             if roster.iter().any(|e|params.get::<NpcParam>(e.npc as u32).is_none()||params.get::<NpcThinkParam>(e.think).is_none()) {return Err("事件守卫参数缺失".into());}
             state.pending=Some(Pending {
                 entity_base:None,networked:false,
-                spirits:Default::default(),foes:roster.into_iter().map(|spec|Foe{spec,fight:Encounter::default(),requested:None,entity_address:None,respawn:None,spawn_gap:Default::default(),grace:None,graced:false,spawn_protection:Default::default()}).collect(),
+                spirits:Default::default(),foes:roster.into_iter().map(|spec|Foe{spec,fight:Encounter::default(),requested:None,entity_address:None,respawn:None,spawn_gap:Default::default(),grace:None,graced:false,spawn_protection:Default::default(),spawn_check:Default::default()}).collect(),
                 next_run:run.clone(),block:room.block,completed:false,stall:None,godskin_pace:Default::default(),
             });
         }
@@ -5100,7 +5109,7 @@ fn request_spawn(state: &mut Runtime, world: &mut WorldChrMan, id: usize) -> Res
     state.pending = Some(Pending {
         entity_base:None,networked:state.party.is_some(),
         spirits:Default::default(),
-        foes: roster.into_iter().map(|spec| Foe { spec, fight: Encounter::default(), requested: None, entity_address: None, respawn: None,spawn_gap:Default::default(),grace:None,graced:false,spawn_protection:Default::default() }).collect(),
+        foes: roster.into_iter().map(|spec| Foe { spec, fight: Encounter::default(), requested: None, entity_address: None, respawn: None,spawn_gap:Default::default(),grace:None,graced:false,spawn_protection:Default::default(),spawn_check:Default::default() }).collect(),
         next_run, block: i32::from(player.current_block_id), completed: false, stall: None,godskin_pace:Default::default(),
     });
     state.spawn_used = true;
@@ -5237,6 +5246,7 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
                     && foe.fight.bind(handle, true)
                 {
                     foe.entity_address = Some(address);
+                    foe.spawn_check.bound_at = Some(Instant::now());
                     if let Some(chr) = world.chr_ins_by_handle_mut(&handle) {
                         chr.team_type = 6;
                         if authority&&foe.spec.model==4730 {chr.apply_speffect(13918,false);}
@@ -5251,11 +5261,19 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
                 let Some(arena)=super::arenas::for_block(block) else {return (Outcome::LostEntity,None,bound);};
                 let local = arena.position(if dual {super::enemies::dual_placement(i)}else{super::enemies::placement(i,count)});
                 let physics = &player.chr_ins.modules.physics;
-                let pos = match foe.respawn.take() {
-                    Some(at)=>HavokPosition(at[0],at[1]+0.1,at[2],0.0),
-                    None=>HavokPosition(physics.position.0-player.block_position.x+local[0],
+                let origin = erdtree_tower::encounter::floating_origin(
+                    [physics.position.0,physics.position.1,physics.position.2],
+                    [player.block_position.x,player.block_position.y,player.block_position.z],
+                );
+                let (target_local, pos) = match foe.respawn.take() {
+                    Some(at)=>{
+                        let world_pos=[at[0],at[1]+0.1,at[2]];
+                        let loc=origin.and_then(|o|erdtree_tower::encounter::local_from_world(o,world_pos)).unwrap_or(local);
+                        (loc,HavokPosition(world_pos[0],world_pos[1],world_pos[2],0.0))
+                    },
+                    None=>(local,HavokPosition(physics.position.0-player.block_position.x+local[0],
                         physics.position.1-player.block_position.y+local[1],
-                        physics.position.2-player.block_position.z+local[2],0.0),
+                        physics.position.2-player.block_position.z+local[2],0.0)),
                 };
                 if ![pos.0,pos.1,pos.2].iter().all(|v| v.is_finite()) { return (Outcome::LostEntity,None,bound); }
                 let yaw = super::enemies::facing(local,[player.block_position.x,player.block_position.y,player.block_position.z]);
@@ -5270,11 +5288,61 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
                     chr_id:foe.spec.model, npc_param_id:foe.spec.npc, npc_think_param_id:foe.spec.think as i32,
                     chara_init_param_id:0, event_entity_id:pending.entity_base.map_or_else(||if pending.networked||foe.spec.bar>0||foe.spec.model==4730 {arena.boss_entity(i)}else{0},|base|base+i as i32), talk_id:-1, pos_x:pos.0,pos_y:pos.1,pos_z:pos.2,
                 });
+                foe.spawn_check = SpawnCheck { target_local: Some(target_local), bound_at: None, verified: false, fixes: 0 };
                 foe.requested = Some(Instant::now());
                 super::log(format!("Group spawn {}/{}: {} local={local:?} world={pos:?}",i+1,count,foe.spec.name));
             }
         }
         spawning |= foe.fight.handle().is_none() && foe.requested.is_some();
+        // 兜底单人调试刷怪同帧浮点原点切换（如龙王平台 z=328）：若落点偏离预期 >6m 水平或 >4m 垂直，立刻拉回。
+        if authority && !foe.spawn_check.verified
+            && let Some(expected_local) = foe.spawn_check.target_local
+            && let Some(handle) = foe.fight.handle()
+        {
+            let origin = world.main_player.as_ref().and_then(|p| {
+                let h = &p.chr_ins.modules.physics.position;
+                let b = &p.block_position;
+                erdtree_tower::encounter::floating_origin([h.0,h.1,h.2],[b.x,b.y,b.z])
+            });
+            if let Some(origin) = origin
+                && let Some(chr) = world.chr_ins_by_handle_mut(&handle)
+                    .filter(|c| foe.entity_address == Some(std::ptr::from_ref(&**c) as usize))
+            {
+                let bound_at = *foe.spawn_check.bound_at.get_or_insert_with(Instant::now);
+                let alive = chr.modules.data.hp > 0 && !chr.chr_flags1c5.death_flag();
+                if !alive || bound_at.elapsed() > Duration::from_secs(2) {
+                    foe.spawn_check.verified = true;
+                } else {
+                    let p = chr.modules.physics.position;
+                    let proxy_pending = chr.modules.physics.chr_proxy_pos_update_requested;
+                    if let Some((target_world, actual_local, horiz, vert)) =
+                        erdtree_tower::encounter::spawn_drift_target([p.0,p.1,p.2], expected_local, origin)
+                    {
+                        if foe.spawn_check.fixes < 3 {
+                            foe.spawn_check.fixes += 1;
+                            let moved = super::spirits::landing::move_native(&mut chr.modules.physics, target_world);
+                            if moved.is_err() {
+                                let physics = &mut chr.modules.physics;
+                                physics.position = HavokPosition(target_world[0],target_world[1],target_world[2],0.0);
+                                physics.last_update_position = physics.position;
+                                physics.chr_proxy_pos_update_requested = true;
+                            }
+                            super::log(format!(
+                                "Group enemy spawn-drift corrected #{}: {}/{} {} handle={handle} actual_local=[{:.2},{:.2},{:.2}] expected_local=[{:.2},{:.2},{:.2}] horiz={horiz:.2}m vert={vert:.2}m native={}",
+                                foe.spawn_check.fixes, i+1, count, foe.spec.name,
+                                actual_local[0], actual_local[1], actual_local[2],
+                                expected_local[0], expected_local[1], expected_local[2],
+                                moved.is_ok()
+                            ));
+                        } else {
+                            foe.spawn_check.verified = true;
+                        }
+                    } else if !proxy_pending {
+                        foe.spawn_check.verified = true;
+                    }
+                }
+            }
+        }
         // 准备阶段同时禁止出招与受击；结束时恢复原受击状态。
         if authority&&!foe.graced && let Some(chr)=foe.fight.handle().and_then(|h|world.chr_ins_by_handle_mut(&h))
             &&foe.entity_address==Some(std::ptr::from_ref(chr) as usize) {

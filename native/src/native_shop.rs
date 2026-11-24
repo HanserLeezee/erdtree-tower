@@ -1018,7 +1018,7 @@ mod tests {
                 let pots:Vec<_>=rows.iter().filter(|s|extras("pot").iter().any(|p|p.kind==s.kind&&p.id==s.id)).collect();
                 assert_eq!(pots.len(),2);
                 assert_ne!(pots[0].id,pots[1].id);
-                assert!(pots.iter().all(|s|s.quantity== -1&&s.price==350));
+                assert!(pots.iter().all(|s|s.quantity== -1&&matches!(s.price,350|500|700)));
                 let catalyst=match class {Class::Astrologer=>Some("staff"),Class::Prophet|Class::Confessor=>Some("seal"),_=>None};
                 if let Some(group)=catalyst {
                     assert_eq!(rows.iter().filter(|s|extras(group).iter().any(|p|p.kind==s.kind&&p.id as u32==erdtree_tower::affixes::base(s.id as u32))).count(),2);

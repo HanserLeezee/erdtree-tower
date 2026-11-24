@@ -15,12 +15,12 @@ static class BossAffixAssets {
     // 21001 原本只能作用于“别人”（effectTargetSelf / SelfTarget 为 0），由原生 DLL 直接挂到玩家身上时会被忽略，所以打开这两项
     static (int id,string name,int kind,(string,object)[] fields)[] Rows=>[
         (First,"Tower boss affix stalwart",0,[("toughnessDamageCutRate",0.5f),("vfxId",8570)]),
-        (First+10,"Tower boss affix bulwark",0,[..All(Cuts,0.75f),("vfxId",8510)]),
+        (First+10,"Tower boss affix bulwark",0,[..All(Cuts,0.8f),("vfxId",8510)]),
         (First+20,"Tower boss affix frenzied",0,[..All(Attacks,1.2f),..All(Cuts,1.1f),("vfxId",1605000)]),
         (First+30,"Tower boss affix regenerating",0,[("motionInterval",1f),("changeHpRate",-0.3f),("vfxId",1643000)]),
-        // 苦难律法「词条强化」：编号 +1 的强化版，光效相同（削韧 ×0.35、受到伤害 -35%、攻击 +25%、每秒回复 0.45%）
+        // 苦难律法「词条强化」：编号 +1 的强化版，光效相同（削韧 ×0.35、受到伤害 -30%、攻击 +25%、每秒回复 0.45%）
         (First+1,"Tower boss affix stalwart empowered",0,[("toughnessDamageCutRate",0.35f),("vfxId",8570)]),
-        (First+11,"Tower boss affix bulwark empowered",0,[..All(Cuts,0.65f),("vfxId",8510)]),
+        (First+11,"Tower boss affix bulwark empowered",0,[..All(Cuts,0.7f),("vfxId",8510)]),
         (First+21,"Tower boss affix frenzied empowered",0,[..All(Attacks,1.25f),..All(Cuts,1.1f),("vfxId",1605000)]),
         (First+31,"Tower boss affix regenerating empowered",0,[("motionInterval",1f),("changeHpRate",-0.45f),("vfxId",1643000)]),
         (First+40,"Tower boss affix rot aura",0,[("vfxId",5)]),

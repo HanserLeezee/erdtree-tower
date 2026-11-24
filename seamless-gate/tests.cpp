@@ -1,4 +1,5 @@
 #include "gate.h"
+#include "update_block.h"
 #include <cassert>
 #include <iostream>
 #include <map>
@@ -141,5 +142,21 @@ int main() {
     assert(!hostMatch.DeleteLobbyData(world.room, EpochKey));
     hostMatch.LeaveLobby(world.room); assert(!host.allow(Player(2)));
     std::cout << "PASS: namespace, direct joins, reciprocal membership, implicit send acceptance, receive filtering, stale epoch, owner change, leave revocation\n";
+    using namespace tower_update_block;
+    assert(IsLoopbackHostA(nullptr) && IsLoopbackHostA("") && IsLoopbackHostA("localhost") && IsLoopbackHostA("LOCALHOST."));
+    assert(IsLoopbackHostA("127.0.0.1") && IsLoopbackHostA("127.42.0.9") && IsLoopbackHostA("::1") && IsLoopbackHostA("[::1]"));
+    assert(IsLoopbackHostA("::ffff:127.0.0.1") && IsLoopbackHostA("[::FFFF:127.0.1.1]"));
+    assert(!IsLoopbackHostA("api.github.com") && !IsLoopbackHostA("raw.githubusercontent.com") && !IsLoopbackHostA("140.82.121.6"));
+    assert(!IsLoopbackHostA("127.0.0.1.evil.com") && !IsLoopbackHostA("localhost.evil.com") && !IsLoopbackHostA("127.0.0.256"));
+    assert(!IsLoopbackHostA("::ffff:192.0.2.1") && !IsLoopbackHostA("192.0.2.1"));
+    assert(IsLoopbackHostW(nullptr) && IsLoopbackHostW(L"") && IsLoopbackHostW(L"localhost") && IsLoopbackHostW(L"127.0.0.1") && IsLoopbackHostW(L"::1"));
+    assert(!IsLoopbackHostW(L"api.github.com") && !IsLoopbackHostW(L"192.0.2.1") && !IsLoopbackHostW(L"github.com"));
+    const unsigned char v4Loop[4]{127, 0, 0, 1}, v4Ext[4]{140, 82, 121, 6};
+    assert(IsLoopbackIpv4Bytes(v4Loop) && !IsLoopbackIpv4Bytes(v4Ext));
+    const unsigned char v6Loop[16]{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1};
+    const unsigned char v6MappedLoop[16]{0,0,0,0,0,0,0,0,0,0,0xff,0xff,127,0,0,1};
+    const unsigned char v6MappedExt[16]{0,0,0,0,0,0,0,0,0,0,0xff,0xff,192,0,2,1};
+    assert(IsLoopbackIpv6Bytes(v6Loop) && IsLoopbackIpv6Bytes(v6MappedLoop) && !IsLoopbackIpv6Bytes(v6MappedExt));
+    std::cout << "PASS: ERSC external update-check host/IP classification preserves loopback and blocks external targets\n";
 }
 #endif

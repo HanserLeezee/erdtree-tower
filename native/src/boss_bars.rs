@@ -27,6 +27,7 @@ fn ours(name:i32)->bool {
     (crate::enemies::BOSS_NAME_FIRST..crate::enemies::BOSS_NAME_FIRST+crate::enemies::boss_name_count() as i32).contains(&name)
         ||(crate::enemies::POOL_NAME_FIRST..crate::enemies::POOL_NAME_FIRST+crate::enemies::pool_name_count() as i32).contains(&name)
         ||erdtree_tower::boss_affixes::bar_name_range().contains(&name)
+        ||erdtree_tower::boss_affixes::pool_bar_name_range().contains(&name)
         ||name==crate::boss_affixes::BAR_TAG_TEST_NAME
 }
 pub fn sync(active:Vec<(usize,i32,eldenring::cs::FieldInsHandle)>) {
@@ -81,5 +82,22 @@ mod tests {
         let script=include_str!("../../scene-builder/BossAssets.cs");
         assert!(!script.contains("45020971"));
         assert!(script.contains(&format!("{}u",super::ACTIVE_FLAG)));
+    }
+    #[test]
+    fn affixed_pool_elites_are_accepted_as_tower_bars() {
+        use eldenring::cs::{BossHealthDisplayEntry,FieldInsHandle,FieldInsSelector,BlockId};
+        let handle=FieldInsHandle{selector:FieldInsSelector(0x17200010),block_id:BlockId::from(-1)};
+        for combo in erdtree_tower::boss_affixes::combos() {
+            let id=erdtree_tower::boss_affixes::pool_bar_name(combo,crate::enemies::POOL_NAME_FIRST+18,crate::enemies::POOL_NAME_FIRST).unwrap();
+            assert!(super::ours(id),"pool affix bar {id} must be accepted");
+        }
+        let sample=erdtree_tower::boss_affixes::pool_bar_name(&[erdtree_tower::boss_affixes::Affix::Golden],crate::enemies::POOL_NAME_FIRST+18,crate::enemies::POOL_NAME_FIRST).unwrap();
+        let mut entry:BossHealthDisplayEntry=unsafe {std::mem::zeroed()};
+        super::bind(&mut entry,Some((sample,handle)));
+        assert_eq!(entry.fmg_id,sample);assert_eq!(entry.field_ins_handle,handle);
+        super::bind(&mut entry,None);
+        assert_eq!(entry.fmg_id,-1);assert!(entry.field_ins_handle.is_empty());
+        assert!(!super::ours(erdtree_tower::boss_affixes::POOL_BAR_NAME_FIRST-1));
+        assert!(!super::ours(erdtree_tower::boss_affixes::pool_bar_name_range().end));
     }
 }

@@ -227,7 +227,8 @@ function Invoke-TowerLoader([string]$Root,[string]$Loader,[string]$GameExe,[stri
     }else{
         $ini=ConvertTo-TowerYafsmlConfig ([IO.File]::ReadAllText($Profile)) (Split-Path -Parent $Profile)
         $config=Join-Path (Split-Path -Parent $Profile) 'yafsml.launch.ini'
-        [IO.File]::WriteAllText($config,$ini,[Text.UTF8Encoding]::new($false))
+        $utf8=[Text.UTF8Encoding]::new($false)
+        if(![IO.File]::Exists($config) -or [IO.File]::ReadAllText($config,$utf8) -cne $ini){[IO.File]::WriteAllText($config,$ini,$utf8)}
         $loaderArguments = @('--launch-target','eldenring','--game-path',('"'+$GameExe+'"'),'--config',('"'+$config+'"'),'--modloader-dll',('"'+(Join-Path $Root 'loader/yafsml/YAFSML.dll')+'"'))
         Write-Host ("YAFSML arguments: " + ($loaderArguments -join ' '))
         $process = Start-Process -FilePath $exe -ArgumentList $loaderArguments -PassThru -WindowStyle Hidden -WorkingDirectory (Split-Path -Parent $GameExe)

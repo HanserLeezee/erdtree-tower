@@ -41,8 +41,7 @@ $options = @{GameDir=$GameDir;Loader=$Loader;Network=$Network}
 if ($PartyConfig) {
     $options.PartyConfig=$PartyConfig
 }
-$result = & $entry @options -CheckOnly
-if ($CheckOnly) { $result; return }
+if ($CheckOnly) { & $entry @options -CheckOnly; return }
 $launchGuard=$null
 try {
     try {

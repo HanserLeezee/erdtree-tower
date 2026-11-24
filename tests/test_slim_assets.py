@@ -88,3 +88,72 @@ class SlimAssets(unittest.TestCase):
     def test_wrong_icon_hash_preserves_full_assets(self): self.exercise('icon')
     def test_english_theme_is_reconstructed_instead_of_shipping_base_assets(self): self.exercise(None,english=True)
     def test_english_reconstruction_failure_preserves_assets(self): self.exercise('hash',english=True)
+
+    def test_fast_compression_state_verification_accepts_valid_and_rejects_tampered(self):
+        for tamper in (False, True):
+            with tempfile.TemporaryDirectory(prefix='tower-slim-fast-') as directory:
+                root = Path(directory)
+                project, stage, game = root / 'project', root / 'stage', root / 'game'
+                (project / 'licenses').mkdir(parents=True)
+                (project / 'licenses/bcdec.txt').write_text('license')
+                icon_bytes = b'\x12\x34\x56\xff' * 25600
+                icon_root = stage / 'scene-assets/reward-icons'
+                icon_root.mkdir(parents=True)
+                (icon_root / '123.rgba').write_bytes(icon_bytes)
+                for relative in slim.TARGETS:
+                    path = stage / 'scene-assets' / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b'DCX\x00level6-' + relative.encode())
+
+                def run(command, **kwargs):
+                    if 'run' in command:
+                        folder = stage / 'asset-patches'
+                        folder.mkdir()
+                        manifest = {
+                            'Files': [
+                                {
+                                    'Path': p,
+                                    'DecodedHash': hashlib.sha256((b'decoded-' + p.encode())).hexdigest(),
+                                    'TargetHash': hashlib.sha256((b'DCX\x00level6-' + p.encode())).hexdigest(),
+                                }
+                                for p in slim.TARGETS
+                            ],
+                            'Icons': [{'Id': 123, 'Sha256': hashlib.sha256(icon_bytes).hexdigest()}],
+                        }
+                        (folder / 'manifest.json').write_text(json.dumps(manifest))
+                    elif 'build' in command:
+                        folder = Path(command[-1]); folder.mkdir(exist_ok=True)
+                        for name in ('Tower.AssetRestore.exe', 'Tower.AssetRestore.exe.config'):
+                            (folder / name).write_bytes(b'helper')
+                    else:
+                        val = Path(command[1])
+                        state_files = []
+                        for relative in slim.TARGETS:
+                            rebuilt = b'DCX\x00level2-' + relative.encode()
+                            path = val / 'scene-assets' / relative
+                            path.parent.mkdir(parents=True, exist_ok=True)
+                            path.write_bytes(b'DCX\x00tampered' if tamper else rebuilt)
+                            state_files.append({
+                                'Path': relative,
+                                'DecodedHash': hashlib.sha256((b'decoded-' + relative.encode())).hexdigest(),
+                                'FileHash': hashlib.sha256(rebuilt).hexdigest(),
+                                'CompressionLevel': 2,
+                            })
+                        (val / 'asset-patches/.restore-state.json').write_text(json.dumps({'Version': 1, 'Files': state_files}))
+                        icon_out = val / 'scene-assets/reward-icons/123.rgba'
+                        icon_out.parent.mkdir(parents=True, exist_ok=True)
+                        icon_out.write_bytes(icon_bytes)
+
+                def codec(project, folder):
+                    folder.mkdir(parents=True)
+                    path = folder / 'Tower.IconCodec.dll'
+                    path.write_bytes(b'codec')
+                    return path
+
+                with patch.object(slim.subprocess, 'run', side_effect=run), patch.object(slim, 'build_icon_codec', side_effect=codec):
+                    if tamper:
+                        with self.assertRaises(ValueError):
+                            slim.prepare(project, stage, game)
+                    else:
+                        slim.prepare(project, stage, game)
+                        self.assertEqual((stage / 'asset-mode.txt').read_text().strip(), 'local-v1')

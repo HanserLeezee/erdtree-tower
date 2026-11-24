@@ -125,6 +125,31 @@ function Get-TowerPluginSections([string]$PackageRoot) {
     }
 }
 # End extra plugins
+function Sync-TowerFileIfChanged([string]$Source,[string]$Destination) {
+    $srcInfo = [IO.FileInfo]::new($Source)
+    if ([IO.File]::Exists($Destination)) {
+        $dstInfo = [IO.FileInfo]::new($Destination)
+        if ($dstInfo.Length -eq $srcInfo.Length -and $dstInfo.LastWriteTimeUtc -eq $srcInfo.LastWriteTimeUtc) { return }
+    }
+    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Destination)) | Out-Null
+    [IO.File]::Copy($Source, $Destination, $true)
+    [IO.File]::SetLastWriteTimeUtc($Destination, $srcInfo.LastWriteTimeUtc)
+}
+function Sync-TowerDirIfChanged([string]$SourceDir,[string]$DestinationDir) {
+    if (-not [IO.Directory]::Exists($SourceDir)) { return }
+    [IO.Directory]::CreateDirectory($DestinationDir) | Out-Null
+    $baseLen = $SourceDir.TrimEnd('\','/').Length + 1
+    foreach ($file in [IO.Directory]::EnumerateFiles($SourceDir, '*', [IO.SearchOption]::AllDirectories)) {
+        $rel = $file.Substring($baseLen)
+        Sync-TowerFileIfChanged $file ([IO.Path]::Combine($DestinationDir, $rel))
+    }
+}
+function Write-TowerTextIfChanged([string]$Destination,[string]$Text) {
+    $utf8 = [Text.UTF8Encoding]::new($false)
+    if ([IO.File]::Exists($Destination) -and [IO.File]::ReadAllText($Destination, $utf8) -ceq $Text) { return }
+    [IO.File]::WriteAllText($Destination, $Text, $utf8)
+}
+$launchClock = [Diagnostics.Stopwatch]::StartNew()
 $base = & (Join-Path $PSScriptRoot 'Launch-Preview.ps1') -GameDir $GameDir -Loader $Loader -CheckOnly
 $root = $base.PackageDirectory
 $gateSupport=Join-Path (Split-Path $loaderSupport) 'Tower-SessionGate.ps1'
@@ -168,12 +193,15 @@ $verifiedSeamless = @(
     '0A093D8490967BF19C62F895FDF1FDA21840282D2B2B371B9B4FC24A0CFE146E' # 2.0.2 (version-specific revival interface)
     '2EBDE62BE864BA3D759728AAC44C459F0F813E8B6D7A342304CE68F6513F280C' # 2.0.3 (pinned component; offline interface checks passed)
 )
-$sha256 = [System.Security.Cryptography.SHA256]::Create()
-try {
-    $erscStream = [System.IO.File]::OpenRead($ersc)
-    try { $erscHash = [System.BitConverter]::ToString($sha256.ComputeHash($erscStream)).Replace('-', '') }
-    finally { $erscStream.Dispose() }
-} finally { $sha256.Dispose() }
+$erscHash = $script:TowerVerifiedErscHash
+if (-not $erscHash) {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $erscStream = [System.IO.File]::OpenRead($ersc)
+        try { $erscHash = [System.BitConverter]::ToString($sha256.ComputeHash($erscStream)).Replace('-', '') }
+        finally { $erscStream.Dispose() }
+    } finally { $sha256.Dispose() }
+}
 if ($verifiedSeamless -notcontains $erscHash) {
     Write-Warning "This Seamless Co-op build is not verified with the tower (SHA256 $erscHash). Launching anyway: the revival fix turns itself off; all players must use the same Seamless build."
 }
@@ -192,6 +220,8 @@ $modified = [regex]::Replace($modified,'(?m)^skip_splash_screens\s*=[^\r\n]*','s
 $modified = [regex]::Replace($modified,'(?m)^allow_summons\s*=[^\r\n]*','allow_summons = 1')
 if ($CheckOnly) {[pscustomobject]@{Entry=$launcher;SaveExtension=$saveExtension;Assets= (Join-Path $root 'scene-assets');MultiplayerVerified=$false};return}
 if (Get-Process eldenring,ersc_launcher -ErrorAction SilentlyContinue) {throw 'Exit the game and Seamless launcher first.'}
+$precheckMs = $launchClock.ElapsedMilliseconds
+$restoreStartMs = $precheckMs
 $assetMode = Join-Path $root 'asset-mode.txt'
 if ((Test-Path -LiteralPath $assetMode) -and [IO.File]::ReadAllText($assetMode).Trim() -notin @('full', 'local-v1')) {throw 'Invalid asset mode; verify and repair the package.'}
 if (-not (Test-Path -LiteralPath $assetMode) -and (Test-Path -LiteralPath (Join-Path $root 'asset-patches\manifest.json'))) {throw 'Missing asset mode; verify and repair the package.'}
@@ -202,6 +232,7 @@ if ((Test-Path -LiteralPath $assetMode) -and [IO.File]::ReadAllText($assetMode).
     & $restore $root $GameDir
     if ($LASTEXITCODE -ne 0) {throw 'Local asset generation failed; see logs or use the full package.'}
 }
+$restoreMs = $launchClock.ElapsedMilliseconds - $restoreStartMs
 $native = $base.DllPath
 $assets = Join-Path $root 'scene-assets'
 $runtime = Join-Path $entry $(if ($Network -eq 'OnlineFix') {if ($PartyConfig) {'onlinefix-party-runtime'} else {'onlinefix-runtime'}} elseif ($PartyConfig) {'party-runtime'} else {'runtime'})
@@ -280,16 +311,18 @@ $config = [regex]::Replace($config,"(?m)^(\s*path\s*=\s*)['""][^'""\r\n]*[\\/]er
 $config = [regex]::Replace($config,"(?m)^(\s*path\s*=\s*)['""][^'""\r\n]*[\\/]scene-assets['""]",('${1}'''+$assets.Replace('\','/').Replace('$','$$')+''''))
 $config=Add-TowerLanguagePackage $config $root $GameDir
 $config=Add-TowerSessionGate $config
-[IO.File]::WriteAllText($configPath,$config,(New-Object Text.UTF8Encoding($false)))
+Write-TowerTextIfChanged $configPath $config
 $private = Join-Path $runtime 'SeamlessCoop'
-New-Item -ItemType Directory -Path $private -Force | Out-Null
-Copy-Item -LiteralPath $ersc -Destination (Join-Path $private 'ersc.dll') -Force
-Copy-Item -LiteralPath (Join-Path $root 'SeamlessCoop/Tower.SeamlessGate.dll') -Destination $private -Force
+[IO.Directory]::CreateDirectory($private) | Out-Null
+Sync-TowerFileIfChanged $ersc (Join-Path $private 'ersc.dll')
+Sync-TowerFileIfChanged (Join-Path $root 'SeamlessCoop/Tower.SeamlessGate.dll') (Join-Path $private 'Tower.SeamlessGate.dll')
 foreach ($directory in @('crashpad','locale')) {
     $source = Join-Path (Split-Path $ersc) $directory
-    if (Test-Path -LiteralPath $source -PathType Container) {Copy-Item -LiteralPath $source -Destination $private -Recurse -Force}
+    Sync-TowerDirIfChanged $source (Join-Path $private $directory)
 }
-[IO.File]::WriteAllText((Join-Path $private 'ersc_settings.ini'),$modified,[Text.UTF8Encoding]::new($false))
+Write-TowerTextIfChanged (Join-Path $private 'ersc_settings.ini') $modified
+$setupMs = $launchClock.ElapsedMilliseconds - $precheckMs - $restoreMs
+Write-Host ("Launch timing: precheck=${precheckMs}ms restore=${restoreMs}ms setup=${setupMs}ms")
 $environment = @{
     PATH=($private+';'+$env:PATH)
     ERDTREE_TOWER_PARTY=$PartyConfig

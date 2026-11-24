@@ -8,7 +8,9 @@ function Assert-TowerSessionGate([string]$Root,[string]$Loader) {
     foreach($name in 'ersc.dll','Tower.SeamlessGate.dll'){
         $path=Join-Path $folder $name
         if(!(Test-Path -LiteralPath $path -PathType Leaf) -or $manifest.files.$name -notmatch '^[0-9a-fA-F]{64}$'){throw "Session component missing: $name"}
-        if((Get-FileHash -LiteralPath $path).Hash -ine $manifest.files.$name){throw "Session component damaged or mismatched: $name. Verify and repair the package."}
+        $actualHash=(Get-FileHash -LiteralPath $path).Hash
+        if($actualHash -ine $manifest.files.$name){throw "Session component damaged or mismatched: $name. Verify and repair the package."}
+        if($name -eq 'ersc.dll'){$script:TowerVerifiedErscHash=$actualHash.ToUpperInvariant()}
     }
 }
 

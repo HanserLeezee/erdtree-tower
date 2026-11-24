@@ -221,7 +221,7 @@ impl Ember {
         Self::Arts=>format!("战技伤害 +{ARTS_ATTACK_PERCENT}%\n战技消耗的专注与精力 -{ARTS_FP_CUT_PERCENT}%"),
         Self::Bulwark=>"大盾举盾时不再消耗精力".into(),
         Self::Stride=>"已移除，不再提供效果".into(),
-        Self::Battlemage=>format!("可在铁匠处免费让 {BATTLEMAGE_WEAPONS} 把近战武器\n获得智力或信仰 S 补正\n受到的伤害根据智力或信仰等级降低"),
+        Self::Battlemage=>format!("可在铁匠处免费让 {BATTLEMAGE_WEAPONS} 把近战武器\n获得智力或信仰补正\n普通+25／失色+10 时达 S 补正\n受到的伤害根据智力或信仰等级降低"),
         Self::Mercy=>format!("治疗类祷告的回复量\n提高 {MERCY_HEAL_PERCENT}%"),
         Self::Martyr=>format!("受到伤害时回复专注\n失去最大生命的 1%\n回复最大专注的 {}%",MARTYR_FP_PERCENT as f32/100.0),
         Self::LastStand=>format!("生命低于 {LAST_STAND_HP_PERCENT}% 时\n韧性（强韧度）提高 {LAST_STAND_POISE_PERCENT}%"),
@@ -681,7 +681,7 @@ mod tests {
     }
     #[test]
     fn battlemage_cuts_damage_by_the_higher_mind_stat_and_records_weapons() {
-        assert_eq!(Ember::Battlemage.effect(),"可在铁匠处免费让 2 把近战武器\n获得智力或信仰 S 补正\n受到的伤害根据智力或信仰等级降低");
+        assert_eq!(Ember::Battlemage.effect(),"可在铁匠处免费让 2 把近战武器\n获得智力或信仰补正\n普通+25／失色+10 时达 S 补正\n受到的伤害根据智力或信仰等级降低");
         assert!((battlemage_cut(40)-0.84).abs()<1e-6&&(battlemage_cut(80)-0.68).abs()<1e-6&&(battlemage_cut(0)-1.0).abs()<1e-6&&(battlemage_cut(500)-0.05).abs()<1e-6);
         let mut run=crate::Run::new(3,crate::Class::Astrologer);
         assert!(run.battlemage_convert(2000000,0).is_err(),"needs the ember");

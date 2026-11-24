@@ -1,3 +1,5 @@
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include "gate.h"
 #include <cassert>
 #include <windows.h>
@@ -22,6 +24,26 @@ extern "C" __declspec(dllexport) bool ExerciseGate() {
     assert(net->SendMessageToUser(peer, "x", 1, 0, 0) == k_EResultOK);
     mm->LeaveLobby(room);
     assert(!net->AcceptSessionWithUser(peer));
+    return true;
+}
+extern "C" __declspec(dllexport) bool ExerciseUpdateBlock() {
+    ADDRINFOA hintsA{}; hintsA.ai_flags = AI_NUMERICHOST; hintsA.ai_family = AF_INET;
+    PADDRINFOA resA = reinterpret_cast<PADDRINFOA>(0x1);
+    assert(getaddrinfo("192.0.2.1", "443", &hintsA, &resA) == WSAHOST_NOT_FOUND && resA == nullptr);
+    assert(getaddrinfo("127.0.0.1", "443", &hintsA, &resA) == 0 && resA != nullptr);
+    freeaddrinfo(resA);
+    ADDRINFOW hintsW{}; hintsW.ai_flags = AI_NUMERICHOST; hintsW.ai_family = AF_INET;
+    PADDRINFOW resW = reinterpret_cast<PADDRINFOW>(0x1);
+    assert(GetAddrInfoW(L"192.0.2.1", L"443", &hintsW, &resW) == WSAHOST_NOT_FOUND && resW == nullptr);
+    assert(GetAddrInfoW(L"127.0.0.1", L"443", &hintsW, &resW) == 0 && resW != nullptr);
+    FreeAddrInfoW(resW);
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    assert(s != INVALID_SOCKET);
+    sockaddr_in ext{}; ext.sin_family = AF_INET; ext.sin_port = htons(443);
+    assert(inet_pton(AF_INET, "192.0.2.1", &ext.sin_addr) == 1);
+    assert(connect(s, reinterpret_cast<const sockaddr*>(&ext), sizeof(ext)) == SOCKET_ERROR);
+    assert(WSAGetLastError() == WSAECONNREFUSED);
+    closesocket(s);
     return true;
 }
 BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID) {

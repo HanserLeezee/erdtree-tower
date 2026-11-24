@@ -7,7 +7,10 @@ static class CatalogAssets {
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(game,"regulation.bin"));
         PARAM Read(string name) {var p=PARAM.Read(reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name)==name).Bytes);p.ApplyParamdef(PARAMDEF.XmlDeserialize($"work/SoulsRandomizers/diste/Defs/{name}.xml"));return p;}
         var rewards=new List<string>();var shop=new List<string>();var extras=new List<string>();var crystals=new List<string>();var epic=new List<string>();
-        int potGroup=Convert.ToInt32(Read("EquipParamGoods").Rows.Single(r=>r.ID==300)["potGroupId"].Value);
+        var goodsRows=Read("EquipParamGoods").Rows;
+        int crackedPotGroup=Convert.ToInt32(goodsRows.Single(r=>r.ID==300)["potGroupId"].Value);
+        int ritualPotGroup=Convert.ToInt32(goodsRows.Single(r=>r.ID==301)["potGroupId"].Value);
+        int heftyPotGroup=Convert.ToInt32(goodsRows.Single(r=>r.ID==2000300)["potGroupId"].Value);
         foreach(var (param,table) in new[]{("EquipParamWeapon","Weapon"),("EquipParamProtector","Protector"),("EquipParamAccessory","Accessory"),("EquipParamGoods","Goods"),("EquipParamGem","Gem")}) {
             var names=tables[table+"Name"].Entries.Where(e=>!string.IsNullOrWhiteSpace(e.Text)).GroupBy(e=>e.ID).ToDictionary(g=>g.Key,g=>g.First().Text);
             var captions=tables[table+"Caption"].Entries.Where(e=>!string.IsNullOrWhiteSpace(e.Text)).Select(e=>e.ID).ToHashSet();
@@ -30,7 +33,10 @@ static class CatalogAssets {
                     if(I("isConsume")==1&&I("enable_live")==1) {
                         if(name.Contains("肝脏干")||row.ID is 900 or 940)extras.Add($"resistance|3|{row.ID}|300|10|{name}");
                         else if(name.StartsWith("腌制")||name.EndsWith("肉块")||name is "煮熟虾子" or "煮熟螃蟹")extras.Add($"food|3|{row.ID}|300|5|{name}");
-                        else if(name.EndsWith("壶")&&I("potGroupId")==potGroup)extras.Add($"pot|3|{row.ID}|350|10|{name}");
+                        else if(name.EndsWith("壶")&&row.ID!=610&&row.ID<2050000&&(I("potGroupId")==crackedPotGroup||I("potGroupId")==ritualPotGroup||I("potGroupId")==heftyPotGroup)) {
+                            int price=I("potGroupId")==heftyPotGroup?700:I("potGroupId")==ritualPotGroup?500:350;
+                            extras.Add($"pot|3|{row.ID}|{price}|-1|{name}");
+                        }
                         else if(name.Contains("飞刀")||name=="扇形暗器")extras.Add($"knife|3|{row.ID}|60|20|{name}");
                     }
                 }

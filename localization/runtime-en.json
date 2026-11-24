@@ -58,7 +58,7 @@
   "服务已完成，使用传送门继续": "Service complete. Continue through the portal",
   "宝箱尚未领取": "Chest reward not claimed yet",
   "已通过传送门，请选择下一层节点。": "Portal used. Choose a node on the next floor.",
-  "右手武器获得了{name} S 补正，{name}也计入物理伤害。": "Your right-hand weapon gained S scaling in {name}. {name} now contributes to physical damage.",
+  "右手武器获得了{name}补正（普通+25／失色+10 达 S），{name}也计入物理伤害。": "Your right-hand weapon gained {name} scaling (reaches S at +25 / +10). {name} now contributes to physical damage.",
   "个人宝箱进度尚未加载": "Personal chest progress not loaded yet",
   "个人宝箱进度不匹配，未发放物品": "Personal chest progress mismatch; no items granted",
   "获得余烬「{}」": "Received ember: {0}",

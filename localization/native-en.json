@@ -333,7 +333,7 @@
   "轻负重时伤害 +15%\n精力恢复 +5 点/秒": "Damage +15% with light equip load\nStamina recovery +5/s",
   "生命低于 50%\n伤害 +25%": "Below 50% HP\nDamage +25%",
   "胜利恢复最大生命 10%\n最大专注 15%": "Victory restores 10% of maximum HP\nand 15% of maximum FP",
-  "可在铁匠处免费让近战武器\n获得智力或信仰 S 补正\n受到的伤害降低\n智力、信仰取高 ×0.4%": "Smiths can add Intelligence or Faith\nS scaling to melee weapons for free\nDamage taken reduced by\n0.4% x the higher of Intelligence or Faith",
+  "可在铁匠处免费让近战武器\n获得智力或信仰补正（普通+25／失色+10 达 S）\n受到的伤害降低\n智力、信仰取高 ×0.4%": "Smiths can add Intelligence or Faith\nscaling to melee weapons for free (S at +25 / +10)\nDamage taken reduced by\n0.4% x the higher of Intelligence or Faith",
   "治疗类祷告的回复量\n提高 50%": "Healing incantation recovery\nincreased by 50%",
   "受到伤害时回复专注\n失去最大生命的 1%\n回复最大专注的 2%": "Taking damage restores FP\nEach 1% of maximum HP lost\nrestores 2% of maximum FP",
   "生命低于 40% 时\n韧性（强韧度）提高 200%": "Below 40% HP\nPoise increased by 200%",

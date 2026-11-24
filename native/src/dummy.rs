@@ -20,9 +20,12 @@ fn damage_since_refill(previous:i32,hp:i32,max:i32)->u32 {
     previous.min(max.max(0)).saturating_sub(hp.max(0)).max(0) as u32
 }
 
-/// 篝火营地（王城竞技场）安全半径上限（米），避免玩家贴边或转视角时把假人刷到墙外/柱子里
+/// 篝火营地（王城竞技场）固定落点与朝向：营地入口恒为 [0, 0.15, 10]、NPC 在 [-5, 5] / [5, 1] / [5, 6]，
+/// 固定放在入口左侧空地 [-8, 0.15, 8] 朝向入口，避免进营地 1 秒内跑动/转视角导致木桩刷到场地正中或主客位置不一致。
 const CAMP_BLOCK:i32=0x2d000000;
 const CAMP_SAFE_RADIUS:f32=13.5;
+const CAMP_DUMMY_SPOT:[f32;3]=[-8.0,0.15,8.0];
+const CAMP_DUMMY_LOOK:[f32;3]=[0.0,0.15,10.0];
 /// 进营地站稳多久后再生成假人，避免无缝联机刚落地首帧调试刷怪撞到加载期
 const SPAWN_SETTLE:Duration=Duration::from_secs(1);
 const MAX_SPAWN_RETRIES:u8=3;
@@ -40,6 +43,13 @@ fn clamp_camp_spot(block:i32,me:[f32;3],mut at:[f32;3])->[f32;3] {
         }
     }
     at
+}
+fn camp_spot(block:i32,me:[f32;3],yaw:f32)->([f32;3],f32) {
+    if block==CAMP_BLOCK {
+        return (CAMP_DUMMY_SPOT,super::enemies::facing(CAMP_DUMMY_SPOT,CAMP_DUMMY_LOOK));
+    }
+    let at=clamp_camp_spot(block,me,placement(me,yaw));
+    (at,super::enemies::facing(at,me))
 }
 fn spawn_world_pos(origin:[f32;3],spot:[f32;3])->[f32;3] {
     [origin[0]+spot[0],origin[1]+spot[1],origin[2]+spot[2]]
@@ -125,11 +135,9 @@ impl Dummy {
     fn no_dead_speffect(&mut self)->Option<i32> {
         *self.no_dead_effect.get_or_insert_with(|| {
             let params=unsafe {SoloParamRepository::instance()}.ok()?;
-            let found=params.rows::<SpEffectParam>().find_map(|(id,row)| {
-                let clean=row.no_dead()
-                    &&row.effect_endurance()<0.0
-                    &&row.state_info()==0
-                    &&row.vfx_id()<0
+            let neutral=|row:&eldenring::param::SP_EFFECT_PARAM_ST| {
+                row.no_dead()
+                    &&row.effect_endurance()!=0.0
                     &&row.max_hp_rate()==1.0
                     &&row.change_hp_rate()==0.0
                     &&row.change_hp_point()==0
@@ -137,11 +145,18 @@ impl Dummy {
                     &&row.magic_diffence_rate()==1.0
                     &&row.fire_diffence_rate()==1.0
                     &&row.thunder_diffence_rate()==1.0
-                    &&row.dark_diffence_rate()==1.0;
-                clean.then_some(id as i32)
-            });
+                    &&row.dark_diffence_rate()==1.0
+            };
+            let pick=|strict:bool| {
+                params.rows::<SpEffectParam>().find_map(|(id,row)| {
+                    let ok=neutral(row)
+                        &&(!strict||(row.effect_endurance()<0.0&&row.vfx_id()<0&&matches!(row.state_info(),0|2)));
+                    ok.then_some((id as i32,row.effect_endurance(),row.state_info(),row.vfx_id()))
+                })
+            };
+            let found=pick(true).or_else(||pick(false));
             super::log(format!("Damage dummy pure no_dead SpEffect: {found:?}"));
-            found
+            found.map(|(id,..)|id)
         })
     }
     pub fn target(&self,world:&WorldChrMan)->Option<FieldInsHandle> {
@@ -261,10 +276,7 @@ impl Dummy {
         let me=[player.block_position.x,player.block_position.y,player.block_position.z];
         let origin=[physics.position.0-me[0],physics.position.1-me[1],physics.position.2-me[2]];
         let block=i32::from(player.current_block_id);
-        let (at,yaw)=*self.spot.get_or_insert_with(|| {
-            let at=clamp_camp_spot(block,me,placement(me,physics.orientation.to_euler_angles().1));
-            (at,super::enemies::facing(at,me))
-        });
+        let (at,yaw)=*self.spot.get_or_insert_with(|| camp_spot(block,me,physics.orientation.to_euler_angles().1));
         let world_pos=spawn_world_pos(origin,at);
         self.suppress_npc_soul();
         let init=&mut world.debug_chr_creator.init_data;
@@ -379,6 +391,8 @@ mod tests {
         // 营地安全半径约束与固定原点重生：玩家走开后 origin 不变，重生仍落回原处
         let clamped=clamp_camp_spot(CAMP_BLOCK,[10.0,0.15,10.0],[18.0,0.25,10.0]);
         assert!((clamped[0].hypot(clamped[2])-CAMP_SAFE_RADIUS).abs()<0.01);
+        assert_eq!(camp_spot(CAMP_BLOCK,[5.0,0.05,1.0],1.2).0,CAMP_DUMMY_SPOT);
+        assert_eq!(camp_spot(CAMP_BLOCK,[0.0,0.15,10.0],0.0),camp_spot(CAMP_BLOCK,[5.0,0.05,1.0],2.3));
         let origin=[100.0,10.0,-50.0];
         assert_eq!(spawn_world_pos(origin,clamped),[origin[0]+clamped[0],origin[1]+clamped[1],origin[2]+clamped[2]]);
     }

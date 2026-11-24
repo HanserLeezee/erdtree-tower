@@ -422,6 +422,11 @@ impl Gate {
         (self.stage==Stage::Reward&&self.all(|r|r.bound&&(!r.alive||r.portal))
             &&self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.alive&&r.portal))).then_some(Order::Rewards{epoch:self.epoch})
     }
+    /// 仍有非房主队员未离开战斗/领奖阶段（尚未回到路线图或大赐福）：供房主低频重发 Rewards 自愈静默丢包
+    pub fn rewards_pending(&self,host:u64)->bool {
+        self.stage==Stage::Reward
+            &&self.peers.iter().any(|(id,r)|*id!=host&&!r.as_ref().is_some_and(|r|r.present&&(r.map_ready||r.at_hub)))
+    }
     pub fn engage(&mut self)->Option<Order> {self.engage_within(None)}
     /// 开战屏障：全员确认敌人复制后开战（敌人此前在各自的游戏里不动、无敌）。
     pub fn engage_within(&mut self,_host_ready_ms:Option<u64>)->Option<Order> {
@@ -1148,5 +1153,26 @@ mod tests {
         assert!(Config::decode(&text.replace("\"player\":1","\"player\":3")).is_err());
         assert!(Config::decode(&text.replace(":47931",":0")).is_err());
         assert!(Config::decode(&"x".repeat(8193)).is_err());
+    }
+    #[test]
+    fn rewards_pending_tracks_peers_until_map_or_hub() {
+        let run=Run::new(42,crate::Class::Samurai);
+        let mut gate=Gate::new(vec![1,2,3]);
+        assert!(!gate.rewards_pending(1),"only active in Stage::Reward");
+        gate.stage=Stage::Reward;
+        assert!(gate.rewards_pending(1),"missing peer reports still need rewards");
+        let mut combat=Report::new(&run,0,true,true,true);combat.map_ready=false;
+        let mut dead=Report::new(&run,0,true,true,false);dead.map_ready=false;
+        gate.report(1,combat.clone()).unwrap();
+        gate.report(2,combat.clone()).unwrap();
+        gate.report(3,dead).unwrap();
+        assert!(gate.rewards_pending(1));
+        let map_ready=Report::new(&run,0,true,true,true);
+        gate.report(2,map_ready.clone()).unwrap();
+        assert!(gate.rewards_pending(1),"dead peer still waiting to revive and pick reward");
+        gate.report(3,Report::at_hub(0)).unwrap();
+        assert!(!gate.rewards_pending(1),"stops once every non-host peer reached map or hub");
+        gate.stage=Stage::Fighting;
+        assert!(!gate.rewards_pending(1));
     }
 }

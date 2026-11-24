@@ -7,13 +7,6 @@ $exePath = Join-Path $GameDir 'eldenring.exe'
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) { throw '找不到游戏，请传入 -GameDir' }
 $exeVersion = (Get-Item -LiteralPath $exePath).VersionInfo.FileVersion
 if ($exeVersion -notmatch '^2\.7\.2\.\d+$') { throw "验证包仅支持 1.17.2 系列游戏文件版本（2.7.2.x），当前为：$exeVersion" }
-$sha256 = [System.Security.Cryptography.SHA256]::Create()
-$exeStream = [System.IO.File]::OpenRead($exePath)
-try { $exeHash = [System.BitConverter]::ToString($sha256.ComputeHash($exeStream)).Replace('-', '').ToLowerInvariant() }
-finally { $exeStream.Dispose(); $sha256.Dispose() }
-if ($exeHash -ne 'f9118fea2cfd8fa3901e8060bfadb1552cb2471771ded8a5b662c4e298ffb328') {
-    Write-Host "注意：检测到同系列游戏文件版本 $exeVersion（非 2.7.2.0 国际版基准哈希），将由运行时接口特征码自动校验兼容性。"
-}
 function Get-NativeDllName([string]$Root) {
     $profilePath = Join-Path $Root 'preview.me3'
     if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { return $null }
@@ -49,42 +42,63 @@ $packageRoot = $null
 $dllName = $null
 $candidates = @($PSScriptRoot, (Join-Path $PSScriptRoot 'release-preview'))
 foreach ($candidate in $candidates) {
-    if (-not (Test-Path -LiteralPath (Join-Path $candidate 'scene-assets\reward-art\rare-blue.rgba'))) { continue }
-    if (-not (Test-Path -LiteralPath (Join-Path $candidate 'scene-assets\reward-art\rarity-cards.rgba'))) { continue }
+    if (-not [IO.File]::Exists([IO.Path]::Combine($candidate, 'scene-assets\reward-art\rare-blue.rgba'))) { continue }
+    if (-not [IO.File]::Exists([IO.Path]::Combine($candidate, 'scene-assets\reward-art\rarity-cards.rgba'))) { continue }
     $candidateDll = Get-NativeDllName $candidate
     if (-not $candidateDll) { continue }
-    $requiredFiles = @('loader\bin\me3.exe', $candidateDll, 'preview.me3', 'scene-assets\regulation.bin', 'scene-assets\msg\zhocn\menu_dlc02.msgbnd.dcx', 'scene-assets\msg\zhocn\item_dlc02.msgbnd.dcx', 'scene-assets\script\talk\m00_00_00_00.talkesdbnd.dcx', 'scene-assets\event\m11_10_00_00.emevd.dcx', 'scene-assets\enemy-pools.txt', 'scene-assets\oath-art\cards.rgba', 'scene-assets\oath-art\background.rgba', 'scene-assets\oath-art\button.rgba')
-    $requiredFiles += 'scene-assets\map\mapstudio\m11_10_00_00.msb.dcx'
+    $requiredFiles = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($item in @('loader\bin\me3.exe', $candidateDll, 'preview.me3', 'scene-assets\regulation.bin', 'scene-assets\msg\zhocn\menu_dlc02.msgbnd.dcx', 'scene-assets\msg\zhocn\item_dlc02.msgbnd.dcx', 'scene-assets\script\talk\m00_00_00_00.talkesdbnd.dcx', 'scene-assets\event\m11_10_00_00.emevd.dcx', 'scene-assets\enemy-pools.txt', 'scene-assets\oath-art\cards.rgba', 'scene-assets\oath-art\background.rgba', 'scene-assets\oath-art\button.rgba', 'scene-assets\map\mapstudio\m11_10_00_00.msb.dcx', 'scene-assets\battlefields.txt', 'scene-assets\reward-details.tsv', 'scene-assets\reward-art\card.rgba', 'scene-assets\map-art\paper.rgba', 'scene-assets\map-art\icons.rgba')) {
+        [void]$requiredFiles.Add($item)
+    }
     foreach ($map in @('m45_00_00_00', 'm45_01_00_00', 'm45_02_00_00')) {
-        $requiredFiles += "scene-assets\map\mapstudio\$map.msb.dcx"
-        $requiredFiles += "scene-assets\event\$map.emevd.dcx"
-        $requiredFiles += "scene-assets\script\talk\$map.talkesdbnd.dcx"
+        [void]$requiredFiles.Add("scene-assets\map\mapstudio\$map.msb.dcx")
+        [void]$requiredFiles.Add("scene-assets\event\$map.emevd.dcx")
+        [void]$requiredFiles.Add("scene-assets\script\talk\$map.talkesdbnd.dcx")
     }
     foreach ($map in @('m10_00_00_00', 'm12_01_00_00', 'm11_00_00_00')) {
-        $requiredFiles += "scene-assets\map\mapstudio\$map.msb.dcx"
-        $requiredFiles += "scene-assets\event\$map.emevd.dcx"
+        [void]$requiredFiles.Add("scene-assets\map\mapstudio\$map.msb.dcx")
+        [void]$requiredFiles.Add("scene-assets\event\$map.emevd.dcx")
     }
-    $requiredFiles += 'scene-assets\battlefields.txt'
-    $requiredFiles += 'scene-assets\reward-details.tsv'
-    $requiredFiles += 'scene-assets\reward-art\card.rgba'
-    $requiredFiles += @('scene-assets\map-art\paper.rgba', 'scene-assets\map-art\icons.rgba')
-    $detailsFile = Join-Path $candidate 'scene-assets\reward-details.tsv'
-    $generatedIconIds = @{}
-    $modeFile = Join-Path $candidate 'asset-mode.txt'
-    $assetManifest = Join-Path $candidate 'asset-patches\manifest.json'
-    if ((Test-Path -LiteralPath $modeFile) -and [IO.File]::ReadAllText($modeFile).Trim() -eq 'local-v1' -and (Test-Path -LiteralPath $assetManifest)) {
-        $iconRecipes = ([IO.File]::ReadAllText($assetManifest) | ConvertFrom-Json).Icons
-        foreach ($iconRecipe in $iconRecipes) { $generatedIconIds[[string]$iconRecipe.Id] = $true }
-        if ($generatedIconIds.Count -gt 0) { $requiredFiles += @('Tower.AssetRestore.exe', 'Tower.IconCodec.dll') }
-    }
-    if (Test-Path -LiteralPath $detailsFile -PathType Leaf) {
-        foreach ($line in Get-Content -LiteralPath $detailsFile -Encoding UTF8) {
-            $fields = $line -split "`t"
-            if ($fields.Count -eq 7 -and -not $generatedIconIds.ContainsKey([string]$fields[1])) { $requiredFiles += "scene-assets\reward-icons\$($fields[1]).rgba" }
+    $generatedIconIds = [System.Collections.Generic.HashSet[string]]::new()
+    $modeFile = [IO.Path]::Combine($candidate, 'asset-mode.txt')
+    $assetManifest = [IO.Path]::Combine($candidate, 'asset-patches\manifest.json')
+    if ([IO.File]::Exists($modeFile) -and [IO.File]::ReadAllText($modeFile).Trim() -eq 'local-v1' -and [IO.File]::Exists($assetManifest)) {
+        $manifestText = [IO.File]::ReadAllText($assetManifest)
+        $iconsMatch = [regex]::Match($manifestText, '"Icons"\s*:\s*\[(.*?)\]', [Text.RegularExpressions.RegexOptions]::Singleline)
+        if ($iconsMatch.Success) {
+            foreach ($m in [regex]::Matches($iconsMatch.Groups[1].Value, '"Id"\s*:\s*(\d+)')) {
+                [void]$generatedIconIds.Add($m.Groups[1].Value)
+            }
+        }
+        if ($generatedIconIds.Count -gt 0) {
+            [void]$requiredFiles.Add('Tower.AssetRestore.exe')
+            [void]$requiredFiles.Add('Tower.IconCodec.dll')
         }
     }
-    $missingFiles = @($requiredFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $candidate $_) -PathType Leaf) })
-    if ($missingFiles.Count -eq 0) { $packageRoot = $candidate; $dllName = $candidateDll; break }
+    $allPresent = $true
+    foreach ($rel in $requiredFiles) {
+        if (-not [IO.File]::Exists([IO.Path]::Combine($candidate, $rel))) { $allPresent = $false; break }
+    }
+    if (-not $allPresent) { continue }
+    $detailsFile = [IO.Path]::Combine($candidate, 'scene-assets\reward-details.tsv')
+    $iconDir = [IO.Path]::Combine($candidate, 'scene-assets\reward-icons')
+    $existingIcons = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    if ([IO.Directory]::Exists($iconDir)) {
+        foreach ($iconPath in [IO.Directory]::GetFiles($iconDir, '*.rgba')) {
+            [void]$existingIcons.Add([IO.Path]::GetFileNameWithoutExtension($iconPath))
+        }
+    }
+    $checkedIds = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($line in [IO.File]::ReadLines($detailsFile, [Text.UTF8Encoding]::new($false))) {
+        $fields = $line.Split([char]9)
+        if ($fields.Length -eq 7) {
+            $iconId = $fields[1]
+            if ($checkedIds.Add($iconId) -and -not $generatedIconIds.Contains($iconId) -and -not $existingIcons.Contains($iconId)) {
+                $allPresent = $false; break
+            }
+        }
+    }
+    if ($allPresent) { $packageRoot = $candidate; $dllName = $candidateDll; break }
 }
 if (-not $packageRoot) { throw "找不到完整验证包，已检查目录：$($candidates -join '；')。请完整解压验证包。" }
 $loaderPath = Get-TowerLoaderPath $packageRoot $Loader

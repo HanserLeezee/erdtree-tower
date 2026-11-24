@@ -132,9 +132,70 @@ pub fn may_spawn_paced(networked:bool,monster_node:bool,held:bool,roles:&[Role],
     true
 }
 
+/// 玩家世界坐标与区块局部坐标的差值，即引擎当前的浮点原点偏移（按 8m / 32m 步进切换）。
+pub fn floating_origin(world:[f32;3],block:[f32;3])->Option<[f32;3]> {
+    let origin=[world[0]-block[0],world[1]-block[1],world[2]-block[2]];
+    (world.iter().all(|v|v.is_finite())&&block.iter().all(|v|v.is_finite())&&origin.iter().all(|v|v.is_finite())).then_some(origin)
+}
+pub fn world_from_local(origin:[f32;3],local:[f32;3])->Option<[f32;3]> {
+    let world=[origin[0]+local[0],origin[1]+local[1],origin[2]+local[2]];
+    (origin.iter().all(|v|v.is_finite())&&local.iter().all(|v|v.is_finite())&&world.iter().all(|v|v.is_finite())).then_some(world)
+}
+pub fn local_from_world(origin:[f32;3],world:[f32;3])->Option<[f32;3]> {
+    let local=[world[0]-origin[0],world[1]-origin[1],world[2]-origin[2]];
+    (origin.iter().all(|v|v.is_finite())&&world.iter().all(|v|v.is_finite())&&local.iter().all(|v|v.is_finite())).then_some(local)
+}
+/// 调试刷怪请求挂起期间若浮点原点发生切换，引擎不会自动平移 `CSDebugChrCreatorInitData::spawn_position`，
+/// 返回按最新原点重算的世界坐标（浮点原点步进至少 8m，此处 >0.5m 即重算）。
+pub fn pending_spawn_retarget(current_world:[f32;3],local_target:[f32;3],current_origin:[f32;3])->Option<[f32;3]> {
+    if !current_world.iter().all(|v|v.is_finite()){return None;}
+    let desired=world_from_local(current_origin,local_target)?;
+    let horiz=(desired[0]-current_world[0]).hypot(desired[2]-current_world[2]);
+    let vert=(desired[1]-current_world[1]).abs();
+    (horiz>0.5||vert>0.5).then_some(desired)
+}
+/// 单人敌人绑定后校验实际落点是否因同帧浮点原点切换或异常刷飞（水平 >6m 或垂直 >4m），
+/// 若偏离则返回 `(目标世界坐标, 实际区块坐标, 水平偏离, 垂直偏离)` 供立刻拉回。
+pub fn spawn_drift_target(actual_world:[f32;3],expected_local:[f32;3],current_origin:[f32;3])->Option<([f32;3],[f32;3],f32,f32)> {
+    let actual_local=local_from_world(current_origin,actual_world)?;
+    let desired_world=world_from_local(current_origin,expected_local)?;
+    let horiz=(actual_local[0]-expected_local[0]).hypot(actual_local[2]-expected_local[2]);
+    let vert=(actual_local[1]-expected_local[1]).abs();
+    (horiz>6.0||vert>4.0).then_some((desired_world,actual_local,horiz,vert))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn floating_origin_shift_retargets_pending_and_drifted_spawns() {
+        // 复现龙王平台 Node 39 小壶故障：请求时原点 z=-296，刷出前玩家跨过 z=328 原点切至 z=-328。
+        let old_origin=floating_origin([1.258,1.538,31.630],[17.258,1009.538,327.630]).unwrap();
+        let new_origin=floating_origin([1.018,1.595,2.823],[17.018,1009.595,330.823]).unwrap();
+        let target_local=[11.755,1009.726,330.262];
+        let stale_world=world_from_local(old_origin,target_local).unwrap();
+        assert!((stale_world[2]-34.262).abs()<0.01);
+        // 原点未变时不改写
+        assert_eq!(pending_spawn_retarget(stale_world,target_local,old_origin),None);
+        // 原点切换 -32m 后，挂起请求的世界坐标自动更新为 z=+2.262
+        let updated=pending_spawn_retarget(stale_world,target_local,new_origin).unwrap();
+        assert!((updated[0]-stale_world[0]).abs()<0.01);
+        assert!((updated[1]-stale_world[1]).abs()<0.01);
+        assert!((updated[2]-2.262).abs()<0.01);
+        // 同帧竞态下若敌人已按旧世界坐标刷出，实际局部坐标会偏移 +32m 到 z=362.262，触发拉回
+        let (snap_world,actual_local,horiz,vert)=spawn_drift_target(stale_world,target_local,new_origin).unwrap();
+        assert!((actual_local[2]-362.262).abs()<0.01);
+        assert!((horiz-32.0).abs()<0.05&&vert<0.05);
+        assert!((snap_world[2]-2.262).abs()<0.01);
+        // 正常落点（含轻微移动）不触发拉回
+        let normal_world=world_from_local(new_origin,[12.5,1009.726,331.0]).unwrap();
+        assert_eq!(spawn_drift_target(normal_world,target_local,new_origin),None);
+        // 非有限坐标安全拒绝
+        assert_eq!(floating_origin([f32::NAN,0.0,0.0],[0.0,0.0,0.0]),None);
+        assert_eq!(pending_spawn_retarget([f32::INFINITY,0.0,0.0],target_local,new_origin),None);
+        assert_eq!(spawn_drift_target([0.0,f32::NAN,0.0],target_local,new_origin),None);
+    }
 
     #[test]
     fn later_wave_attacks_wait_three_seconds_from_binding_not_wave_admission() {

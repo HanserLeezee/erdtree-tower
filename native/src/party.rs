@@ -1,7 +1,7 @@
 use std::{sync::{Arc,atomic::{AtomicBool,Ordering},mpsc::{self,SyncSender,Receiver}},thread,time::{Duration,Instant}};
 use erdtree_tower::{Run,party_game::{Config,Gate,Order,Report},party_link::*};
 /// 队友的游戏出错、本局停止（runtime::lobby_reconnect_error 按开头判断后在大赐福重新组队）
-pub const TEAMMATE_FAULT:&str="队友的游戏出了错误，这一局已停止。请大家回到大赐福重新组队；如果反复出现，请把队友的 tower-preview.log 发给作者。";
+pub const TEAMMATE_FAULT:&str="队友的游戏出了错误，这一局已停止。请按 Home 返回大赐福重新组队；如果反复出现，请把队友的 tower-preview.log 发给作者。";
 fn config_path(value:Option<std::ffi::OsString>)->Option<std::ffi::OsString> {value.filter(|path|!path.is_empty())}
 pub fn manual_config()->Option<std::ffi::OsString> {config_path(std::env::var_os("ERDTREE_TOWER_PARTY"))}
 const QUEUE:usize=1024;
@@ -11,6 +11,8 @@ const PEER_OUTAGE_GRACE:Duration=Duration::from_secs(15);
 const CHANNEL_REOPEN_COOLDOWN:Duration=Duration::from_secs(2);
 const RECONNECT_SILENCE_TIMEOUT:Duration=Duration::from_secs(45);
 const PEER_RETRY_LIMIT:usize=32;
+/// 胜利/领奖状态低频补发间隔：防 Steam 会话静默重建丢失一次性可靠消息导致传送门软锁或炸房
+const VICTORY_RESEND_INTERVAL:Duration=Duration::from_millis(1500);
 
 fn is_critical_order(order:&Order)->bool {
     !matches!(order,Order::ForceEnd|Order::Stop(_)|Order::MapDrawing(_)|Order::Titles(_)|Order::FrostShackles{..}|Order::ChariotPose{..}|Order::Votes{..})
@@ -46,8 +48,9 @@ impl NetRecovery {
     fn peer_fail(&mut self,peer:u64,now:Instant,critical_bytes:Option<&[u8]>)->bool {
         if !self.peer_fail.iter().any(|(id,_)|*id==peer) {self.peer_fail.push((peer,now));}
         if let Some(bytes)=critical_bytes {
+            let duplicate=self.peer_retry.iter().any(|(id,frame)|*id==peer&&frame.as_slice()==bytes);
             let queued=self.peer_retry.iter().filter(|(id,_)|*id==peer).count();
-            if queued<PEER_RETRY_LIMIT {self.peer_retry.push((peer,bytes.to_vec()));}
+            if !duplicate&&queued<PEER_RETRY_LIMIT {self.peer_retry.push((peer,bytes.to_vec()));}
         }
         let reopen=self.peer_reopen.iter().find(|(id,_)|*id==peer).is_none_or(|(_,at)|now.saturating_duration_since(*at)>=CHANNEL_REOPEN_COOLDOWN);
         if reopen {
@@ -121,6 +124,9 @@ pub struct EventSync {
     pub bound:Option<u8>,
     /// 房主：本机这一场的敌人全部就绪的时刻（开战屏障的宽限从这里算）
     pub host_bound_at:Option<Instant>,
+    /// 房主：最近一次广播 Victory / Rewards 的时刻（用于低频自愈重发，切房间随 EventSync 自动清空）
+    victory_sent:Option<Instant>,
+    rewards_sent:Option<Instant>,
     pub job:Option<erdtree_tower::party_events::Job>,
     pub done:Option<u8>,
     pub scarab_owners:[u64;3],
@@ -611,7 +617,8 @@ impl Link {
         Ok(order)
     }
     pub fn result(&mut self)->Result<(),String> {
-        let order=self.gate.victory()?;self.send(Send::Broadcast(order))?;self.victory=true;Ok(())
+        let order=self.gate.victory()?;self.send(Send::Broadcast(order))?;self.victory=true;
+        self.event.victory_sent=Some(Instant::now());Ok(())
     }
     pub fn event_result(&mut self,wave:u8,killed:u8)->Result<(),String> {
         self.event_result_owned(wave,killed,[0;3])
@@ -637,11 +644,32 @@ impl Link {
     pub fn force_rewards(&mut self)->Result<(),String>{
         if let Some(error)=&self.stopped{return Err(error.clone());}
         if !self.host(){return Err("只有房主可以跳过本关".into());}
-        if self.victory&&!self.rewards {self.send(Send::Broadcast(Order::Rewards{epoch:self.epoch}))?;self.rewards=true;}Ok(())
+        if self.victory&&!self.rewards {self.send(Send::Broadcast(Order::Rewards{epoch:self.epoch}))?;self.rewards=true;self.event.rewards_sent=Some(Instant::now());}Ok(())
     }
     pub fn open_rewards(&mut self)->Result<(),String>{
         if let Some(error)=&self.stopped{return Err(error.clone());}
-        if self.host()&&!self.rewards&&self.gate.rewards().is_some() {self.send(Send::Broadcast(Order::Rewards{epoch:self.epoch}))?;self.rewards=true;}Ok(())
+        if self.host()&&!self.rewards&&self.gate.rewards().is_some() {self.send(Send::Broadcast(Order::Rewards{epoch:self.epoch}))?;self.rewards=true;self.event.rewards_sent=Some(Instant::now());}Ok(())
+    }
+    /// 房主低频重发本场 Victory / Rewards：SteamNetworkingMessages 会话静默重建时会丢弃旧会话未 ACK 的可靠包，
+    /// 导致存活队友不出传送门软锁或战死队友漏复活；客户端对同 epoch 重复指令完全幂等。
+    fn resend_combat_outcome(&mut self) {
+        if !self.host()||self.defeated||self.stopped.is_some()||self.gate.members().len()<=1||!self.victory {return;}
+        let now=Instant::now();
+        if !self.rewards {
+            if self.gate.stage==erdtree_tower::party_game::Stage::Reward
+                &&self.event.victory_sent.is_none_or(|at|now.saturating_duration_since(at)>=VICTORY_RESEND_INTERVAL) {
+                self.event.victory_sent=Some(now);
+                if let Err(e)=self.send(Send::Broadcast(Order::Victory{epoch:self.epoch})) {
+                    ignored(0,&format!("胜利状态重发失败，稍后重试：{e}"));
+                }
+            }
+        } else if self.gate.rewards_pending(self.config.host)
+            &&self.event.rewards_sent.is_none_or(|at|now.saturating_duration_since(at)>=VICTORY_RESEND_INTERVAL) {
+            self.event.rewards_sent=Some(now);
+            if let Err(e)=self.send(Send::Broadcast(Order::Rewards{epoch:self.epoch})) {
+                ignored(0,&format!("领奖状态重发失败，稍后重试：{e}"));
+            }
+        }
     }
     pub fn accept(&mut self,order:&Order)->Result<bool,String> {
         match order {
@@ -794,8 +822,18 @@ impl Link {
             Order::Spawn{epoch} if *epoch==self.epoch=>{self.spawn=true;self.encounter=Some(Instant::now());},
             // 房主过了宽限也会先开战：本机敌人还在加载的队员同样接受，敌人加载出来就直接是开战状态
             Order::Engage{epoch} if *epoch==self.epoch&&self.spawn&&!self.victory=>self.fighting=true,
-            Order::Victory{epoch} if *epoch==self.epoch&&self.bound=>self.victory=true,
-            Order::Rewards{epoch} if *epoch==self.epoch&&self.victory=>self.rewards=true,
+            Order::Victory{epoch} if *epoch==self.epoch&&self.bound=>{
+                if self.victory {return Ok(false);}
+                if !self.host(){super::log(format!("PARTY_VICTORY accepted epoch={epoch}"));}
+                self.victory=true;
+            },
+            // 战斗中若因 Steam 会话闪断/重建漏收了胜利指令，房主随后发来的领奖只可能发生在同一场胜利之后；
+            // 已绑定本场战斗的队员收到同 epoch 领奖时补置 victory=true，避免误报指令失效导致全队炸房。
+            Order::Rewards{epoch} if *epoch==self.epoch&&(self.victory||self.bound&&!self.host())=>{
+                if self.victory&&self.rewards {return Ok(false);}
+                if !self.victory {super::log(format!("PARTY_VICTORY implied by rewards epoch={epoch} (victory order was missed)"));self.victory=true;}
+                self.rewards=true;
+            },
             Order::Defeat{epoch} if *epoch==self.epoch=>{
                 self.defeated=true;self.gate.stop();self.event=Default::default();
                 self.spawn=false;self.fighting=false;self.victory=false;self.rewards=false;self.portal=false;
@@ -1038,8 +1076,9 @@ impl Link {
                 }
                 if self.victory&&!self.rewards&&let Some(order)=self.gate.rewards() {
                     super::log(format!("PARTY_REWARD_PORTAL epoch={}; every living member entered",self.epoch));
-                    if let Err(e)=self.send(Send::Broadcast(order.clone())){self.stop(e);}else{self.rewards=true;orders.push(order);}
+                    if let Err(e)=self.send(Send::Broadcast(order.clone())){self.stop(e);}else{self.rewards=true;self.event.rewards_sent=Some(Instant::now());orders.push(order);}
                 }
+                self.resend_combat_outcome();
                 if self.spawn&&self.bound {self.event.host_bound_at.get_or_insert_with(Instant::now);}
                 let engage=self.gate.engage_within(self.event.host_bound_at.map(|t|t.elapsed().as_millis() as u64));
                 if engage.is_some() {
@@ -1535,6 +1574,83 @@ mod tests {
         assert!(link.event.job.is_none());
         assert!(link.accept(&Order::NewRun{epoch:5,seed:99}).unwrap());
         assert!(!link.defeated);
+    }
+    #[test]
+    fn member_that_missed_victory_still_accepts_rewards() {
+        let config=Config{session:17,seed:42,player:2,host:1,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers:vec![]};
+        let (tx,_commands)=mpsc::sync_channel(64);let (_events,rx)=mpsc::sync_channel(64);
+        let mut link=Link{reconnect:Default::default(),config,gate:Gate::new(vec![1,2]),epoch:4,arrived:true,bound:true,spawn:true,fighting:true,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
+            law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:None,net_recovery:Default::default(),queued:Default::default(),peer_faults:vec![],selected:None,ballots:vec![],tx,rx,running:Arc::new(AtomicBool::new(false)),last_report:Instant::now(),last_seen:vec![],encounter:None,strikes:Default::default(),strike_epoch:0,strike_seq:0};
+        assert!(link.accept(&Order::Rewards{epoch:3}).is_err(),"rewards for another fight are still rejected");
+        assert!(link.accept(&Order::Rewards{epoch:4}).unwrap());
+        assert!(link.victory&&link.rewards&&link.needs_new_run());
+        // Duplicate Rewards and late Victory on the same epoch are idempotent no-ops.
+        assert!(!link.accept(&Order::Rewards{epoch:4}).unwrap());
+        assert!(!link.accept(&Order::Victory{epoch:4}).unwrap());
+        link.bound=false;link.victory=false;link.rewards=false;
+        assert!(link.accept(&Order::Rewards{epoch:4}).is_err(),"a member that never joined this fight does not take its rewards");
+        // Host still requires victory=true before accepting Rewards.
+        link.config.player=1;link.bound=true;
+        assert!(link.accept(&Order::Rewards{epoch:4}).is_err(),"host must never imply victory from rewards");
+    }
+    #[test]
+    fn host_resends_victory_and_rewards_periodically_until_peers_advance() {
+        let (mut host,_events,commands)=test_link(1);
+        host.config.peers.push(erdtree_tower::party_game::Peer{player:2,token:String::new()});
+        let run=Run::new(42,erdtree_tower::Class::Samurai);
+        host.gate.epoch=host.epoch;host.gate.stage=erdtree_tower::party_game::Stage::Fighting;
+        host.bound=true;host.spawn=true;host.fighting=true;
+        let mut combat=Report::new(&run,host.epoch,true,true,true);combat.map_ready=false;
+        let mut dead=Report::new(&run,host.epoch,true,true,false);dead.map_ready=false;
+        host.gate.report(1,combat.clone()).unwrap();
+        host.gate.report(2,dead.clone()).unwrap();
+        host.result().unwrap();
+        assert!(matches!(commands.try_recv().unwrap(),Send::Broadcast(Order::Victory{epoch}) if epoch==host.epoch));
+        // Immediate poll does not spam Victory.
+        host.poll(Some(&run),true,false,false);
+        while let Ok(cmd)=commands.try_recv() {
+            assert!(!matches!(cmd,Send::Broadcast(Order::Victory{..})|Send::Broadcast(Order::Rewards{..})));
+        }
+        // After the resend interval, host re-broadcasts Victory until rewards open.
+        host.event.victory_sent=Some(Instant::now()-VICTORY_RESEND_INTERVAL);
+        host.poll(Some(&run),true,false,false);
+        let mut saw_victory=false;
+        while let Ok(cmd)=commands.try_recv() {
+            if matches!(cmd,Send::Broadcast(Order::Victory{epoch}) if epoch==host.epoch) {saw_victory=true;}
+        }
+        assert!(saw_victory,"host must resend Victory periodically while waiting for reward portal");
+        // Living host touches portal -> host broadcasts Rewards.
+        host.portal=true;
+        let mut entered=combat.clone();entered.portal=true;
+        host.gate.report(1,entered).unwrap();
+        host.poll(Some(&run),true,false,false);
+        let mut saw_rewards=false;
+        while let Ok(cmd)=commands.try_recv() {
+            if matches!(cmd,Send::Broadcast(Order::Rewards{epoch}) if epoch==host.epoch) {saw_rewards=true;}
+        }
+        assert!(saw_rewards&&host.rewards);
+        // Immediate poll does not spam Rewards.
+        host.poll(Some(&run),true,false,false);
+        while let Ok(cmd)=commands.try_recv() {
+            assert!(!matches!(cmd,Send::Broadcast(Order::Rewards{..})|Send::Broadcast(Order::Victory{..})));
+        }
+        // After the resend interval while guest is still dead / not map_ready, host resends Rewards (not Victory).
+        host.event.rewards_sent=Some(Instant::now()-VICTORY_RESEND_INTERVAL);
+        host.poll(Some(&run),true,false,false);
+        let mut resent_rewards=false;
+        while let Ok(cmd)=commands.try_recv() {
+            assert!(!matches!(cmd,Send::Broadcast(Order::Victory{..})));
+            if matches!(cmd,Send::Broadcast(Order::Rewards{epoch}) if epoch==host.epoch) {resent_rewards=true;}
+        }
+        assert!(resent_rewards,"host must resend Rewards while a peer has not reached map or hub");
+        // Once guest finishes picking rewards (map_ready), host stops resending Rewards.
+        let ready=Report::new(&run,host.epoch,true,true,true);
+        host.gate.report(2,ready).unwrap();
+        host.event.rewards_sent=Some(Instant::now()-VICTORY_RESEND_INTERVAL);
+        host.poll(Some(&run),true,false,false);
+        while let Ok(cmd)=commands.try_recv() {
+            assert!(!matches!(cmd,Send::Broadcast(Order::Rewards{..})|Send::Broadcast(Order::Victory{..})));
+        }
     }
     #[test]
     fn new_run_clears_previous_vote_combat_and_event_state_once() {

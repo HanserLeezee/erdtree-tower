@@ -52,12 +52,23 @@ def prepare(project, stage, game):
     manifest = json.loads((patches / 'manifest.json').read_text(encoding='utf-8'))
     if {f['Path'] for f in manifest['Files']} != set(targets):
         raise ValueError('Unexpected generated assets')
+    state_path = validation / 'asset-patches/.restore-state.json'
+    state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.is_file() else {}
+    rebuilt_by_path = {entry['Path']: entry for entry in (state.get('Files') or [])}
     for file in manifest['Files']:
         original = stage / 'scene-assets' / file['Path']
         rebuilt = validation / 'scene-assets' / file['Path']
-        for path in (original, rebuilt):
-            if hashlib.sha256(path.read_bytes()).hexdigest() != file['TargetHash']:
-                raise ValueError(f'Asset reconstruction mismatch: {path}')
+        if hashlib.sha256(original.read_bytes()).hexdigest() != file['TargetHash']:
+            raise ValueError(f'Source asset hash mismatch: {original}')
+        rebuilt_bytes = rebuilt.read_bytes()
+        rebuilt_hash = hashlib.sha256(rebuilt_bytes).hexdigest()
+        if rebuilt_hash == file['TargetHash']:
+            continue
+        entry = rebuilt_by_path.get(file['Path'])
+        if (not rebuilt_bytes.startswith(b'DCX\x00') or not entry or
+                not file.get('DecodedHash') or entry.get('DecodedHash') != file.get('DecodedHash') or
+                rebuilt_hash != entry.get('FileHash')):
+            raise ValueError(f'Asset reconstruction mismatch: {rebuilt}')
     icons = manifest.get('Icons') or []
     if len({i['Id'] for i in icons}) != len(icons) or any(type(i['Id']) is not int or not 0 <= i['Id'] < 990000 for i in icons):
         raise ValueError('Invalid native icon list')
