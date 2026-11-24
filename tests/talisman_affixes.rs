@@ -2,9 +2,16 @@ use erdtree_tower::{Run,Class,rewards,talismans};
 
 #[test]
 fn current_runs_roll_triggered_and_original_quality_talismans_with_floors() {
-    let triggered:std::collections::HashSet<u32>=include_str!("../scene-assets/talisman-definitions.tsv").lines()
-        .map(|l|l.split('\t').collect::<Vec<_>>()).filter(|p|p[6].contains("命中触发护符"))
-        .map(|p|0x20000000|p[0].parse::<u32>().unwrap()).collect();
+    let manifest:Vec<serde_json::Value>=serde_json::from_str(include_str!("../scene-assets/talisman-manifest.json")).unwrap();
+    let mut families=std::collections::BTreeMap::new();
+    for row in manifest.iter().filter(|r|r["onHit"]==true){
+        let tier=row["tier"].as_u64().unwrap();
+        assert!((2..=3).contains(&tier));
+        let id=0x20000000|row["id"].as_u64().unwrap() as u32;
+        families.insert((row["kind"].as_str().unwrap(),tier),id);
+    }
+    let triggered:std::collections::HashSet<_>=families.into_values().collect();
+    assert_eq!(triggered.len(),37);
     let mut seen=std::collections::HashSet::new();let mut passive=0;
     for seed in 0..1000 {
         let mut run=Run::new(seed,Class::Samurai);

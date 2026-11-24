@@ -250,7 +250,7 @@ function Invoke-StartupDiagnostics([string]$Root,[string]$GameDirectory,[switch]
                     $fmt = [IO.DriveInfo]::new($driveRoot).DriveFormat
                     Add-Line ("$($pair[0]) 所在磁盘 ($driveRoot) 文件系统: $fmt")
                     if ($fmt -and $fmt -ine 'NTFS') {
-                        [void]$suspects.Add("$($pair[0]) 位于 $fmt 分区（$driveRoot），不支持 NTFS 目录联接，会导致启动报“函数不正确”；请移动到 NTFS 分区后重试")
+                        [void]$suspects.Add("$($pair[0]) 位于 $fmt 分区（$driveRoot），不支持 NTFS 目录联接，会导致启动报「函数不正确」；请移动到 NTFS 分区后重试")
                     }
                 }
             } catch {}
