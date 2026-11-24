@@ -115,6 +115,18 @@ const SINGLE_CAP:u32=3;
 #[derive(Default,Debug,Clone,PartialEq)]
 pub struct Cycle {known:Vec<u32>,last:Option<u32>,pub layers:u32}
 impl Cycle {
+    /// 存盘格式：「层数;上一发;用过的魔法,…」
+    pub fn encode(&self)->String {
+        format!("{};{};{}",self.layers,self.last.map_or(String::new(),|v|v.to_string()),self.known.iter().map(u32::to_string).collect::<Vec<_>>().join(","))
+    }
+    pub fn decode(text:&str)->Option<Self> {
+        let mut parts=text.trim().splitn(3,';');
+        let layers=parts.next()?.parse().ok()?;
+        let last=match parts.next()? {""=>None,v=>Some(v.parse().ok()?)};
+        let known=parts.next()?.split(',').filter(|v|!v.is_empty()).map(str::parse).collect::<Result<Vec<u32>,_>>().ok()?;
+        let cycle=Self{known,last,layers};
+        (cycle.layers<cycle.cap().max(1)||cycle.known.len()<=1&&cycle.layers<=SINGLE_CAP).then_some(cycle)
+    }
     pub fn cap(&self)->u32 {3*self.known.len() as u32}
     pub fn hit(&mut self,spell:u32)->Outcome {
         let single=self.known.len()<=1;
@@ -134,7 +146,14 @@ impl Cycle {
     }
 }
 /// k 层时的伤害倍率
-pub fn layer_factor(layer:u32)->f32 {if layer<=2 {FIRST_LAYERS}else{LAYER_FLOOR+(FIRST_LAYERS-LAYER_FLOOR)*LAYER_DECAY.powi(layer as i32-2)}}
+/// 软上限：第 31–48 层每层的加成减半，第 49 层起只剩四分之一
+const SOFT_CAP:u32=30;
+const HARD_CAP:u32=48;
+pub fn layer_factor(layer:u32)->f32 {
+    let base=if layer<=2 {FIRST_LAYERS}else{LAYER_FLOOR+(FIRST_LAYERS-LAYER_FLOOR)*LAYER_DECAY.powi(layer as i32-2)};
+    let scale=if layer>HARD_CAP {0.25}else if layer>SOFT_CAP {0.5}else{1.0};
+    1.0+(base-1.0)*scale
+}
 pub fn multiplier(layers:u32)->f32 {(1..=layers).map(layer_factor).product()}
 
 /// 生成弹体时记下的一条：弹体编号、魔法（基础编号）、属于哪一次施法
@@ -157,6 +176,18 @@ struct Combat {cycle:Cycle,live:Vec<Live>,hp:Vec<(FieldInsHandle,i32)>,counted:V
 static HUD:AtomicU64=AtomicU64::new(0);
 fn publish_hud(layers:u32,cap:u32) {HUD.store((u64::from(layers)<<32)|u64::from(cap),Ordering::Relaxed);}
 static RUN_SEED:Mutex<Option<u64>>=Mutex::new(None);
+/// 叠层存盘：退出游戏、读档继续同一局（包括进入下一大层）时接着用。一行「种子 叠层」
+fn stacks_path()->std::path::PathBuf {super::LOG_PATH.with_file_name("starsurge-stacks.txt")}
+fn load_stacks(seed:u64)->Cycle {
+    std::fs::read_to_string(stacks_path()).ok().and_then(|text|{
+        let (s,cycle)=text.trim().split_once(' ')?;
+        (s.parse::<u64>().ok()?==seed).then(||Cycle::decode(cycle)).flatten()
+    }).unwrap_or_default()
+}
+fn save_stacks(seed:u64,cycle:&Cycle) {
+    let _=std::fs::write(stacks_path(),format!("{seed} {}",cycle.encode()));
+}
+fn clear_stacks() {let _=std::fs::remove_file(stacks_path());}
 static COMBAT:Mutex<Option<Combat>>=Mutex::new(None);
 /// 本机星辉术士的 FieldInsHandle（按 u64 读）；不是星辉术士时为 0
 static OWNER:AtomicU64=AtomicU64::new(0);
@@ -181,6 +212,15 @@ fn far_from_player(data:&[u8;0x110])->bool {
     let at=[0x80,0x84,0x88].map(|o|f32::from_le_bytes(data[o..o+4].try_into().unwrap()));
     let me=PLAYER_POS.each_ref().map(|v|f32::from_bits(v.load(Ordering::Relaxed)));
     at.iter().chain(me.iter()).all(|v|v.is_finite())&&me!=[0.0;3]&&distance(at,me)>FOLLOW_REACH
+}
+/// 玩家施法但归属记在别处的弹体，那个归属（10 秒内有效）
+static PROXIES:Mutex<Vec<(u64,Instant)>>=Mutex::new(Vec::new());
+fn proxy_of_mine(handle:u64)->bool {PROXIES.lock().is_ok_and(|p|p.iter().any(|(h,t)|*h==handle&&t.elapsed()<Duration::from_secs(10)))}
+/// 生成在玩家身边（FOLLOW_REACH 内）
+fn near_player(data:&[u8;0x110])->bool {
+    let at=[0x80,0x84,0x88].map(|o|f32::from_le_bytes(data[o..o+4].try_into().unwrap()));
+    let me=PLAYER_POS.each_ref().map(|v|f32::from_bits(v.load(Ordering::Relaxed)));
+    at.iter().chain(me.iter()).all(|v|v.is_finite())&&me!=[0.0;3]&&distance(at,me)<=FOLLOW_REACH
 }
 static SPAWNS:Mutex<Vec<Spawned>>=Mutex::new(Vec::new());
 static NEXT_CAST:AtomicU64=AtomicU64::new(1);
@@ -219,7 +259,16 @@ pub fn observe_spawn(data:&[u8;0x110]) {
     if owner==0 {return;}
     let bullet=i32::from_le_bytes(data[0x14..0x18].try_into().unwrap());
     // 命中后分裂出来的子弹体，生成数据里的归属可能不是玩家（岩石球就是这样）：是自己弹体的子弹体也照收
-    if from!=owner&&!SPAWNS.try_lock().is_ok_and(|s|s.iter().any(|p|hit_child(p.bullet)==Some(bullet)&&p.at.elapsed()<Duration::from_secs(5))) {return;}
+    // 有的魔法（如罪恶荆棘）弹体生成时归属不是玩家本人：魔法编号认得出、又生成在玩家身边的，也算自己的；记下这个归属，命中时 last_hit_by 可能就是它
+    if from!=owner&&!SPAWNS.try_lock().is_ok_and(|s|s.iter().any(|p|hit_child(p.bullet)==Some(bullet)&&p.at.elapsed()<Duration::from_secs(5))) {
+        let magic=i32::from_le_bytes(data[0x0c..0x10].try_into().unwrap());
+        let goods=i32::from_le_bytes(data[0x18..0x1c].try_into().unwrap());
+        if sorcery(goods).or_else(||sorcery(magic)).is_none()||!near_player(data) {return;}
+        if from!=0&&let Ok(mut proxies)=PROXIES.try_lock() {
+            proxies.retain(|(_,t)|t.elapsed()<Duration::from_secs(10));
+            if !proxies.iter().any(|(h,_)|*h==from)&&proxies.len()<16 {proxies.push((from,Instant::now()));}
+        }
+    }
     if bullet==HAIMA_BURST {return;}
     let behavior=i32::from_le_bytes(data[0x08..0x0c].try_into().unwrap());
     let magic=i32::from_le_bytes(data[0x0c..0x10].try_into().unwrap());
@@ -269,7 +318,7 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>) {
     let Ok(mut guard)=RUN_SEED.lock() else{return};
     // 旅程结束、换了职业：清掉一切；过场、切换房间时 run 暂时为空，只暂停，记录保留
     if run.is_some_and(|r|r.class!=Class::Astrologer||matches!(r.phase,Phase::Dead|Phase::Won)) {
-        if OWNER.swap(0,Ordering::Relaxed)!=0||guard.is_some() {end_combat(chr);}
+        if OWNER.swap(0,Ordering::Relaxed)!=0||guard.is_some() {end_combat(chr);clear_stacks();}
         *guard=None;return;
     }
     if !active(run,chr) {OWNER.store(0,Ordering::Relaxed);return;}
@@ -279,6 +328,17 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>) {
     OWNER.store(handle_bits(&chr.field_ins_handle),Ordering::Relaxed);
     {let q=chr.modules.physics.position;for (slot,v) in PLAYER_POS.iter().zip([q.0,q.1,q.2]) {slot.store(v.to_bits(),Ordering::Relaxed);}}
     *guard=Some(seed);
+    drop(guard);
+    // 叠层显示不依赖是否在战斗：每帧按当前记录（没有就读存盘）发布，和生命、专注、精力条一起显示
+    if let Ok(mut combat)=COMBAT.lock() {
+        let combat=combat.get_or_insert_with(||restore_combat(Some(seed)));
+        publish_hud(combat.cycle.layers,combat.cycle.cap().max(SINGLE_CAP));
+    }
+}
+fn restore_combat(seed:Option<u64>)->Combat {
+    let cycle=seed.map(load_stacks).unwrap_or_default();
+    if cycle.layers>0 {super::log(format!("STARSURGE stacks restored layers={} cap={}",cycle.layers,cycle.cap()));}
+    Combat{cycle,..Default::default()}
 }
 
 /// 把一行增伤写成「只对魔法有效、五种属性 ×multiplier」
@@ -347,7 +407,15 @@ fn native_hud_shown()->bool {
 pub fn draw_hud(ui:&hudhook::imgui::Ui,icon:&mut dyn FnMut(u32)->Option<hudhook::imgui::TextureId>,shown:bool) {
     let packed=HUD.load(Ordering::Relaxed);
     let (layers,cap)=((packed>>32) as u32,packed as u32);
-    let visible=shown&&OWNER.load(Ordering::Relaxed)!=0&&layers>0&&cap>0&&native_hud_shown();
+    // 只要是星辉术士、原生状态栏在显示就画（没有叠层时显示 0/3）
+    let visible=shown&&OWNER.load(Ordering::Relaxed)!=0&&cap>0&&native_hud_shown();
+    // 诊断：显示条件变化时记一行（查 ESC 菜单等场合不显示的原因）
+    {
+        static LAST:AtomicU64=AtomicU64::new(u64::MAX);
+        let state=unsafe {eldenring::cs::CSFeManImp::instance()}.ok().map_or(9,|fe|fe.hud_state as u64);
+        let key=u64::from(shown)|u64::from(OWNER.load(Ordering::Relaxed)!=0)<<1|u64::from(cap>0)<<2|state<<3;
+        if LAST.swap(key,Ordering::Relaxed)!=key {super::log(format!("STARSURGE_HUD shown={shown} owner={} cap={cap} layers={layers} hud_state={state} visible={visible}",OWNER.load(Ordering::Relaxed)!=0));}
+    }
     // 跟原生状态栏一样淡入（0.25 秒）淡出（0.4 秒）
     let alpha={
         let Ok(mut fade)=HUD_FADE.lock() else{return};
@@ -355,7 +423,7 @@ pub fn draw_hud(ui:&hudhook::imgui::Ui,icon:&mut dyn FnMut(u32)->Option<hudhook:
         fade.0=if visible {(fade.0+dt/0.25).min(1.0)}else{(fade.0-dt/0.4).max(0.0)};
         fade.0
     };
-    if alpha<=0.0||layers==0||cap==0 {return;}
+    if alpha<=0.0||cap==0 {return;}
     use crate::fancy_text::{Effect,Layer,Style,draw};
     let s=(ui.io().display_size[1]/1080.0).max(0.5);
     let [x,y,size]=HUD_LAYOUT.map(|v|v*s);
@@ -410,7 +478,8 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
     let owner=OWNER.load(Ordering::Relaxed);
     let Ok(mut guard)=COMBAT.lock() else{return};
     if owner==0 {return;}
-    let combat=guard.get_or_insert_with(Combat::default);
+    let seed=RUN_SEED.lock().ok().and_then(|s|*s);
+    let combat=guard.get_or_insert_with(||restore_combat(seed));
     let now=Instant::now();
     // 商人、事件房间等没有名单的场合：身边 60 米内所有活着的非玩家角色都算（名单敌人照旧在前）
     let foes:Vec<FieldInsHandle>={
@@ -418,10 +487,12 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         let scarab=watched_scarab();
         let players:Vec<FieldInsHandle>=world.player_chr_set.characters().map(|p|p.chr_ins.field_ins_handle).chain(world.main_player.iter().map(|p|p.chr_ins.field_ins_handle)).collect();
         let me=world.main_player.as_ref().map(|p|{let q=p.chr_ins.modules.physics.position;[q.0,q.1,q.2]});
-        if !multiplayer && let Some(me)=me {
+        // 联机时也扫（商人房的铃珠猎人、宝箱房的伏击等都不在名单里）；别人打的由 last_hit_by 排除
+        if let Some(me)=me {
             for chr in world.chr_sets.iter().flatten().flat_map(|set|set.characters()) {
                 let h=chr.field_ins_handle;
-                if players.contains(&h)||all.contains(&h)||scarab==Some(h)||chr.modules.data.hp<=0 {continue;}
+                // 测伤人偶、商人等不会动的角色不算（它们被设成不能移动）
+                if players.contains(&h)||all.contains(&h)||scarab==Some(h)||chr.modules.data.hp<=0||chr.debug_flags.disabled_movement() {continue;}
                 let q=chr.modules.physics.position;
                 if distance([q.0,q.1,q.2],me)<=NEARBY_REACH {all.push(h);}
             }
@@ -450,7 +521,10 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         let Some(chr)=world.chr_ins_by_handle(handle) else{continue};
         let hp=chr.modules.data.hp;let q=chr.modules.physics.position;let pos=[q.0,q.1+1.0,q.2];
         let before=match combat.hp.iter_mut().find(|(h,_)|h==handle) {Some(entry)=>std::mem::replace(&mut entry.1,hp),None=>{combat.hp.push((*handle,hp));continue;}};
-        if hp>=before || multiplayer && handle_bits(&chr.last_hit_by)!=owner {continue;}
+        // 联机：成员这边敌人的 last_hit_by 是空的（生命来自房主同步），这时只按自己的弹体认；记着别人打的就不算
+        let attacker=chr.last_hit_by;
+        if hp>=before || multiplayer && !attacker.is_empty() && handle_bits(&attacker)!=owner && !proxy_of_mine(handle_bits(&attacker)) {continue;}
+        let attacker_unknown=multiplayer&&attacker.is_empty();
         // 爆炸自己扣的血不算新的伤害判定：掉血里先扣掉它（0.6 秒内到账）
         let mut drop=before-hp;
         combat.pending.retain(|(_,_,t)|now.duration_since(*t)<Duration::from_millis(600));
@@ -467,6 +541,8 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         let near=pick(HIT_REACH,&|l|distance(l.pos,pos));
         // 贴脸施放时弹体可能在被看到之前就已命中：算给 1 秒内刚生成、还没算过的那一次施法
         let fresh=spawns.iter().rev().find(|s|now.duration_since(s.at)<=FRESH_CAST&&!combat.counted.contains(&s.cast)).map(|s|(s.spell,s.cast));
+        // 联机且不知道是谁打的：不用「刚施法」兜底，免得把队友的伤害算给自己
+        let fresh=fresh.filter(|_|!attacker_unknown);
         let nearest=along.filter(|(_,c)|!stale(*c)).or(near.filter(|(_,c)|!stale(*c))).or(fresh).or(along).or(near);
         if let Some((spell,cast))=nearest {hits.push((*handle,pos,drop,spell,cast));}
         else if spawns.iter().any(|s|now.duration_since(s.at)<=Duration::from_millis(1500))&&DIAG_MISSES.fetch_add(1,Ordering::Relaxed)<60 {
@@ -492,6 +568,7 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         if combat.counted.contains(&cast) {continue;}
         combat.counted.push(cast);if combat.counted.len()>64 {combat.counted.remove(0);}
         let outcome=combat.cycle.hit(spell);
+        if let Some(seed)=seed {save_stacks(seed,&combat.cycle);}
         super::log(format!("STARSURGE_HIT spell={spell} cast={cast} damage={damage} outcome={outcome:?} layers={} cap={}",combat.cycle.layers,combat.cycle.cap()));
         if outcome==Outcome::Burst {
             let hp=world.chr_ins_by_handle(&handle).map_or(0,|c|c.modules.data.hp);
@@ -508,7 +585,7 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
         }
     }
     let layers=combat.cycle.layers;
-    publish_hud(layers,combat.cycle.cap());
+    publish_hud(layers,combat.cycle.cap().max(SINGLE_CAP));
     if let Some(player)=world.main_player.as_mut() {apply_buff(&mut player.chr_ins,layers,combat);}
 }
 
@@ -551,6 +628,26 @@ mod tests {
         assert!(sorcery(4000).is_some(),"Glintstone Pebble");
         assert!(sorcery(6000).is_none(),"incantations are not sorceries");
         assert!(sorcery(-1).is_none());
+    }
+    #[test]
+    fn layer_bonus_slows_after_thirty_and_again_after_forty_eight() {
+        assert!((layer_factor(31)-1.0)*2.0-(layer_factor(30)-1.0)<0.01);
+        assert!((layer_factor(31)-1.0-(LAYER_FLOOR+(FIRST_LAYERS-LAYER_FLOOR)*LAYER_DECAY.powi(29)-1.0)*0.5).abs()<1e-6);
+        assert!((layer_factor(49)-1.0-(LAYER_FLOOR+(FIRST_LAYERS-LAYER_FLOOR)*LAYER_DECAY.powi(47)-1.0)*0.25).abs()<1e-6);
+        for (layers,expected) in [(30,12.26),(48,19.21),(60,22.30)] {
+            assert!((multiplier(layers)-expected).abs()<0.05,"{layers}: {}",multiplier(layers));
+        }
+    }
+    #[test]
+    fn stacks_survive_a_save_round_trip() {
+        let mut c=Cycle::default();
+        run(&mut c,"ABCAB");
+        assert_eq!(Cycle::decode(&c.encode()),Some(c.clone()));
+        assert_eq!(Cycle::decode(&Cycle::default().encode()),Some(Cycle::default()));
+        let mut single=Cycle::default();run(&mut single,"AAA");
+        assert_eq!(Cycle::decode(&single.encode()),Some(single));
+        assert_eq!(Cycle::decode("9;65;65,66"),None,"layers at or past the cap are rejected");
+        assert_eq!(Cycle::decode("garbage"),None);
     }
     use Outcome::*;
     fn run(c:&mut Cycle,spells:&str)->Vec<Outcome> {spells.bytes().map(|b|c.hit(u32::from(b))).collect()}
@@ -621,6 +718,6 @@ mod tests {
         assert!((layer_factor(3)-1.1775).abs()<0.0001);
         // 模拟表：5 层 2.24，8 层 3.13，11 层 4.06，14 层 5.05
         for (layers,expected) in [(5,2.24),(8,3.13),(11,4.06),(14,5.05)] {assert!((multiplier(layers)-expected).abs()<0.01,"{layers}: {}",multiplier(layers));}
-        assert!((2..40).all(|k|layer_factor(k+1)<layer_factor(k)||k<2)&&layer_factor(60)>1.05&&layer_factor(60)<1.051);
+        assert!((2..80).all(|k|layer_factor(k+1)<=layer_factor(k))&&layer_factor(60)>1.012&&layer_factor(60)<1.013,"soft cap: 49+ keeps a quarter of the 1.05 floor");
     }
 }
