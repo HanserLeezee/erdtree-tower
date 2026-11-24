@@ -163,6 +163,22 @@ pub fn spirit_level(id:u32)->Option<u8> {
     let base=spirit_base(id);
     (CATALOG.iter().any(|i|i.id==base&&i.kind==ItemKind::Spirit)).then(||(id-base) as u8)
 }
+/// 营地复活：取本局当前骨灰等级再加一，战死时的等级仅用于识别那份骨灰。
+pub fn camp_revival_target(run:&Run,source:u32)->Option<u32>{
+    spirit_level(source)?;
+    Some(spirit_base(source)+u32::from(spirit_level_now(run).saturating_add(1).min(SPIRIT_MAX)))
+}
+#[test]
+fn camp_revival_uses_current_progress(){
+    let mut run=Run::new(7,Class::Confessor);
+    let id=CATALOG.iter().find(|i|i.kind==ItemKind::Spirit).unwrap().id;
+    run.spirit_peak=Some(10);
+    assert_eq!(camp_revival_target(&run,id+2),Some(id+11));
+    run.weapon_peak=Some(75);
+    assert_eq!(camp_revival_target(&run,id+2),Some(id+16));
+    run.spirit_peak=Some(39);
+    assert_eq!(camp_revival_target(&run,id+39),Some(id+39));
+}
 /// 调灵：把一个骨灰升到 max(自身, 当前骨灰等级) + 1（最多 +39），低级骨灰一次追上来。
 pub fn spirit_tune_target(id:u32,peak:u8)->Option<u32> {
     let level=spirit_level(id)?;

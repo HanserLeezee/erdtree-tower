@@ -66,7 +66,7 @@ impl Checkpoint {
         next.act=self.act;next.seed=self.seed;next.schema=self.schema;next.initial_seed=Some(self.initial);
         next.nodes=crate::law_graph(self.seed,self.schema,self.law);next.visited=self.visited.clone();
         next.completed_nodes=self.completed_nodes;next.completed_battles=self.completed_battles;next.reached_layer=self.reached_layer;
-        next.phase=Phase::Map;next.checkpoint=None;next.retry_node=None;
+        next.phase=Phase::Map;next.checkpoint=None;next.retry_node=None;next.preparing_combat=None;
         next.regional_event=Default::default();next.shop_purchased=0;next.shop_stock=None;next.elite_buffs.clear();
         next.validate()?;Ok(next)
     }

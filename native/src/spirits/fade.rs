@@ -1,7 +1,7 @@
 use std::{collections::HashMap,sync::{LazyLock,Mutex}};
 use eldenring::cs::SummonBuddyManager;
 
-fn custom(param:i32)->bool {
+pub(super) fn custom(param:i32)->bool {
     param.checked_sub(1600000000).is_some_and(|n|n>=0
         &&n/40000<(erdtree_tower::rewards::CUSTOM_SPIRITS.len() as i32)&&n%1000<3)
 }

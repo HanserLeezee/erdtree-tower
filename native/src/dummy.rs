@@ -223,6 +223,9 @@ impl Dummy {
                 } else {
                     self.meter.hit(damage,now);
                 }
+                if super::debug_menu::enabled() {
+                    super::log(format!("DUMMY_DAMAGE target={handle:?} measured={damage} round_total={}",self.meter.current.total));
+                }
             }
             if hp<=0||chr.chr_flags1c5.death_flag() {
                 // 兜底（若无纯 no_dead 特效或即死效果绕过）：不掉卢恩，撤下后在原固定位置重新生成

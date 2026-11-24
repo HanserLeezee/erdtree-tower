@@ -139,6 +139,9 @@ impl Room {
     pub fn notice(&mut self,text:i32)->Result<(),String>{
         if let Some(talk)=self.talks.first_mut(){talk.dialog(text)?;} Ok(())
     }
+    pub fn waiting_revival(&self)->bool {self.talks.iter().any(|t|t.waiting_revival())}
+    pub fn set_revival_offers(&mut self,offers:&[(u32,u32)]){for talk in &mut self.talks{talk.set_revival_offers(offers);}}
+    pub fn take_revival(&mut self)->Option<(u32,u32)>{self.talks.iter_mut().find_map(|t|t.revival_request.take())}
     pub fn take_refill(&mut self)->Option<i32> {
         self.talks.iter_mut().find_map(|talk|talk.take_refill())
     }

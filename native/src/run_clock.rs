@@ -93,8 +93,8 @@ pub fn draw(ui:&hudhook::imgui::Ui,right_offset:f32) {
     let size=ui.io().display_size;
     let s=(size[1]/1080.0).clamp(0.65,1.8);
     let now=ui.time() as f32;
-    let label_px=15.0*s;
-    let digit_px=21.0*s;
+    let label_px=18.0*s;
+    let digit_px=25.0*s;
     let pad_x=14.0*s;
     let pad_y=9.0*s;
     let gap_x=18.0*s;

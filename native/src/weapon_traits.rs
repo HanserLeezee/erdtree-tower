@@ -44,10 +44,17 @@ pub struct State {
 
 impl State {
     pub fn sync(&mut self, player: &mut PlayerIns, now: f64) {
+        trace_equipment_identity(player, now);
         let asm = &player.chr_asm;
+        let ready = super::affix_stack::instances_ready();
+        let data = unsafe {player.player_game_data.as_ref()};
         let get = |hand| {
             if asm.equipment.arm_style == ChrAsmArmStyle::EmptyHanded { return None; }
-            weapon_trait(asm.equipment_param_ids[asm.equipment.active_weapon_slot(hand) as usize])
+            let slot = asm.equipment.active_weapon_slot(hand) as usize;
+            if ready {
+                return super::affix_stack::weapon_instance(data,slot).map(|w|(w.mask,w.tier));
+            }
+            weapon_trait(asm.equipment_param_ids[slot])
         };
         let hands = [get(ChrAsmHand::Left), get(ChrAsmHand::Right)];
         let attack = get(player.attack_reference_hand);
@@ -85,6 +92,8 @@ impl State {
             }
         }
         for (kind, desired) in [
+            (0, rank(attack,0).filter(|_|ready)),
+            (1, rank(attack,1).filter(|_|ready)),
             (CAST, rank(attack,CAST)),
             (CHARGE, rank(attack,CHARGE).filter(|_|charging)),
             (GUARD, strongest(GUARD).filter(|_|now<self.guard_until).map(|t|t.min(self.guard_tier))),
@@ -104,6 +113,37 @@ impl State {
         self.watch = held(RECOVERY);
         self.hp = hp;
         self.max_hp = max;
+    }
+}
+
+// Opt-in, read-only comparison of the two native identifiers across acquisition,
+// upgrades, storage moves and reloading a character.
+fn trace_equipment_identity(player:&PlayerIns, now:f64) {
+    use eldenring::cs::ItemCategory;
+    use std::sync::Mutex;
+    type Entry=(bool,u32,u32,u32,u32);
+    static ENABLED:LazyLock<bool>=LazyLock::new(||crate::options::dir().join("weapon-instance-trace.enable").is_file());
+    static LAST:Mutex<(f64,Option<(u32,Vec<Entry>)>)>=Mutex::new((-1.0,None));
+    if !*ENABLED {return;}
+    let Ok(mut last)=LAST.try_lock() else{return};
+    if now>=last.0 && now-last.0<1.0 {return;}
+    last.0=now;
+    let data=unsafe {player.player_game_data.as_ref()};
+    let bag=&data.equipment.equip_inventory_data;
+    let mut rows=Vec::new();
+    for (stored,inventory) in std::iter::once((false,bag)).chain(data.storage.iter().map(|s|(true,&**s))) {
+        for entry in inventory.items_data.normal_entries().iter().filter_map(|e|e.as_option()) {
+            let tag=match entry.item_id.category(){ItemCategory::Accessory=>0x20000000,ItemCategory::Weapon=>0,_=>continue};
+            if entry.quantity>0 {
+                rows.push((stored,tag|entry.item_id.param_id(),entry.sort_id,entry.gaitem_handle.selector(),entry.quantity));
+            }
+        }
+    }
+    rows.sort_unstable();
+    let snapshot=(data.character_id,rows);
+    if last.1.as_ref()!=Some(&snapshot) {
+        crate::log(format!("EQUIPMENT_INSTANCE character={} (stored,item,sort,handle,quantity)={:?}",snapshot.0,snapshot.1));
+        last.1=Some(snapshot);
     }
 }
 

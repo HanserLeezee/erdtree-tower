@@ -121,6 +121,7 @@ mod seamless_probe;
 mod seamless;
 mod steam_messages;
 mod passives;
+mod shadow_archery;
 mod star_stream;
 mod bgm;
 mod ailments;
@@ -144,6 +145,8 @@ mod scenery;
 mod spirit_tune;
 mod dual_bosses;
 mod affix_stack;
+mod instance_description;
+mod card_affixes;
 mod weapon_traits;
 mod sfx;
 
@@ -663,7 +666,7 @@ impl ImguiRenderLoop for TowerPreview {
         if !run_screen::active()&&options::pressed(ui,Hotkey::Archive)&&!fighting&&!ui.io().want_text_input&&runtime::PLAYER_READY.load(Ordering::Relaxed) {run_screen::archive_entry();}
         let rewards=&mut self.rewards;
         // 癫火舞会：跳舞时只画舞会画面（它自己接管输入）
-        let run_screen=dance_ui::draw(ui)||custom_event_ui::draw(ui)||run_screen::draw(ui,&mut |icon|rewards.icon(icon));
+        let run_screen=dance_ui::draw(ui)||run_screen::draw(ui,&mut |icon|rewards.icon(icon));
         if options::pressed(ui,Hotkey::Debug) {debug_menu::toggle();}
         self.debug.draw(ui,view.as_ref());
         // 战斗顶部 HUD（原指南针位置：Boss 词条、护盾预警、苦难律法限时）
@@ -825,6 +828,7 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
         }
         if let Err(error)=unsafe {level_cost::install()} {log(format!("Linear leveling unavailable: {error}"));}
         if let Err(error)=unsafe {smith::install()} {log(format!("Smith reinforcement unavailable: {error}"));}
+        if let Err(error)=instance_description::install() {log(format!("Instance descriptions unavailable: {error}"));}
         if let Err(error)=unsafe {spirits::install()} {log(format!("Spirit use trace unavailable: {error}"));}
         if let Err(error)=unsafe {star_stream::install()} {log(format!("Star stream unavailable: {error}"));}
         if let Err(error)=unsafe {radahn_entity::install()} {log(format!("Radahn event binding unavailable: {error}"));}

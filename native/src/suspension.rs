@@ -15,6 +15,7 @@ pub fn notice(text:impl Into<String>) {
     }
 }
 fn notice_persistent(text:&str)->bool {
+    if text=="已取消等待暂退。"{return false;}
     text.contains("等待")||text.contains("正在")||text.contains("分离迷雾")
         ||text.contains("已返回大赐福")||text.contains("请勿强退")||text.contains("请勿强制关闭")
 }

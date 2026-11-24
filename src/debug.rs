@@ -49,6 +49,7 @@ impl Run {
             while let Some(before)=previous[*path.last().unwrap()] {path.push(before);}
             path.reverse();path
         };
+        self.preparing_combat=None;
         self.visited=path;
         self.reached_layer=self.visited.last().map_or(0,|&id|self.nodes[id].layer+1);
         self.regional_event=Default::default();self.shop_purchased=0;self.shop_stock=None;self.checkpoint=None;
@@ -62,7 +63,7 @@ impl Run {
         for step in 2..=act {seed=crate::mix(seed^u64::from(step));}
         if act<self.act {self.larval_gift=Default::default();}
         self.act=act;self.seed=seed;self.schema=7;self.nodes=crate::law_graph(seed,self.schema,self.law);
-        self.visited.clear();self.reached_layer=0;self.phase=Phase::Map;
+        self.visited.clear();self.reached_layer=0;self.phase=Phase::Map;self.preparing_combat=None;
         self.hp=self.max_hp;self.flasks=self.flask_limit;
         self.regional_event=Default::default();self.shop_purchased=0;self.shop_stock=None;self.checkpoint=None;
         if let Some(old)=&self.contract {self.contract=Some(old.next_act(self.reward_seed(),self.class,act));}

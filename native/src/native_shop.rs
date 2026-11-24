@@ -69,7 +69,10 @@ fn final_price(run:&Run,base:i32)->i32 {
 }
 fn refresh_special_prices(stock:&mut [Stock],run:&Run) {
     for item in stock.iter_mut().filter(|s|s.kind==3) {
-        let base=match item.id {8000=>2500,8970..=8974=>6000,id if id==erdtree_tower::elite::TEAR as i32=>5000,_=>continue};
+        let base=match item.id {
+            8000=>2500,8970..=8974=>6000,id if id==erdtree_tower::elite::TEAR as i32=>5000,
+            id=>match shop_ember(id){Some(ember)=>weapon_price(ember.quality()),None=>continue},
+        };
         item.price=final_price(run,base);
     }
 }
@@ -468,7 +471,7 @@ fn additional_stock(run:&Run,visit:usize,existing:&[Stock])->Vec<Stock> {
     let ember=run.ember_rewards.then(||embers::offer_by_quality(seed,&run.embers,embers::carries_spirit(run),embers::carries_catalyst(run),
         Some(run.class),embers::odds(erdtree_tower::affixes::quality_odds(run)))).flatten();
     let mut rows=vec![Stock{kind:0,id:51000000,price:100,quantity:-1},
-        Stock{kind:3,id:(super::ember_notice::GOODS_BASE+ember.map_or(0,|e|e.index()) as u32) as i32,price:weapon_price(3),quantity:i16::from(ember.is_some())}];
+        Stock{kind:3,id:(super::ember_notice::GOODS_BASE+ember.map_or(0,|e|e.index()) as u32) as i32,price:ember.map_or(0,|e|weapon_price(e.quality())),quantity:i16::from(ember.is_some())}];
     let armor=CATALOG.iter().filter(|i|i.kind==ItemKind::Armor&&erdtree_tower::dlc::item_allowed(i.id)
         &&!existing.iter().any(|s|s.kind==1&&erdtree_tower::affixes::base(0x10000000|s.id as u32)==i.id))
         .map(|i|Stock{kind:1,id:(i.id&0x0fffffff) as i32,price:1500,quantity:1}).collect();
@@ -478,18 +481,44 @@ fn shop_ember(id:i32)->Option<erdtree_tower::embers::Ember>{
     let index=(id as u32).checked_sub(super::ember_notice::GOODS_BASE)?;
     erdtree_tower::embers::Ember::ALL.into_iter().find(|e|e.index()==index as usize)
 }
+// Stock and saved shops use the display ID. Ordinary goods handles only
+// preserve 23 selector bits, so sell the matching low-ID inventory row.
+fn ember_receipt(id:u32)->u32 { id & 0x7fffff }
 #[test]
-fn shop_ember_uses_gold_weapon_price_and_skips_owned_and_unavailable_embers(){
+fn shop_ember_receipts_fit_inventory_and_are_distinct(){
+    use eldenring::cs::{GaitemCategory,GaitemHandle};
+    let mut ids=std::collections::HashSet::new();
+    for ember in erdtree_tower::embers::Ember::ALL {
+        let receipt=ember_receipt(super::ember_notice::GOODS_BASE+ember.index() as u32);
+        let handle=GaitemHandle::from_parts(receipt,GaitemCategory::Goods);
+        assert!(!handle.is_indexed());assert_eq!(handle.selector(),receipt);assert!(ids.insert(receipt));
+    }
+}
+#[test]
+fn shop_ember_uses_its_quality_price_and_skips_owned_and_unavailable_embers(){
     use erdtree_tower::{Class,embers::Ember};
     for class in Class::PLAYABLE {
         let mut run=Run::new(42,class);
         let offered=|run:&Run|additional_stock(run,0,&[]).into_iter().find(|i|shop_ember(i.id).is_some()).unwrap();
         let first=offered(&run);
-        assert_eq!(first,offered(&run));assert_eq!((first.price,first.quantity),(weapon_price(3),1));
+        assert_eq!(first,offered(&run));assert_eq!((first.price,first.quantity),(weapon_price(shop_ember(first.id).unwrap().quality()),1));
         run.embers.push(shop_ember(first.id).unwrap());
         assert_ne!(offered(&run).id,first.id);
         run.embers=Ember::ALL.to_vec();assert_eq!(offered(&run).quantity,0);
     }
+}
+#[test]
+fn saved_shop_ember_prices_follow_quality_without_refilling_stock() {
+    use erdtree_tower::{Class,embers::Ember};
+    let mut run=Run::new(7,Class::Samurai);
+    let row=|ember:Ember,quantity|Stock{kind:3,id:(super::ember_notice::GOODS_BASE+ember.index() as u32) as i32,price:8000,quantity};
+    let mut rows=[row(Ember::Execution,1),row(Ember::Tent,0)];
+    refresh_special_prices(&mut rows,&run);
+    assert_eq!((rows[0].price,rows[1].price),(5000,8000));
+    run.law=run.law.toggle(21);
+    refresh_special_prices(&mut rows,&run);
+    refresh_special_prices(&mut rows,&run);
+    assert_eq!((rows[0].price,rows[1].price,rows[1].quantity),(6000,9600,0));
 }
 fn affix_spell(run:&Run,visit:usize,slot:usize,item:&mut Stock)->bool {
     let original=0x40000000|item.id as u32;
@@ -653,7 +682,12 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
     let mut shop_items=Vec::with_capacity(stock.len());
     for (i,item) in stock.iter().enumerate() {
         let custom=item.kind==0&&item.quantity==1&&super::random_ashes::eligible(granted[i] as u32);
-        shop_items.push(if custom {(super::random_ashes::shop_weapon(params,i as u32,granted[i] as u32)?,5)}else{(granted[i],item.kind)});
+        let equip=if item.kind==3 && shop_ember(item.id).is_some(){
+            let receipt=ember_receipt(item.id as u32);
+            params.get::<EquipParamGoods>(receipt).ok_or("缺少商店余烬道具参数，请更新 regulation.bin")?;
+            (receipt as i32,item.kind)
+        }else if custom {(super::random_ashes::shop_weapon(params,i as u32,granted[i] as u32)?,5)}else{(granted[i],item.kind)};
+        shop_items.push(equip);
     }
     for (i, item) in stock.iter().enumerate() {
         let row = params.get_mut::<ShopLineupParam>(GOODS + i as u32).unwrap();
@@ -883,7 +917,8 @@ pub fn redeem_ember(run:&mut Run,node:usize,data:&mut PlayerGameData)->Result<()
         if kind!=3{return None;}shop_ember(id).filter(|e|qty>0||run.embers.contains(e)).map(|e|(id as u32,e))
     })) else{return Ok(())};
     // Read the purchaser's inventory, since party members can observe each other's sold counters.
-    if super::loot::count(data,0x40000000|id)==0{return Ok(());}
+    let receipt=ember_receipt(id);
+    if super::loot::count(data,0x40000000|receipt)==0 && super::loot::count(data,0x40000000|id)==0{return Ok(());}
     if !run.embers.contains(&ember){
         let mut next=run.clone();next.embers.push(ember);
         super::runtime::record_checked(&next)?;*run=next;
@@ -891,7 +926,7 @@ pub fn redeem_ember(run:&mut Run,node:usize,data:&mut PlayerGameData)->Result<()
     }
     for inventory in std::iter::once(&mut data.equipment.equip_inventory_data).chain(data.storage.as_mut().map(|s|&mut **s)){
         let bag=&mut inventory.items_data;
-        let remove=|e:&mut eldenring::cs::EquipInventoryDataListEntry|{if e.item_id.category()==ItemCategory::Goods&&e.item_id.param_id()==id{e.quantity=0;}};
+        let remove=|e:&mut eldenring::cs::EquipInventoryDataListEntry|{if e.item_id.category()==ItemCategory::Goods&&[receipt,id].contains(&e.item_id.param_id()){e.quantity=0;}};
         bag.normal_entries_mut().iter_mut().non_empty().for_each(remove);
         bag.key_entries_mut().iter_mut().non_empty().for_each(remove);
         bag.multiplay_key_entries_mut().iter_mut().non_empty().for_each(remove);

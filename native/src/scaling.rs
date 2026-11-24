@@ -86,6 +86,41 @@ pub fn merchant(chr:&mut eldenring::cs::ChrIns,run:&erdtree_tower::Run,node:usiz
     Ok(())
 }
 fn ready(step:u8)->bool {unsafe {SoloParamRepository::instance()}.is_ok_and(|p|p.get::<SpEffectParam>((GROWTH_FIRST+i32::from(step)) as u32).is_some())}
+
+#[derive(Default)]
+struct BossSamples {
+    room: Option<(u64,u8,usize)>,
+    last: Vec<(FieldInsHandle,i32,usize,std::time::Instant,bool)>,
+}
+
+pub fn trace_boss_hp(world:&WorldChrMan, run:&erdtree_tower::Run, node:usize, role:&str, handles:&[FieldInsHandle]) {
+    use eldenring::cs::{CSSessionManager,NpcParam};
+    if !run.nodes.get(node).is_some_and(|n| n.kind==erdtree_tower::NodeKind::Boss) {return;}
+    thread_local! {static SAMPLES:std::cell::RefCell<BossSamples>=Default::default();}
+    SAMPLES.with_borrow_mut(|state| {
+        let key=(run.seed,run.act,node);
+        if state.room!=Some(key) {state.room=Some(key);state.last.clear();}
+        let players=unsafe {CSSessionManager::instance()}.map_or(0,|s|s.players.len());
+        for handle in handles {
+            let Some(chr)=world.chr_ins_by_handle(handle) else{continue};
+            let vitals=&chr.modules.data;
+            if vitals.max_hp<=0 {continue;}
+            if let Some((_,max,count,start,settled))=state.last.iter_mut().find(|s|s.0==*handle) {
+                let due=!*settled && start.elapsed().as_secs()>=2;
+                if *max==vitals.max_hp && *count==players && !due {continue;}
+                *settled|=due;*max=vitals.max_hp;*count=players;
+            } else {state.last.push((*handle,vitals.max_hp,players,std::time::Instant::now(),false));}
+            let params=unsafe {SoloParamRepository::instance()}.ok();
+            let base_hp=params.and_then(|p|p.get::<NpcParam>(chr.npc_param_id as u32)).map(|p|p.hp());
+            let effects:Vec<_>=chr.special_effect.entries().filter_map(|e|{
+                let rate=params?.get::<SpEffectParam>(e.param_id as u32)?.max_hp_rate();
+                (rate!=1.0).then_some((e.param_id,rate))
+            }).collect();
+            let rules=super::party_compat::profile().and_then(|r|r.as_ref().ok()).map(|p|(p.rules[4],p.rules[7]));
+            super::log(format!("BOSS_HP role={role} session_players={players} act={} node={node} growth={} npc={} entity={} base_hp={base_hp:?} hp={}/{} enemy_boss_settings={rules:?} hp_effects={effects:?}",run.act,erdtree_tower::scaling::growth_step(run,node),chr.npc_param_id,chr.event_entity_id,vitals.hp,vitals.max_hp));
+        }
+    });
+}
 /// 新旅程按本幕进度给每个刷出的敌人施加一次递增效果（生命与攻击），
 /// 并在无缝联机下兜底核验 Boss 多人缩放（与 MultiPlayCorrectionParam.bOverrideSpEffect=1 双保险）：
 /// 联机时房主与成员都在本机给同步过来的敌人挂上同一个效果：这个效果不随网络同步，只有房主挂时，

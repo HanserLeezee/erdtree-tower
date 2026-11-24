@@ -26,6 +26,7 @@ pub mod stormveil;
 pub mod rewards;
 pub mod physick_supply;
 pub mod affixes;
+pub mod weapon_rolls;
 pub mod talismans;
 pub mod boss_affixes;
 pub mod leech;
@@ -327,6 +328,11 @@ pub struct Run {
     /// 决定奖励与商店里骨灰的最高等级（+1）；旧存档没有这一项时沿用武器换算
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub spirit_peak: Option<u8>,
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub fallen_ashes: Vec<u32>,
+    /// In-flight camp revival: act, node, lost ash, granted ash, free stone count before use.
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub camp_revival: Option<(u8,usize,u32,u32,Option<u32>)>,
     /// 骨灰规则：1 起刷出的骨灰最高为当前骨灰等级（不再 +1，并计入武器等价强化等级）；更早的存档为 0
     #[serde(default)]
     pub spirit_rules: u8,
@@ -378,6 +384,8 @@ pub struct Run {
     pub retries: u8,
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub retry_node: Option<usize>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub preparing_combat: Option<usize>,
     checkpoint: Option<CombatCheckpoint>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -478,6 +486,21 @@ mod map_compatibility {
         let mut value:serde_json::Value=serde_json::from_str(&Run::new(42,Class::Samurai).encode().unwrap()).unwrap();
         value.as_object_mut().unwrap().remove("retries").unwrap();
         assert_eq!(Run::decode(&value.to_string()).unwrap().retries,0);
+    }
+    #[test]
+    fn precombat_destination_survives_reload_without_consuming_the_floor() {
+        let mut run=Run::new(42,Class::Samurai);
+        let node=run.available().into_iter().find(|&n|run.nodes[n].kind.combat()).unwrap();
+        let before=run.clone();
+        run.preparing_combat=Some(node);
+        let mut loaded=Run::decode(&run.encode().unwrap()).unwrap();
+        loaded.resume_from_hub().unwrap();
+        assert_eq!(loaded.available(),vec![node]);
+        assert_eq!(loaded.phase,Phase::Map);assert_eq!(loaded.retries,before.retries);
+        assert_eq!(loaded.visited,before.visited);assert_eq!(loaded.checkpoint,before.checkpoint);
+        loaded.enter(node).unwrap();assert!(loaded.preparing_combat.is_none());
+        let mut expected=before;expected.enter(node).unwrap();assert_eq!(loaded,expected);
+        run.preparing_combat=Some(usize::MAX);assert!(run.validate().is_err());
     }
     #[test]
     fn lingering_grace_keeps_room_across_reload_and_rejects_another_route() {
@@ -777,6 +800,8 @@ impl Run {
             casting_tools: None,
             weapon_peak: None,
             spirit_peak: Some(0),
+            fallen_ashes: Vec::new(),
+            camp_revival: None,
             spirit_rules: 1,
             spirit_fixed_levels: true,
             class,
@@ -807,6 +832,7 @@ impl Run {
             bells: Default::default(),
             retries: RETRIES,
             retry_node: None,
+            preparing_combat: None,
             checkpoint: None,
         }
     }
@@ -867,7 +893,7 @@ impl Run {
     pub fn align_party_start(&mut self,seed:u64)->RuleResult<()> {
         self.validate()?;
         if self.seed==seed {return Ok(());}
-        if self.act!=1||!self.visited.is_empty()||self.phase!=Phase::Map {
+        if self.act!=1||!self.visited.is_empty()||self.phase!=Phase::Map||self.preparing_combat.is_some() {
             return Err("已有旅程不能替换路线，请从大赐福开始共同旅程".into());
         }
         let mut next=self.clone();next.seed=seed;next.initial_seed=Some(seed);next.schema=7;next.nodes=law_graph(seed,7,next.law);
@@ -878,7 +904,7 @@ impl Run {
         if self.phase != Phase::Map || self.contract_pending() {
             return vec![];
         }
-        self.retry_node.map_or_else(||self.next_route(),|id|vec![id])
+        self.retry_node.or(self.preparing_combat).map_or_else(||self.next_route(),|id|vec![id])
     }
 
     fn next_route(&self) -> Vec<usize> {
@@ -896,6 +922,7 @@ impl Run {
         }
         // 死亡重试回到已经动过的事件：保留“已结束”，不重新抽事件（否则能重选试炼、再领一次奖）
         let settled=self.retry_node==Some(id)&&self.regional_event.settled;
+        self.preparing_combat=None;
         self.retry_node=None;
         self.reached_layer=self.nodes[id].layer+1;
         self.shop_purchased = 0;self.shop_stock=None;
@@ -1299,7 +1326,7 @@ impl Run {
         true
     }
     pub fn end_on_death(&mut self) {
-        self.hp=0;self.phase=Phase::Dead;self.checkpoint=None;self.retry_node=None;
+        self.hp=0;self.phase=Phase::Dead;self.checkpoint=None;self.retry_node=None;self.preparing_combat=None;
     }
 
     pub fn decode(json: &str) -> RuleResult<Self> {
@@ -1472,6 +1499,7 @@ impl Run {
         };
         if current_id.is_some_and(|id| !route.contains(&id))
             || self.retry_node.is_some_and(|id|self.phase!=Phase::Map||!route.contains(&id))
+            || self.preparing_combat.is_some_and(|id|self.phase!=Phase::Map||!route.contains(&id)||!self.nodes[id].kind.combat()||self.retry_node.is_some_and(|n|n!=id))
             || (!matches!(self.phase, Phase::Combat { .. }) && self.checkpoint.is_some())
             || (self.hp == 0 && self.phase != Phase::Dead)
             || (self.shop_purchased != 0

@@ -380,6 +380,9 @@ impl Menu {
         }
     }
     fn items(&mut self,ui:&Ui) {
+        if PARTY_ROLE.load(Ordering::Relaxed)==0 && ui.button(crate::i18n::t("词条对照：领取两把传说匕首和两枚史诗红琥珀链坠")) {
+            for id in [160030000,160030000,537970914,537970914] { send(Command::Item(id)); }
+        }
         // 传说武器流光：配色只在本次游戏内生效；“预览”让任意近战武器都发光
         ui.text(crate::i18n::t("传说武器流光"));
         let labels:Vec<_>=crate::weapon_glow::Style::ALL.iter().map(|s|s.label()).collect();

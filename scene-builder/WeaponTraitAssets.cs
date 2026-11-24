@@ -31,6 +31,92 @@ static class WeaponTraitAssets {
     static int Specialty(int family)=>family switch {11 or 12 or 13=>0,>=40 and <=44=>1,3 or 8 or 66=>2,33 or 34=>3,
         4 or 15 or 23=>4,30 or 31 or 32 or 62=>5,_=>-1};
     static ulong Mix(ulong n){unchecked{n=(n^(n>>30))*0xbf58476d1ce4e5b9UL;n=(n^(n>>27))*0x94d049bb133111ebUL;return n^(n>>31);}}
+    public static void InstanceText(string input,string output,string catalogs) {
+        var weapons=File.ReadLines(Path.Combine(catalogs,"affix-v2-audit.tsv")).Skip(1).Select(l=>l.Split('\t'))
+            .Where(a=>a[2]=="weapon").ToDictionary(a=>int.Parse(a[0]),a=>a[8].Split(',',StringSplitOptions.RemoveEmptyEntries).Length);
+        var accessories=File.ReadLines(Path.Combine(catalogs,"talisman-passives.tsv")).Select(l=>l.Split('\t'))
+            .ToDictionary(a=>int.Parse(a[0]),a=>a[3].Split(',').Length);
+        foreach(var lang in new[]{"zhocn","zhotw","engus"}) {
+            var path=Path.Combine("msg",lang,"item_dlc02.msgbnd.dcx");
+            var b=BND4.Read(Path.Combine(input,path));
+            foreach(var file in b.Files) {
+                var name=Path.GetFileNameWithoutExtension(file.Name).Split("_dlc")[0];
+                var counts=name switch {"WeaponInfo" or "WeaponCaption"=>weapons,"AccessoryInfo" or "AccessoryCaption"=>accessories,_=>null};
+                if(counts==null)continue;
+                var table=FMG.Read(file.Bytes);
+                foreach(var entry in table.Entries) {
+                    if(!counts.TryGetValue(entry.ID,out var count)||count==0||string.IsNullOrEmpty(entry.Text))continue;
+                    var block=entry.Text;
+                    var lore="";
+                    var split=block.IndexOf("\n\n",StringComparison.Ordinal);
+                    if(name.EndsWith("Caption") && split>=0 && AffixTextFix.IsAffixTop(block)){
+                        lore=block[split..];block=block[..split];
+                    }
+                    var suffix=Regex.Match(block,@"(?:</font>)+$").Value;
+                    string note=lang switch {"zhocn"=>$"随机附加词条 ×{count}，装备后在路线图构筑面板查看。","zhotw"=>$"隨機附加詞條 ×{count}，裝備後在路線圖構築面板查看。",_=>$"Random affixes: {count}. Equip to inspect in the route map's build panel."};
+                    var text=block[..^suffix.Length];
+                    if(text.EndsWith(note,StringComparison.Ordinal))continue;
+                    var lines=text.Split('\n');
+                    if(lines.Length<count)throw new Exception($"Unexpected {lang} {name} {entry.ID}");
+                    if(lines.Length==count)note=Regex.Match(text,@"^(?:<font [^>]+>)+").Value+note;
+                    entry.Text=string.Join("\n",lines.SkipLast(count).Append(note))+suffix+lore;
+                }
+                file.Bytes=table.Write();
+            }
+            var dest=Path.Combine(output,path);
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);b.Write(dest);
+        }
+    }
+    public static void Instances(string input,string output,string defs) {
+        Directory.CreateDirectory(output);
+        var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
+        PARAM Read(string name,string def,out BinderFile file) {
+            file=reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name)==name);
+            var p=PARAM.Read(file.Bytes);p.ApplyParamdef(PARAMDEF.XmlDeserialize(Path.Combine(defs,def+".xml")));return p;
+        }
+        var weapons=Read("EquipParamWeapon","EquipParamWeapon",out var weaponFile);
+        var effects=Read("SpEffectParam","SpEffect",out var effectFile);
+        var attacks=Read("AtkParam_Pc","AtkParam",out _);
+        var behavior=Read("BehaviorParam_PC","BehaviorParam",out _);
+        var marked=attacks.Rows.Where(r=>Enumerable.Range(0,5).Any(i=>I(r,"spEffectId"+i)==Effect+10)).Select(r=>r.ID).ToHashSet();
+        var working=behavior.Rows.Where(r=>I(r,"refType")==0&&marked.Contains(I(r,"refId"))).Select(r=>I(r,"variationId")).ToHashSet();
+        var specs=File.ReadLines(Path.Combine(input,"affix-v2-audit.tsv")).Skip(1).Select(l=>l.Split('\t')).Where(a=>a[2]=="weapon").ToDictionary(a=>int.Parse(a[0]));
+        var all=weapons.Rows.ToDictionary(r=>r.ID);
+        var ice=new SortedSet<int>();
+        foreach(var row in weapons.Rows) {
+            int id=row.ID/10000*10000;
+            if(!specs.TryGetValue(id,out var spec))continue;
+            int basis=int.Parse(spec[1]);
+            if(Specialty(basis/1000000)==2&&working.Contains(I(row,"behaviorVariationId")))ice.Add(row.ID);
+            var original=all[basis+row.ID-id];
+            foreach(string field in new[]{"residentSpEffectId","residentSpEffectId1","residentSpEffectId2"}) {
+                int value=I(row,field);
+                if(value is >=9850000 and <9850210 || value>=Marker && value<Marker+36) {
+                    if(value>=Marker && value<Marker+8) {
+                        string stat=value<Marker+4?"attackBaseStamina":"bowDistRate";
+                        Set(row,stat,I(original,stat));
+                    }
+                    Set(row,field,-1);
+                }
+            }
+        }
+        for(int k=0;k<2;k++)for(int t=0;t<4;t++) {
+            int id=Effect+t*16+k;
+            var source=effects.Rows.Single(r=>r.ID==Marker+k*4+t);
+            var row=effects.Rows.SingleOrDefault(r=>r.ID==id);
+            if(row==null){row=new PARAM.Row(source){ID=id,Name="Tower instance trait "+id};effects.Rows.Add(row);}
+            else if(row.Name!="Tower instance trait "+id)throw new Exception($"Effect collision {id}");
+            if(k==0)Set(row,"staminaAttackRate",1+Values[k][t]/100f);
+            else Set(row,"bowDistRate",Values[k][t]);
+        }
+        effects.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));
+        effectFile.Bytes=effects.Write();weaponFile.Bytes=weapons.Write();
+        var dest=Path.Combine(output,"regulation.bin");
+        SoulsFormats.Cryptography.RegulationDecryptor.EncryptERRegulation(dest,reg);
+        if(new FileInfo(dest).Length>=4799*1024)throw new Exception("regulation.bin exceeds budget");
+        File.WriteAllLines(Path.Combine(output,"weapon-instance-ice.tsv"),ice.Select(x=>x.ToString()));
+        Console.WriteLine($"Prepared {specs.Count} weapon variants, {ice.Count} charged-slash rows.");
+    }
     public static void Build(string input,string output,string defs) {
         Directory.CreateDirectory(output);
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));

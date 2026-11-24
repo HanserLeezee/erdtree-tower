@@ -691,6 +691,12 @@ mod tests {
         for i in 1..BATTLEMAGE_WEAPONS as u32 {run.battlemage_convert(3000000+i*100,0).unwrap();}
         assert!(run.battlemage_convert(9000000,0).is_err(),"at most two weapons");
         assert_eq!(crate::Run::decode(&run.encode().unwrap()).unwrap().battlemage,run.battlemage);
+        assert_eq!(run.battlemage.len(),2);
+        for i in 2..BATTLEMAGE_MAX_SLOTS {run.battlemage.push((4000000+i as u32*100,0));}
+        let mut old=crate::Run::decode(&run.encode().unwrap()).unwrap();
+        assert_eq!(old.battlemage,run.battlemage);
+        assert!(old.battlemage_convert(9000000,0).is_err());
+        assert!(old.battlemage_convert(2000000,0).is_ok());
         assert!(Ember::Battlemage.quality()==3&&Ember::Battlemage.classes()==Some(&[crate::Class::Astrologer,crate::Class::Prophet][..]));
     }
     #[test]

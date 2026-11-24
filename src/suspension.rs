@@ -7,7 +7,7 @@ impl Point {
     pub fn of(run:&Run)->Option<Self> {
         if run.phase!=Phase::Map||run.contract_pending(){return None;}
         let route=serde_json::to_vec(&run.nodes).ok()?.into_iter().fold(0xcbf29ce484222325u64,|h,b|(h^u64::from(b)).wrapping_mul(0x100000001b3));
-        Some(Self{seed:run.seed,initial_seed:run.initial_seed.unwrap_or(run.seed),act:run.act,route,visited:run.visited.clone(),retry:run.retry_node,law:run.law.code(),endless:run.endless})
+        Some(Self{seed:run.seed,initial_seed:run.initial_seed.unwrap_or(run.seed),act:run.act,route,visited:run.visited.clone(),retry:run.retry_node.or(run.preparing_combat),law:run.law.code(),endless:run.endless})
     }
 }
 pub fn prepare(run:&Run,gold:u32,flasks:Option<u8>)->RuleResult<Run> {

@@ -33,7 +33,7 @@ static class AffixTextFix {
         }
         return kept.Count==0?affix:affix+"\n\n"+string.Join("\n\n",kept);
     }
-    static bool IsAffixTop(string caption) {
+    internal static bool IsAffixTop(string caption) {
         int split=caption.IndexOf("\n\n",StringComparison.Ordinal);
         if(split<0)return true;
         string head=caption[..split];

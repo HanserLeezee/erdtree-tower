@@ -20,9 +20,34 @@ pub fn roll(run:&Run,id:u32,entropy:u64,repeat:bool,min:u8)->Option<u32> {
     for n in 0..4 {let t=(tier+n)%4;if t<floor{continue;}let picked=variants[usize::from(t)];if repeat||!run.claimed_items.contains(&picked){return Some(picked);}}
     Some(id)
 }
+/// The game's acquisition-order identifier distinguishes copies sharing a param row.
+pub fn instance_effects(v: &Variant, character: u32, sort_id: u32) -> impl Iterator<Item = i32> {
+    let mut seed = crate::mix((u64::from(character) << 32) | u64::from(sort_id)) ^ u64::from(v.item.id);
+    let mut pool: [i32; 21] = std::array::from_fn(|kind| 9850000 + kind as i32 * 10 + i32::from(v.tier));
+    (0..v.effects.len()).map(move |picked| {
+        seed = crate::mix(seed);
+        let next = picked + (seed % (pool.len() - picked) as u64) as usize;
+        pool.swap(picked, next);
+        pool[picked]
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn duplicate_epic_pendants_roll_stable_independent_effects() {
+        let pendant = variant(537970914).unwrap();
+        let roll = |id| instance_effects(pendant, 0, id).collect::<Vec<_>>();
+        assert_ne!(roll(2598), roll(2599));
+        assert_eq!(roll(2598), roll(2598));
+        for id in 0..200 {
+            let draws = roll(id);
+            assert_eq!(draws.len(), 2);
+            assert_ne!(draws[0], draws[1]);
+            assert!(draws.iter().all(|e| (9850000..9850210).contains(e) && e % 10 == 2));
+        }
+    }
     #[test]
     fn all_original_talismans_keep_their_identity_and_gain_tier_passives() {
         assert_eq!(INDEX.len(),VARIANTS.len());

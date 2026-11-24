@@ -161,6 +161,14 @@ static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
         if detail.skill.starts_with("DLC dummy") {detail.skill="无\n这件装备原本没有战技，可在铁匠处安装战灰。".into();}
         if super::random_ashes::eligible(*id){detail.skill="获得时独立随机战灰\n包含本体与 DLC，已放开武器类型限制；获得后固定，可在铁匠处更换。".into();}
     }
+    for variant in erdtree_tower::talisman_passives::VARIANTS.iter() {
+        let Some(base) = result.get(&variant.base).cloned() else { continue };
+        if let Some(detail) = result.get_mut(&variant.item.id) {
+            let note = format!("每枚随机 {} 条附加词条，装备后可在路线图的构筑面板查看。", variant.effects.len());
+            detail.info = format!("{}\n{}", base.info, note);
+            detail.caption = format!("{}\n\n{}", base.caption, note);
+        }
+    }
     for item in erdtree_tower::rewards::CATALOG.iter().filter(|i|i.kind==erdtree_tower::rewards::ItemKind::Spirit) {
         if let Some(base)=result.get(&item.id).cloned() {
             for level in 1..=u32::from(erdtree_tower::rewards::SPIRIT_MAX) {
@@ -175,6 +183,37 @@ static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
 /// 构筑面板里的一件词条装备：图标、品质、名字与带数值的词条
 #[derive(Clone,Debug,Default,PartialEq)]
 pub struct Gear {pub icon:u32,pub quality:u8,pub name:String,pub lines:Vec<String>}
+pub(crate) static TALISMAN_EFFECT_TEXT: LazyLock<HashMap<i32, &'static str>> = LazyLock::new(|| {
+    let mut labels = HashMap::new();
+    for line in include_str!("../../scene-assets/talisman-passive-details.tsv").lines() {
+        let mut columns = line.split('\t');
+        let id = columns.next().unwrap().parse().unwrap();
+        let info = columns.nth(2).unwrap();
+        let variant = erdtree_tower::talisman_passives::variant(id).unwrap();
+        labels.extend(variant.effects.iter().rev().copied().zip(info.rsplit("\\n")));
+    }
+    labels
+});
+
+pub fn talisman_summary(v: &erdtree_tower::talisman_passives::Variant, character: u32, sort: u32) -> Option<Gear> {
+    let (character,sort)=super::card_affixes::identity(character,v.item.id,sort);
+    let detail = DETAILS.get(&v.item.id)?;
+    let lines = erdtree_tower::talisman_passives::instance_effects(v, character, sort)
+        .map(|effect| TALISMAN_EFFECT_TEXT.get(&effect).map(|s| s.to_string())).collect::<Option<_>>()?;
+    Some(Gear { icon: detail.icon, quality: v.tier, name: detail.name.clone(), lines })
+}
+
+pub fn weapon_summary(roll: super::affix_stack::WeaponInstance) -> Option<Gear> {
+    static SPECIAL: LazyLock<Vec<&str>> = LazyLock::new(|| include_str!("../../scene-assets/weapon-trait-text.tsv")
+        .lines().map(|line| line.split('\t').next().unwrap()).collect());
+    let detail = DETAILS.get(&roll.variant)?;
+    let lines = roll.effects.into_iter().filter(|&id| id != 0).map(|id| {
+        if id >= 9875100 { SPECIAL.get((id-9875100) as usize) } else { TALISMAN_EFFECT_TEXT.get(&(id as i32)) }
+            .map(|s|s.to_string())
+    }).collect::<Option<_>>()?;
+    Some(Gear { icon:detail.icon, quality:erdtree_tower::affixes::tier(roll.variant)?, name:detail.name.clone(), lines })
+}
+
 pub fn affix_summary(id:u32)->Option<Gear> {
     let id=if id>>28==0 {id/10000*10000}else{id};
     let quality=erdtree_tower::affixes::tier(id)?;
@@ -337,10 +376,34 @@ fn card_summary(detail:&Detail)->String {
 }
 fn offer_detail(run:&Run,node:usize,slot:usize,reward:&Reward)->Option<Detail> {
     let id=item_id(run,reward)?;let mut detail=DETAILS.get(&id)?.clone();
+    if let Some((character,sort))=erdtree_tower::weapon_rolls::card_identity(run,node,slot,id) {
+        let rolled=super::instance_description::roll_lines(character,id,sort,0)?;
+        let old_lines=if id>>28==0 {rolled.len()} else {1};
+        for field in [&mut detail.info,&mut detail.caption] {
+            let mut lines:Vec<_>=field.lines().collect();
+            lines.truncate(lines.len().saturating_sub(old_lines));
+            lines.extend(rolled.iter().map(String::as_str));
+            *field=lines.join("\n");
+        }
+    }
     if let Some(spell)=erdtree_tower::spell_affixes::variant(id){detail.info=card_summary(&DETAILS[&spell.base]);}
     let gem=super::random_ashes::preview(run,node,slot,id);
     if let Some((name,text))=super::random_ashes::description(gem){detail.skill=format!("{name}\n{}",text.replace("\\n","\n"));}
     Some(detail)
+}
+#[test]
+fn card_preview_matches_bound_copy_for_reward_and_contract() {
+    let run=Run::new_personal(21,erdtree_tower::Class::Samurai,5);
+    for node in [4,usize::MAX] {for (item,count) in [(160000000,1),(160030000,3),(537970914,2)] {
+        for slot in 0..3 {
+            let detail=offer_detail(&run,node,slot,&Reward::Item(item)).unwrap();
+            let (a,b)=erdtree_tower::weapon_rolls::card_identity(&run,node,slot,item).unwrap();
+            let lines=super::instance_description::roll_lines(a,item,b,0).unwrap();
+            assert_eq!(lines.len(),count);
+            assert!(card_summary(&detail).ends_with(&lines.join("\n")));
+            assert!(detail.caption.ends_with(&lines.join("\n")));
+        }
+    }}
 }
 #[derive(Default)]
 struct Selection {key:String,selected:usize,details:bool,skip:bool,armed_at:f64,last_submit:f64,
@@ -688,7 +751,7 @@ impl Panel {
                 let (category,title,summary)=match reward {
                     Reward::Item(id)=>{
                         let item=erdtree_tower::rewards::lookup(*id);let base=erdtree_tower::affixes::base(*id);let legendary=erdtree_tower::spell_affixes::variant(*id).is_none()&&erdtree_tower::elite::LEGENDARY.contains(&base);
-                        let category=item.map_or("物品",|v|if legendary {match v.kind {erdtree_tower::rewards::ItemKind::Sorcery=>"传说魔法",erdtree_tower::rewards::ItemKind::Incantation=>"传说祷告",_=>"传说武器"}}else if erdtree_tower::elite::EPIC.contains(&base){"史诗武器"}else{v.kind.label()});
+                        let category=item.map_or("物品",|v|if let Some(tier)=erdtree_tower::affixes::tier(*id).filter(|_|v.kind==erdtree_tower::rewards::ItemKind::Weapon){["普通武器","稀有武器","史诗武器","传说武器"][tier as usize]}else if legendary {match v.kind {erdtree_tower::rewards::ItemKind::Sorcery=>"传说魔法",erdtree_tower::rewards::ItemKind::Incantation=>"传说祷告",_=>"传说武器"}}else if erdtree_tower::elite::EPIC.contains(&base){"史诗武器"}else{v.kind.label()});
                         (category,detail.map_or("未知物品".into(),|v|v.name.clone()),detail.map_or(String::new(),card_summary))
                     },
                     Reward::Blessing(_)=>("护符",detail.map_or("护符".into(),|v|v.name.clone()),detail.map_or(String::new(),|v|v.info.clone())),

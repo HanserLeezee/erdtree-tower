@@ -28,8 +28,8 @@ pub const NODES:[Node;37]=[
     n("奸商 I",2,None,10,"商店价格 +20%",13,3,7),
     n("奸商 II",2,Some(21),10,"商店价格累计 +40%",13,4,7),
     n("吝啬的赐福",2,None,30,"战后奖励三选一改为二选一",14,5,7),
-    n("限时 I",3,None,10,"每场战斗限时 3 分钟，超时后每秒失去 2% 生命",15,1,8),
-    n("限时 II",3,Some(24),10,"战斗限时缩短为 2 分钟",15,2,8),
+    n("限时 I",3,None,10,"每场战斗限时 5 分钟，超时后每秒失去 2% 生命",15,1,8),
+    n("限时 II",3,Some(24),10,"战斗限时缩短为 3 分钟",15,2,8),
     n("嫉妒的世界",3,None,30,"你喝圣杯瓶时，所有敌人回复 8% 生命",16,3,8),
     n("元素庇护 I",0,None,10,"敌人受到魔力、火、雷、圣伤害 -10%，不影响物理伤害",5,1,9),
     n("元素庇护 II",0,Some(27),10,"敌人受到四种元素伤害累计 -20%",5,2,9),
@@ -46,7 +46,7 @@ pub const NODES:[Node;37]=[
 /// 停用的节点：位置与编号保留（存档、旅程档案与律法码里的位不变），界面不再显示，新开局选不上；
 /// 已经带着它开局的旅程照旧生效。14 孤狼（2026-11-06 移除）
 pub const RETIRED:[usize;2]=[14,35];
-pub const GRADES:[(u32,&str);4]=[(70,"老练"),(140,"艰难"),(210,"噩梦"),(280,"危机")];
+pub const GRADES:[(u32,&str);4]=[(80,"老练"),(160,"艰难"),(240,"噩梦"),(325,"危机")];
 
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq,serde::Serialize,serde::Deserialize)]
 #[serde(transparent)]
@@ -86,7 +86,7 @@ impl Law {
     pub fn price_percent(self)->u32 {[100,120,140][usize::from(self.chain(&[21,22]))]}
     pub fn stingy(self)->bool {self.has(23)}
     /// 限时：每场战斗的秒数
-    pub fn time_limit(self)->Option<u64> {match self.chain(&[24,25]) {0=>None,1=>Some(180),_=>Some(120)}}
+    pub fn time_limit(self)->Option<u64> {match self.chain(&[24,25]) {0=>None,1=>Some(300),_=>Some(180)}}
     pub fn envy_world(self)->bool {self.has(26)}
     pub fn has(self,id:usize)->bool {id<NODES.len()&&self.0&(1u64<<id)!=0}
     pub fn available(self,id:usize)->bool {id<NODES.len()&&NODES[id].parent.is_none_or(|p|self.has(p))}
@@ -149,6 +149,22 @@ fn checksum(mask:u64)->u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn difficulty_thresholds_match_selectable_scores() {
+        let mut scores=std::collections::BTreeMap::from([(0,Law::default())]);
+        for id in 0..NODES.len() {
+            if !Law::listed(id){continue;}
+            for law in scores.clone().into_values(){
+                let next=law.toggle(id);
+                scores.entry(next.score()).or_insert(next);
+            }
+        }
+        for (points,grade) in [(70,None),(80,Some("老练")),(150,Some("老练")),(160,Some("艰难")),
+            (230,Some("艰难")),(240,Some("噩梦")),(320,Some("噩梦")),(330,Some("危机"))] {
+            assert_eq!(scores[&points].grade(),grade,"score {points}");
+        }
+        assert_eq!(GRADES[3].0,325);
+    }
     #[test]
     fn codes_from_before_the_64_bit_law_stay_valid_and_new_nodes_round_trip() {
         // 扩成 64 位之前的算法：32 位节点图 + 同样的校验
@@ -256,7 +272,7 @@ mod tests {
         assert_eq!((law(&[]).affix_budget(2,6),law(&[3]).affix_budget(2,6),law(&[3,4]).affix_budget(2,6),law(&[3]).affix_budget(6,6)),(2,4,6,6));
         assert_eq!((law(&[19]).runes(1000),law(&[19,20]).runes(1000),law(&[]).runes(1000)),(850,700,1000));
         assert_eq!((law(&[21]).price_percent(),law(&[22]).price_percent()),(120,140));
-        assert_eq!((law(&[24]).time_limit(),law(&[24,25]).time_limit(),law(&[]).time_limit()),(Some(180),Some(120),None));
+        assert_eq!((law(&[24]).time_limit(),law(&[24,25]).time_limit(),law(&[]).time_limit()),(Some(300),Some(180),None));
         let all=law(&(0..NODES.len()).collect::<Vec<_>>());
         assert!(!all.lone_wolf()&&Law(1<<14).lone_wolf(),"retired: cannot be chosen, old runs keep it");
         assert!(all.stingy()&&all.envy_world()&&all.elite_affixes()&&all.empowered_affixes());

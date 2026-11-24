@@ -12,6 +12,9 @@ pub struct NativeTalk {
     pub choice: Option<i32>,
     flask_upgrade: Option<super::flasks::RestorationUpgrade>,
     camp: CampInteraction,
+    revival_offers:Vec<(u32,u32)>,
+    revival_selected:Option<(u32,u32)>,
+    pub revival_request:Option<(u32,u32)>,
     event_menu: EventMenu,
     event_request: Option<EventRequest>,
     event_confirmation: Option<i32>,
@@ -22,6 +25,7 @@ pub struct NativeTalk {
 }
 impl Drop for NativeTalk {
     fn drop(&mut self) {
+        if matches!(self.state,22..=24){super::custom_event_ui::close();}
         if self.spirit_session.is_some() {if let Err(error)=self.suspend(){super::log(format!("Spirit menu cleanup: {error}"));}}
     }
 }
@@ -57,12 +61,18 @@ pub const BATTLEMAGE_REFUSED:i32=9500184;
 static BATTLEMAGE_REQUEST:std::sync::Mutex<Option<u8>>=std::sync::Mutex::new(None);
 pub fn take_battlemage()->Option<u8> {BATTLEMAGE_REQUEST.lock().ok()?.take()}
 /// 营地调灵（小红帽）：菜单项与无可用骨灰提示（文字在 scene-builder/RecoveryText.cs）。
+pub const REVIVE_OPTION:i32=30_001_000;
+pub const REVIVE_DONE:i32=REVIVE_OPTION+3;
+pub const REVIVE_NONE:i32=REVIVE_OPTION+1;
+pub const REVIVE_FAILED:i32=REVIVE_OPTION+4;
 pub const TUNE_OPTION:i32=9500155;
 /// 营地：身上没有强化石（铁匠强化、护符升阶、调灵、商店强化共用）
 pub const NO_STONE:i32=9500185;
 /// 营地：余烬「帐篷」免费补瓶，营地送的强化石保留
 pub const TENT_REFILL:i32=9500186;
 pub const TUNE_NONE:i32=9500156;
+use erdtree_tower::regional_events::Trial;
+const TRIAL_CHOICES:[(i32,Trial);5]=[(9500094,Trial::Descent),(9500115,Trial::Stormveil),(9500117,Trial::Chariot),(9500210,Trial::HereticalRise),(9500116,Trial::Skip)];
 impl EventMenu {
     fn confirmation(self,choice:i32)->Option<i32> {
         use erdtree_tower::regional_events::Trial;
@@ -94,8 +104,8 @@ impl EventMenu {
         if self.gamble==Some(erdtree_tower::events::FURNACE as u8) {return (!self.used&&!self.busy&&choice==1).then_some(EventRequest::Gamble(0));}
         if self.gamble.is_some() {return (!self.used&&!self.busy&&(1..=2).contains(&choice)).then(||EventRequest::Gamble((choice-1) as usize));}
         if self.trial {
-            if !self.used&&!self.busy&&choice==5 {return Some(EventRequest::Trial(erdtree_tower::regional_events::Trial::HereticalRise));}
-            return (!self.used&&!self.busy).then(||[erdtree_tower::regional_events::Trial::Descent,erdtree_tower::regional_events::Trial::Stormveil,erdtree_tower::regional_events::Trial::Chariot,erdtree_tower::regional_events::Trial::Skip].get(choice.wrapping_sub(1) as usize).copied()).flatten().map(EventRequest::Trial);
+            if self.used||self.busy{return None;}
+            return TRIAL_CHOICES.get(choice.wrapping_sub(1) as usize).map(|&(_,trial)|EventRequest::Trial(trial));
         }
         if self.stormveil {return (!self.used&&!self.busy&&(1..=2).contains(&choice)).then_some(EventRequest::Stormveil(choice==1));}
         if self.descent {return (choice==1&&!self.used&&!self.busy).then_some(EventRequest::Descent);}
@@ -129,7 +139,7 @@ impl NativeTalk {
         if service == 1 {
             tighten_smith_talk_range();
         }
-        Self { script: TalkScript::new(BlockId::from(block), 950000000 + service as i32, handle), service, state: 0, menu_kind: 0, choice: None, flask_upgrade: None, camp: CampInteraction::default(),event_menu:Default::default(),event_request:None,event_confirmation:None,enemies:Vec::new(),talismans:Vec::new(),talisman:None,spirit_session:None }
+        Self { script: TalkScript::new(BlockId::from(block), 950000000 + service as i32, handle), service, state: 0, menu_kind: 0, choice: None, flask_upgrade: None, camp: CampInteraction::default(),revival_offers:vec![],revival_selected:None,revival_request:None,event_menu:Default::default(),event_request:None,event_confirmation:None,enemies:Vec::new(),talismans:Vec::new(),talisman:None,spirit_session:None }
     }
     fn event(&mut self, id: i32, args: &[i32]) -> Result<(), String> {
         if id==48 {super::whetblades::sync_owned()?;}
@@ -149,6 +159,7 @@ impl NativeTalk {
     pub fn active(&self) -> bool { self.state != 0 }
     pub fn suspend(&mut self)->Result<(),String> {
         if !self.active(){return Ok(());}
+        if matches!(self.state,22..=24){super::custom_event_ui::close();}
         for event in [67,18,35] {self.event(event,&[])?;}
         self.spirit_session=None;
         self.state=0;self.choice=None;self.event_request=None;self.event_confirmation=None;
@@ -159,6 +170,13 @@ impl NativeTalk {
         self.event(110,&[])?;self.event(20,&[])?;
         for (i,&text) in texts.iter().enumerate(){self.event(19,&[i as i32+1,text,-1])?;}
         self.event(19,&[99,9500003,-1])?;self.event(10,&[1])?;self.state=15;Ok(())
+    }
+    pub fn waiting_revival(&self)->bool {self.service==0&&self.state==27}
+    pub fn set_revival_offers(&mut self,offers:&[(u32,u32)]){
+        if self.waiting_revival() {
+            self.state=28;
+            self.revival_offers.clear();self.revival_offers.extend_from_slice(offers);
+        }
     }
     pub fn set_camp_used(&mut self, used:bool) {self.camp.used=used;}
     pub fn take_refill(&mut self)->Option<i32> {self.camp.pending.take()}
@@ -190,8 +208,7 @@ impl NativeTalk {
                     }
                     if self.event_menu.busy||self.event_menu.used {return Ok(());}
                     self.event(110,&[])?;self.event(20,&[])?;
-                    for (i,text) in [9500094,9500115,9500117,9500116].into_iter().enumerate(){self.event(19,&[i as i32+1,text,-1])?;}
-                    self.event(19,&[5,9500210,-1])?;
+                    for (i,(text,_)) in TRIAL_CHOICES.into_iter().enumerate(){self.event(19,&[i as i32+1,text,-1])?;}
                     self.event(19,&[99,9500003,-1])?;self.event(10,&[1])?;self.state=1;return Ok(());
                 }
                 if self.service==6 && self.event_menu.stormveil {
@@ -224,6 +241,7 @@ impl NativeTalk {
                     if self.event_menu.busy||self.event_menu.used {return Ok(());}
                     self.event(110,&[])?;
                     self.event_request=Some(EventRequest::CustomPanel);
+                    self.state=22;
                     return Ok(());
                 }
                 if self.service==6&&self.event_menu.dance {
@@ -263,7 +281,7 @@ impl NativeTalk {
                     for (i,&message) in messages.iter().enumerate() { self.event(19,&[i as i32+1,message,-1])?; }
                     self.event(19,&[99,9500003,-1])?;
                 } else if self.service==0 {
-                    for (choice,message) in [(1,9500000),(2,9500044),(3,9500106),(4,9500107),(5,TUNE_OPTION),(99,9500003)] {
+                    for (choice,message) in [(1,9500000),(2,9500044),(3,9500106),(4,9500107),(5,TUNE_OPTION),(6,REVIVE_OPTION),(99,9500003)] {
                         self.event(19,&[choice,message,-1])?;
                     }
                 } else if self.service==1 {
@@ -375,6 +393,9 @@ impl NativeTalk {
                     self.event(event,&args)?;self.menu_kind=menu;self.state=7;return Ok(());
                 }
                 // 原生调灵每次消耗一块强化石。
+                if self.service==0&&choice==6{
+                    self.state=27;return Ok(());
+                }
                 if self.service==0&&choice==5 {
                     let player=unsafe {eldenring::cs::PlayerIns::local_player()}.map_err(|_|"角色未加载")?;
                     let data=unsafe {player.player_game_data.as_ref()};
@@ -406,6 +427,50 @@ impl NativeTalk {
                     super::log(format!("Camp refill requested: choice={choice}"));
                     self.state = 2;
                 }
+            }
+            28 => {
+                    if self.revival_offers.is_empty(){return self.dialog(REVIVE_NONE);}
+                    self.event(110,&[])?;self.event(20,&[])?;
+                    for i in 0..self.revival_offers.len(){
+                        self.event(19,&[i as i32+1,super::custom_event_ui::ash_name(self.revival_offers[i].1),-1])?;
+                    }
+                    self.event(19,&[9999,9500003,-1])?;self.event(10,&[1])?;self.state=25;
+            }
+            27 => {},
+            25 => if self.query(59,&[1,0])?==0{
+                let choice=self.query(23,&[])?;
+                self.revival_selected=choice.checked_sub(1).and_then(|i|self.revival_offers.get(i as usize)).copied();
+                self.state=0;
+                if self.revival_selected.is_some(){self.event(17,&confirmation_dialog(REVIVE_OPTION+2))?;self.state=26;}
+            },
+            26 => if self.query(58,&[0])?==0{
+                let selected=self.revival_selected.take();
+                if dialog_confirmed(self.query(22,&[])?){self.revival_request=selected;}
+                self.state=0;
+            },
+            22 => {
+                let Some(labels)=super::custom_event_ui::rows() else {self.state=0;return Ok(());};
+                self.event(20,&[])?;
+                for (i,text) in labels.into_iter().enumerate(){self.event(19,&[i as i32+1,text,-1])?;}
+                self.event(19,&[99,9500003,-1])?;
+                self.event(10,&[1])?;
+                self.state=23;
+            }
+            23 => {
+                if !super::custom_event_ui::active(){return self.suspend();}
+                if self.query(59,&[1,0])?!=0{return Ok(());}
+                let choice=self.query(23,&[])?;
+                if choice<=0||choice==99{super::custom_event_ui::close();self.state=0;}
+                else if let Some(text)=super::custom_event_ui::select((choice-1) as usize){
+                    self.event(17,&confirmation_dialog(text))?;self.state=24;
+                }else{self.state=22;}
+            }
+            24 => {
+                if !super::custom_event_ui::active(){return self.suspend();}
+                if self.query(58,&[0])?!=0{return Ok(());}
+                let yes=dialog_confirmed(self.query(22,&[])?);
+                super::custom_event_ui::confirm(yes);
+                self.state=if yes{0}else{22};
             }
             19 => if self.query(58,&[0])?==0 {
                 let choice=self.event_confirmation.take();
@@ -572,8 +637,8 @@ mod tests {
     #[test]
     fn trial_confirmations_require_acceptance_and_recheck_availability() {
         let menu=super::EventMenu{trial:true,..Default::default()};
-        for choice in 1..=4 {
-            assert_eq!(menu.confirmation(choice),Some(9500117+choice));
+        for (choice,text) in (1..=5).zip([9500118,9500119,9500120,9500214,9500121]) {
+            assert_eq!(menu.confirmation(choice),Some(text));
             assert_eq!(menu.confirmed(Some(choice),1),menu.request(choice));
             for answer in [-1,0,2,3]{assert_eq!(menu.confirmed(Some(choice),answer),None);}
             assert_eq!(super::EventMenu{busy:true,..menu}.confirmed(Some(choice),1),None);
@@ -587,7 +652,7 @@ mod tests {
     #[test]
     fn event_dialog_requests_are_local_and_respect_current_progress() {
         let roads=EventMenu{trial:true,..Default::default()};
-        for (id,route,text) in [(5,erdtree_tower::regional_events::Trial::HereticalRise,9500214)] {
+        for (id,route,text) in [(4,erdtree_tower::regional_events::Trial::HereticalRise,9500214),(5,erdtree_tower::regional_events::Trial::Skip,9500121)] {
             assert_eq!(roads.request(id),Some(EventRequest::Trial(route)));
             assert_eq!(roads.confirmation(id),Some(text));
             assert_eq!(roads.confirmed(Some(id),0),None);
@@ -597,7 +662,7 @@ mod tests {
         use super::{EventMenu,EventRequest};
         let trial=EventMenu{trial:true,..Default::default()};
         use erdtree_tower::regional_events::Trial;
-        for (i,choice) in [Trial::Descent,Trial::Stormveil,Trial::Chariot,Trial::Skip].into_iter().enumerate() {
+        for (i,choice) in [Trial::Descent,Trial::Stormveil,Trial::Chariot,Trial::HereticalRise,Trial::Skip].into_iter().enumerate() {
             assert_eq!(trial.request(i as i32+1),Some(EventRequest::Trial(choice)));
             assert_eq!(EventMenu{busy:true,..trial}.request(i as i32+1),None);
         }

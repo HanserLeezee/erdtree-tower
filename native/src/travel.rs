@@ -44,9 +44,12 @@ pub enum Progress {
 
 pub struct Travel {
     pub node: usize,
+    pub spirits:super::spirits::Spirits,
     pub reused_scene:bool,
     pub reuse_ready:bool,
     pub resources_restored: bool,
+    pub saw_arena:bool,
+    pub unloaded_after_arrival:bool,
     stable_since: Option<Duration>,
     ready_since: Option<Duration>,
     circle_entered: Option<Duration>,
@@ -56,9 +59,12 @@ impl Travel {
     pub fn new(node: usize) -> Self {
         Self {
             node,
+            spirits:Default::default(),
             reused_scene:false,
             reuse_ready:false,
             resources_restored: false,
+            saw_arena:false,
+            unloaded_after_arrival:false,
             stable_since: None,
             ready_since: None,
             circle_entered: None,
@@ -66,6 +72,9 @@ impl Travel {
     }
     pub fn is_preparing(&self) -> bool {
         self.ready_since.is_some()
+    }
+    pub fn summon_stone_ready(&self)->bool {
+        self.saw_arena && !self.unloaded_after_arrival && (!self.reused_scene || self.reuse_ready)
     }
     pub fn poll_entry(&mut self,elapsed:Duration,arrived:bool,grounded:bool,placed:bool,crossed:bool,circle:bool)->Progress {
         if self.reused_scene&&!self.reuse_ready{return Progress::Loading;}
@@ -118,6 +127,20 @@ impl Travel {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn summon_stone_opens_before_circle_and_waits_for_scene_reset() {
+        let mut travel=super::Travel::new(7);
+        assert!(!travel.summon_stone_ready());
+        travel.saw_arena=true;
+        assert!(!travel.is_preparing());
+        assert!(travel.summon_stone_ready());
+        travel.reused_scene=true;
+        assert!(!travel.summon_stone_ready());
+        travel.reuse_ready=true;
+        assert!(travel.summon_stone_ready());
+        travel.unloaded_after_arrival=true;
+        assert!(!travel.summon_stone_ready());
+    }
     use super::*;
     #[test]
     fn reuse_requires_loaded_scene_ready_players_and_clean_completed_route() {

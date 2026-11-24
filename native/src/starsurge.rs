@@ -382,9 +382,14 @@ fn apply_burst(world:&mut WorldChrMan,combat:&mut Combat,handle:FieldInsHandle,d
     combat.echo.push((handle,now,damage));
 }
 fn burst_damage(world:&mut WorldChrMan,combat:&mut Combat,handle:&FieldInsHandle,amount:i32) {
-    let Some(chr)=world.chr_ins_by_handle_mut(handle) else{return};
-    let hp=chr.modules.data.hp.saturating_sub(amount.max(0)).max(0);
+    let Some(chr)=world.chr_ins_by_handle_mut(handle) else{
+        super::log(format!("STARSURGE_DAMAGE target={handle:?} requested={amount} missing_target"));
+        return;
+    };
+    let before=chr.modules.data.hp;
+    let hp=before.saturating_sub(amount.max(0)).max(0);
     chr.modules.data.hp=hp;
+    super::log(format!("STARSURGE_DAMAGE target={handle:?} requested={amount} hp_before={before} hp_after={}",chr.modules.data.hp));
     if let Some(entry)=combat.hp.iter_mut().find(|(h,_)|h==handle) {entry.1=hp;}
 }
 
@@ -533,10 +538,8 @@ fn spawn_haima(world:&WorldChrMan,pos:[f32;3])->Option<Result<(),i32>> {
 
 /// Play the Haima impact without modifying attack parameters shared by other casters.
 pub fn burst_fx(chr:&mut ChrIns) {
-    let Ok(params)=(unsafe {SoloParamRepository::instance()}) else{return};
-    let sfx=[HAIMA_BURST,HAIMA_SHOT].into_iter().filter_map(|id|params.get::<Bullet>(id as u32))
-        .flat_map(|row|[row.sfx_id_hit(),row.sfx_id_bullet()]).find(|&id|id>0);
-    if let Some(id)=sfx {super::transmog::play_chr_sfx(chr,id);}
+    const HAIMA_IMPACT_EFFECT:i32=9810999;
+    chr.apply_speffect(HAIMA_IMPACT_EFFECT,false);
 }
 
 #[cfg(test)]

@@ -67,8 +67,27 @@ pub fn log_remaining(world:&WorldChrMan,reason:&str) {
             world.summon_buddy_manager.active_summon_goods_id,world.summon_buddy_manager.request_summon_speffect_id,entries.join("; ")));
     }
 }
+fn native_warp_cleanup(party:bool, groups:impl Iterator<Item=(bool,i32)>)->bool {
+    party && groups.into_iter().any(|(remote,param)|remote || fade::custom(param))
+}
+#[test]
+fn coop_warp_with_retiring_custom_ash_uses_native_cleanup() {
+    let reported=(false,1_600_280_000);
+    assert!(native_warp_cleanup(true,[reported].into_iter()));
+    assert!(native_warp_cleanup(true,[(false,100),(true,200)].into_iter()));
+    assert!(!native_warp_cleanup(true,[(false,100)].into_iter()));
+    assert!(!native_warp_cleanup(false,[reported].into_iter()));
+}
 pub fn prepare_warp(world:&mut WorldChrMan,reason:&str) {
     set_active(false);
+    let buddy=&mut *world.summon_buddy_manager;
+    let defer=native_warp_cleanup(super::runtime::in_party(),buddy.groups.iter()
+        .flat_map(|p|p.second.iter()).map(|g|(g.is_remote,g.buddy_param_id)));
+    if defer {
+        buddy.disappear_requested=true;
+        crate::log(format!("ASH_DISMISS {reason}: leaving co-op summon retirement to native warp"));
+        return;
+    }
     log_remaining(world,reason);
     world.summon_buddy_manager.disappear_requested=true;
     if !REPLACE_READY.load(Ordering::Acquire) {return;}
@@ -204,6 +223,10 @@ unsafe extern "C" fn use_state(manager:*mut u8,goods:i32)->i32 {
 unsafe extern "C" fn clear_frame(manager:*mut u8) {
     let original:unsafe extern "C" fn(*mut u8)=unsafe {std::mem::transmute(CLEAR.load(Ordering::Acquire))};
     unsafe {original(manager);}
+    if super::runtime::in_party() && unsafe {eldenring::cs::GameMan::instance()}.is_ok_and(|g|g.warp_requested) {
+        dismissal::reset_watch();
+        return;
+    }
     unsafe {fade::tick(manager);}
     if REPLACE_READY.load(Ordering::Acquire) {unsafe {dismissal::tick(manager,REPLACE_ORIGINAL.load(Ordering::Acquire));}}
     if !ACTIVE.load(Ordering::Acquire)||BOUND.load(Ordering::Acquire)!=manager as usize {return;}

@@ -125,7 +125,8 @@ pub fn pool_act(seed:u64,act:u8,kind:NodeKind,ordinal:usize)->u8 {
         (mix(seed^(u64::from(act)<<40)^(ordinal as u64).wrapping_mul(0x9e3779b97f4a7c15)^tag^0x656e646c657373)%3) as u8+1
     }
 }
-pub fn event_roster(seed:u64,ordinal:usize,layer:usize,act:u8,altar:bool)->Vec<Enemy> {
+pub fn event_roster(seed:u64,node:usize,layer:usize,act:u8,altar:bool,slot:u8)->Vec<Enemy> {
+    let ordinal=if altar {node} else {node*3+usize::from(slot)};
     event_roster_in(seed,ordinal,layer,act,altar,party())
 }
 fn event_roster_in(seed:u64,ordinal:usize,layer:usize,act:u8,altar:bool,party:bool)->Vec<Enemy> {
@@ -164,6 +165,23 @@ fn survival_roster_in(seed:u64,ordinal:usize,_layer:usize,act:u8,party:bool)->Ve
         }
     }
     group
+}
+#[test]
+fn three_chests_draw_different_guard_groups_and_disjoint_entities() {
+    for act in 1..=3 {for layer in 0..12 {for seed in 0..32 {
+        let mut earlier=vec![];
+        let mut seen=std::collections::HashSet::new();
+        let mut groups=std::collections::HashSet::new();
+        for slot in 0..3 {
+            let group=event_roster_in(seed,9*3+slot,layer,act,false,true);
+            let mut models=group.iter().map(|e|e.model).collect::<Vec<_>>();models.sort_unstable();
+            assert!(groups.insert(models));
+            let all=[&earlier[..],&group[..]].concat();
+            let ids=map_entities(&all).unwrap();
+            for &id in &ids[earlier.len()..] {assert!(seen.insert(id));}
+            earlier=all;
+        }
+    }}}
 }
 #[test]
 fn event_guards_only_use_regular_enemies() {

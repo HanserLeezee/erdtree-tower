@@ -25,8 +25,12 @@ pub struct Guards {
 }
 impl Guards {
     pub fn new(specs:Vec<Enemy>)->Result<Self,String> {
+        Self::after(&[],specs)
+    }
+    pub fn after(earlier:&[Enemy],specs:Vec<Enemy>)->Result<Self,String> {
         if specs.is_empty()||specs.len()>12{return Err("事件守卫数量无效".into());}
-        let ids=enemies::map_entities(&specs)?.into_iter().map(entity).collect::<Result<Vec<_>,_>>()?;
+        let all=[earlier,&specs].concat();
+        let ids=enemies::map_entities(&all)?.into_iter().skip(earlier.len()).map(entity).collect::<Result<Vec<_>,_>>()?;
         Ok(Self{specs,ids,bound:vec![],reset:false,requested:false,clock:None,engaged_at:None,active:false,combat:COMBAT,scaled:false})
     }
     pub fn merchant()->Result<Self,String> {

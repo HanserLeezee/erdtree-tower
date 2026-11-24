@@ -134,11 +134,10 @@ pub struct EventSync {
     pub applied:Option<u8>,
     pub hunting:bool,
     pub aborted:bool,
-    /// [fix] Set once any guard wave in this event room has been settled. The whole party shares
-    /// that fight: later guard outcomes in the same room are resolved locally without a new wave.
-    pub guards_cleared:bool,
+    cleared_guard_slots:u8,
 }
 impl EventSync {
+    pub fn guard_cleared(&self,slot:u8)->bool {slot<3 && self.cleared_guard_slots & (1<<slot)!=0}
     pub fn scarab_rewards(&self,player:u64)->u8 {
         if self.aborted||player==0||self.job.is_none_or(|j|!matches!(j.kind,erdtree_tower::party_events::Kind::Scarabs(_))||self.applied==Some(j.wave)){return 0;}
         self.scarab_owners.iter().enumerate().fold(0,|mask,(slot,owner)|mask|if *owner==player {self.done.unwrap_or(0)&(1<<slot)}else{0})
@@ -795,6 +794,7 @@ impl Link {
                 self.event=Default::default();self.ballots.clear();self.selected=None;self.event.has_stonesword_key=matches!(order,Order::Enter{has_stonesword_key:true,..}|Order::EventTest{has_stonesword_key:true,..});self.epoch=*epoch;self.arrived=false;self.bound=false;self.spawn=false;self.fighting=false;self.victory=false;self.rewards=false;self.portal=false;self.defeated=false;self.encounter=Some(Instant::now());
             }
             Order::EventStart(job) if job.epoch==self.epoch=>{
+                if !job.kind.valid(){return Err("无效的事件箱位或轮次".into());}
                 if self.event.job==Some(*job){return Ok(false);}
                 let next=self.event.job.map_or(1,|j|j.wave.saturating_add(1));
                 if job.wave!=next||(self.event.job.is_some()&&self.event.done.is_none()){return Err("事件波次不连续或上一波未结束".into());}
@@ -817,7 +817,7 @@ impl Link {
                     ||self.event.job.is_some_and(|j|matches!(j.kind,erdtree_tower::party_events::Kind::Guards(_)))&&*owners!=[0;3]{return Err("事件奖励归属无效".into());}
                 if let Some(previous)=self.event.done {if previous==*killed&&self.event.scarab_owners==*owners{return Ok(false);}return Err("事件结算重复且结果不一致".into());}
                 self.event.done=Some(*killed);self.event.scarab_owners=*owners;
-                if self.event.job.is_some_and(|j|matches!(j.kind,erdtree_tower::party_events::Kind::Guards(_))) {self.event.guards_cleared=true;}
+                if let Some(erdtree_tower::party_events::Kind::Guards(slot))=self.event.job.map(|j|j.kind) {self.event.cleared_guard_slots|=1<<slot;}
             },
             Order::Spawn{epoch} if *epoch==self.epoch=>{self.spawn=true;self.encounter=Some(Instant::now());},
             // 房主过了宽限也会先开战：本机敌人还在加载的队员同样接受，敌人加载出来就直接是开战状态
@@ -1273,12 +1273,12 @@ mod tests {
         let (mut link,_events,_commands)=test_link(2);
         let guard=Job{epoch:4,wave:1,player:1,kind:Kind::Guards(0)};
         link.accept(&Order::EventStart(guard)).unwrap();
-        link.accept(&Order::EventDone{epoch:4,wave:1,killed:0,owners:[0;3]}).unwrap();assert!(link.event.guards_cleared);
+        link.accept(&Order::EventDone{epoch:4,wave:1,killed:0,owners:[0;3]}).unwrap();assert!(link.event.guard_cleared(0));
         link.accept(&Order::EventStart(Job{wave:2,kind:Kind::Scarabs(1),..guard})).unwrap();
-        assert!(link.event.guards_cleared);
+        assert!(link.event.guard_cleared(0));
         link.accept(&Order::EventDone{epoch:4,wave:2,killed:2,owners:[0;3]}).unwrap();
         link.accept(&Order::Enter{epoch:5,act:1,visited:vec![],node:0,has_stonesword_key:false}).unwrap();
-        assert!(!link.event.guards_cleared);
+        assert!(!link.event.guard_cleared(0));
     }
     #[test]
     fn frost_shackles_sync_without_local_ownership_and_clear_on_new_room() {

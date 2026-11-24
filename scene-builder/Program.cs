@@ -4,6 +4,21 @@ if(args.Length==4&&args[3]=="hub-native-bgm") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     MusicAssets.RestoreHub(args[2],args[1]);return;
 }
+if(args.Length==5 && args[3]=="instance-affix-text"){
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    WeaponTraitAssets.InstanceText(args[2],args[1],args[4]);return;
+}
+if(args.Length==5 && args[3]=="instance-weapons"){
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    WeaponTraitAssets.Instances(args[2],args[1],args[4]);return;
+}
+if(args.Length==4 && args[3]=="starsurge-visual"){
+    StarSurgeVisual.Build(args[2],args[1]);return;
+}
+if(args.Length==4 && args[3]=="shop-ember-receipts"){
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    ShopEmberReceipts.Build(args[2],args[1]);return;
+}
 if(args.Length==4&&args[3]=="enemy-name-fix") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     EnemyNameFix.Build(args[2],args[1]);return;

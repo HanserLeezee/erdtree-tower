@@ -28,7 +28,7 @@ namespace Tower.Launcher
         {
             if (reason.IndexOf("函数不正确", StringComparison.OrdinalIgnoreCase) < 0 &&
                 reason.IndexOf("incorrect function", StringComparison.OrdinalIgnoreCase) < 0) return reason;
-            return reason + " 请检查 MOD 所在磁盘的文件系统：本 MOD 请使用 NTFS 分区；若为 exFAT，请将整个 MOD 文件夹复制到 NTFS 分区，从新位置打开启动器再试。详见设置中的排障页面。";
+            return reason + " 已确认 MOD 放在 exFAT 分区可触发此错误。请右键 MOD 所在盘，打开“属性”查看文件系统。若为 exFAT，请退出游戏和启动器，将整个 MOD 文件夹复制到 NTFS 分区，从新位置启动。若在 NTFS 上仍报错，请打开日志，反馈本次启动的 stdout.log、stderr.log 和 MOD 文件夹完整路径。";
         }
         static string Tail(string path)
         {
