@@ -371,6 +371,18 @@ impl Gate {
     pub fn leaving(&self)->Vec<u64> {self.peers.iter().filter_map(|(id,r)|r.as_ref().filter(|r|r.epoch==self.epoch&&r.present&&r.alive&&r.leaving).map(|_|*id)).collect()}
     pub fn resume_ready(&self,point:&crate::suspension::Point)->bool {self.all(|r|r.epoch==self.epoch&&r.at_hub&&r.alive&&r.resume.as_ref()==Some(point))}
     pub fn restart_paused_ready(&self)->bool {self.peers.len()>1&&self.all(|r|r.epoch==self.epoch&&r.at_hub&&r.alive)}
+    pub fn restart_paused_or_fresh_map_ready(&self)->bool {
+        self.peers.len()>1&&self.all(|r|r.epoch==self.epoch&&r.alive&&(r.at_hub||(r.map_ready&&r.act==1&&r.visited.is_empty())))
+    }
+    pub fn hub_reports_ready(&self)->bool {
+        !self.peers.is_empty()&&self.peers.iter().all(|(_,r)|r.as_ref().is_some_and(|r|r.epoch==self.epoch))
+    }
+    pub fn any_peer_resume(&self)->bool {
+        self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.epoch==self.epoch&&r.resume.is_some()))
+    }
+    pub fn paused_members(&self)->Vec<u64> {
+        self.peers.iter().filter_map(|(id,r)|r.as_ref().filter(|r|r.epoch==self.epoch&&r.resume.is_some()).map(|_|*id)).collect()
+    }
     pub fn mixed_hub_journeys(&self)->bool {
         self.restart_paused_ready() && !self.all(|r|r.resume.is_some()) && !self.all(|r|r.resume.is_none())
     }
@@ -379,6 +391,7 @@ impl Gate {
             let reason=match report.as_ref() {
                 None=>"尚未收到游戏状态",
                 Some(r) if r.epoch!=self.epoch||!r.present=>"等待游戏状态同步",
+                Some(r) if !r.at_hub&&r.alive&&r.map_ready&&r.act==1&&r.visited.is_empty()&&r.resume.is_none()=>"已在大赐福新开旅程，没有可恢复的暂停旅程",
                 Some(r) if !r.at_hub||!r.alive=>"等待返回大赐福并完成加载",
                 Some(r) if r.resume.is_none()=>"没有可恢复的暂停旅程",
                 Some(r) if r.resume.as_ref()!=Some(point)=>"暂停旅程进度不同，未覆盖存档",
@@ -625,9 +638,24 @@ mod tests {
     #[test]
     fn restarting_paused_party_requires_everyone_at_hub_not_matching_saves() {
         let mut gate=Gate::new(vec![1,2]);
+        assert!(!gate.hub_reports_ready());
+        assert!(!gate.any_peer_resume());
         gate.report(1,Report::at_hub(0)).unwrap();assert!(!gate.restart_paused_ready());
+        assert!(!gate.hub_reports_ready());
         gate.report(2,Report::at_hub(0)).unwrap();assert!(gate.restart_paused_ready());
+        assert!(gate.hub_reports_ready());
+        assert!(gate.paused_members().is_empty());
+        let run=Run::new(42,crate::Class::Samurai);let point=crate::suspension::Point::of(&run).unwrap();
+        let mut paused=Report::at_hub(0);paused.resume=Some(point.clone());
+        gate.report(2,paused).unwrap();
+        assert!(gate.any_peer_resume());assert_eq!(gate.paused_members(),vec![2]);
+        let fresh_map=Report::new(&run,0,false,false,true);
+        gate.report(1,Report::at_hub(0)).unwrap();gate.report(2,fresh_map).unwrap();
+        assert!(!gate.restart_paused_ready());
+        assert!(gate.restart_paused_or_fresh_map_ready());
+        assert_eq!(gate.resume_waiting(&point),vec![(1,"没有可恢复的暂停旅程"),(2,"已在大赐福新开旅程，没有可恢复的暂停旅程")]);
         gate.report(2,Report::unavailable(0)).unwrap();assert!(!gate.restart_paused_ready());
+        assert!(!gate.restart_paused_or_fresh_map_ready());
         assert!(gate.report(2,Report::at_hub(1)).is_err());assert!(!gate.restart_paused_ready());
         let mut dead=Report::at_hub(0);dead.alive=false;gate.report(2,dead).unwrap();assert!(!gate.restart_paused_ready());
     }

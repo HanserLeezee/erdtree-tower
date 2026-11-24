@@ -23,4 +23,13 @@ public class LoggedLaunchTests
         Assert.Contains("测试错误", File.ReadAllText(Path.Combine(root, "stderr.log")));
         Assert.Equal("17", File.ReadAllText(Path.Combine(root, "exit-code.txt")));
     }
+
+    [Fact]
+    public void DecodeLinePrefersUtf8AndFallsBackToAnsiForEarlyErrors()
+    {
+        var utf8 = Encoding.UTF8.GetBytes("资源检查通过\r");
+        Assert.Equal("资源检查通过", LoggedLaunch.DecodeLine(utf8, utf8.Length));
+        var latin = Encoding.Latin1.GetBytes("caf\u00e9\r");
+        Assert.Equal("café", LoggedLaunch.DecodeLine(latin, latin.Length, Encoding.Latin1));
+    }
 }

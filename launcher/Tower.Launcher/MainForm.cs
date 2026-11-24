@@ -23,6 +23,7 @@ namespace Tower.Launcher
         readonly LauncherPaths paths;
         WebView2 web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Backdrop };
         readonly TowerHost host;
+        bool softwareFallback;
 
         public MainForm(LauncherPaths paths)
         {
@@ -72,7 +73,7 @@ namespace Tower.Launcher
             }
         }
 
-        async Task InitAsync()
+        async Task InitAsync(bool forceSoftware = false)
         {
             // 发布包里 WebView2Loader.dll 和其他依赖一起放在 launcher/；开发时在 runtimes/ 下，SDK 自己能找到
             if (File.Exists(Path.Combine(paths.LibDir, "WebView2Loader.dll"))) CoreWebView2Environment.SetLoaderDllFolderPath(paths.LibDir);
@@ -90,20 +91,21 @@ namespace Tower.Launcher
                 Close();
                 return;
             }
+            CleanupStaleRecoveryCaches(paths.DataDir);
+            var options = forceSoftware ? new CoreWebView2EnvironmentOptions("--disable-gpu") : null;
+            var userData = forceSoftware ? Path.Combine(paths.DataDir, "WebView2-recovery-" + Guid.NewGuid().ToString("N")) : paths.WebViewData;
             try
             {
-                var environment = await CoreWebView2Environment.CreateAsync(null, paths.WebViewData);
+                var environment = await CoreWebView2Environment.CreateAsync(null, userData, options);
                 await web.EnsureCoreWebView2Async(environment);
             }
-            catch (Exception error) when (error.HResult == unchecked((int)0x800700AA))
+            catch (Exception error) when (!forceSoftware && (error is COMException || error is IOException || error is UnauthorizedAccessException))
             {
-                Log.Write("WebView2 数据目录占用，尝试独立缓存：" + error);
-                Controls.Remove(web);
-                web.Dispose();
-                web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Backdrop };
-                Controls.Add(web);
+                Log.Write($"WebView2 初始化失败（0x{error.HResult:X8}），切换独立缓存与软件渲染重试：" + error);
+                softwareFallback = true;
+                ResetWebViewControl();
                 var cache = Path.Combine(paths.DataDir, "WebView2-recovery-" + Guid.NewGuid().ToString("N"));
-                var environment = await CoreWebView2Environment.CreateAsync(null, cache);
+                var environment = await CoreWebView2Environment.CreateAsync(null, cache, new CoreWebView2EnvironmentOptions("--disable-gpu"));
                 await web.EnsureCoreWebView2Async(environment);
             }
             var core = web.CoreWebView2;
@@ -133,9 +135,54 @@ namespace Tower.Launcher
             core.ProcessFailed += (s, a) =>
             {
                 Log.Write($"WebView2 进程异常：{a.ProcessFailedKind}");
-                if (a.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited || a.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive) core.Reload();
+                if (a.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited || a.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
+                {
+                    core.Reload();
+                }
+                else if (a.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited && !softwareFallback && !IsDisposed)
+                {
+                    softwareFallback = true;
+                    Log.Write("WebView2 浏览器/GPU 进程异常退出，切换软件渲染重建界面");
+                    BeginInvoke(new Action(async () =>
+                    {
+                        try
+                        {
+                            ResetWebViewControl();
+                            await InitAsync(forceSoftware: true);
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Write("WebView2 软件渲染重建失败：" + ex);
+                        }
+                    }));
+                }
             };
             ReloadPage();
+        }
+
+        void ResetWebViewControl()
+        {
+            Controls.Remove(web);
+            web.Dispose();
+            web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Backdrop };
+            Controls.Add(web);
+        }
+
+        static void CleanupStaleRecoveryCaches(string dataDir)
+        {
+            try
+            {
+                if (!Directory.Exists(dataDir)) return;
+                var cutoff = DateTime.UtcNow.AddDays(-7);
+                foreach (var dir in Directory.EnumerateDirectories(dataDir, "WebView2-recovery-*"))
+                {
+                    try { if (Directory.GetLastWriteTimeUtc(dir) < cutoff) Directory.Delete(dir, true); }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
 
         static bool WebViewInstalled()

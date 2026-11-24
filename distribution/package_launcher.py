@@ -86,7 +86,7 @@ def main():
         shutil.copy2(published / 'runtimes/win-x64/native/WebView2Loader.dll', stage / 'launcher/WebView2Loader.dll')
         shutil.copytree(published / 'launcher/ui', stage / 'launcher/ui')
         shutil.copy2(published / 'launcher/sources.json', stage / 'launcher/sources.json')
-        for name in ('Start-Tower.ps1', 'Launch-Logged.ps1', 'Tower-Loader.ps1'):
+        for name in ('Start-Tower.ps1', 'Launch-Logged.ps1', 'Tower-Loader.ps1', 'Diagnose-Startup.ps1', '启动崩溃诊断.cmd'):
             shutil.copy2(project / 'distribution' / name, stage / name)
         for name in ('Launch-Preview.ps1', 'Launch-Seamless-Tower.ps1'):
             shutil.copy2(project / name, stage / name)

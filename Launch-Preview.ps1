@@ -5,13 +5,14 @@ if(!(Test-Path -LiteralPath $loaderSupport)){$loaderSupport=Join-Path $PSScriptR
 . $loaderSupport
 $exePath = Join-Path $GameDir 'eldenring.exe'
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) { throw '找不到游戏，请传入 -GameDir' }
-if ((Get-Item -LiteralPath $exePath).VersionInfo.FileVersion -ne '2.7.2.0') { throw '验证包仅支持游戏文件版本 2.7.2.0' }
+$exeVersion = (Get-Item -LiteralPath $exePath).VersionInfo.FileVersion
+if ($exeVersion -notmatch '^2\.7\.2\.\d+$') { throw "验证包仅支持 1.17.2 系列游戏文件版本（2.7.2.x），当前为：$exeVersion" }
 $sha256 = [System.Security.Cryptography.SHA256]::Create()
 $exeStream = [System.IO.File]::OpenRead($exePath)
 try { $exeHash = [System.BitConverter]::ToString($sha256.ComputeHash($exeStream)).Replace('-', '').ToLowerInvariant() }
 finally { $exeStream.Dispose(); $sha256.Dispose() }
 if ($exeHash -ne 'f9118fea2cfd8fa3901e8060bfadb1552cb2471771ded8a5b662c4e298ffb328') {
-    throw '游戏文件与已核实的版本不匹配'
+    Write-Host "注意：检测到同系列游戏文件版本 $exeVersion（非 2.7.2.0 国际版基准哈希），将由运行时接口特征码自动校验兼容性。"
 }
 function Get-NativeDllName([string]$Root) {
     $profilePath = Join-Path $Root 'preview.me3'
@@ -106,9 +107,11 @@ if ((Test-Path -LiteralPath $assetMode) -and [IO.File]::ReadAllText($assetMode).
 }
 $previousMarker = $env:ERDTREE_TOWER_PREVIEW
 $previousLogDir = $env:ERDTREE_TOWER_LOG_DIR
+$previousCompat = $env:__COMPAT_LAYER
 try {
     $env:ERDTREE_TOWER_PREVIEW = '1'
     $env:ERDTREE_TOWER_LOG_DIR = $packageRoot
+    Remove-Item -LiteralPath 'Env:__COMPAT_LAYER' -ErrorAction SilentlyContinue
     $logPath = Join-Path $packageRoot 'tower-preview.log'
     [System.IO.File]::WriteAllText($logPath, "Tower preview launch: $(Get-Date -Format o)`r`n")
     Write-Host "预览初始化日志：$logPath"
@@ -125,4 +128,6 @@ try {
 } finally {
     $env:ERDTREE_TOWER_PREVIEW = $previousMarker
     $env:ERDTREE_TOWER_LOG_DIR = $previousLogDir
+    if ($null -eq $previousCompat) { Remove-Item -LiteralPath 'Env:__COMPAT_LAYER' -ErrorAction SilentlyContinue }
+    else { $env:__COMPAT_LAYER = $previousCompat }
 }

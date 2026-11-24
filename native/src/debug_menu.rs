@@ -249,7 +249,7 @@ impl Menu {
                     use erdtree_tower::events::Draw;
                     ui.text_wrapped(crate::i18n::t("先开始旅程并停在路线图。联机由房主选择事件，全员需更新版本、开启调试并完成领奖。隐形道路在试炼 NPC 菜单里选择；测试旅程不计正式解锁。"));
                     let _disabled=ui.begin_disabled(PARTY_ROLE.load(Ordering::Relaxed)==2||run.phase!=erdtree_tower::Phase::Map||view.busy||view.travelling);
-                    for (label,draw) in [("舞会",Draw::Dance),("试炼岔路（含异端塔隐形桥）",Draw::Trial),("恢复泉水",Draw::Spring),("骰子赌徒",Draw::Dice),("盲盒商人",Draw::Mystery),("词条重铸",Draw::Reforge),("重练炉",Draw::Furnace),("粪金龟",Draw::Scarabs),("灵庙引路人",Draw::Mausoleum),("多宝箱",Draw::Chests),("祭坛",Draw::Altar),("上锁宝箱",Draw::Locked)] {
+                    for (label,draw) in [("余烬熔炉",Draw::EmberFurnace),("骨灰融合炉",Draw::SpiritFurnace),("癫火祭坛",Draw::FrenzyAltar),("坚持30秒大混战",Draw::Survival),("舞会",Draw::Dance),("试炼岔路（含异端塔隐形桥）",Draw::Trial),("恢复泉水",Draw::Spring),("骰子赌徒",Draw::Dice),("盲盒商人",Draw::Mystery),("词条重铸",Draw::Reforge),("重练炉",Draw::Furnace),("粪金龟",Draw::Scarabs),("灵庙引路人",Draw::Mausoleum),("多宝箱",Draw::Chests),("祭坛",Draw::Altar),("上锁宝箱",Draw::Locked)] {
                         if ui.button(crate::i18n::t(label)){send(Command::EventTest(draw));}
                     }
                 }

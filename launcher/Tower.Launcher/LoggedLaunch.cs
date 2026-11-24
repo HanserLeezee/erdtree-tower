@@ -42,18 +42,44 @@ namespace Tower.Launcher
             } catch { process.Dispose(); stdout.Dispose(); stderr?.Dispose(); throw; }
         }
 
-        static async Task Pump(StreamReader input, StreamWriter output)
+        static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
+
+        /// <summary>优先按严格 UTF-8 解码；若 PowerShell 早期报错输出系统 ANSI（中文系统 GBK），回退系统默认编码，避免乱码。</summary>
+        internal static string DecodeLine(byte[] bytes, int count, Encoding? fallback = null)
         {
-            string? line;
-            while ((line = await input.ReadLineAsync().ConfigureAwait(false)) != null)
-                await output.WriteLineAsync(line).ConfigureAwait(false);
+            while (count > 0 && bytes[count - 1] == (byte)'\r') count--;
+            if (count == 0) return "";
+            try { return StrictUtf8.GetString(bytes, 0, count); }
+            catch (DecoderFallbackException) { return (fallback ?? Encoding.Default).GetString(bytes, 0, count); }
+        }
+
+        static async Task Pump(Stream input, StreamWriter output)
+        {
+            var buffer = new byte[4096];
+            using var line = new MemoryStream(256);
+            int read;
+            while ((read = await input.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) > 0)
+            {
+                var start = 0;
+                for (var i = 0; i < read; i++)
+                {
+                    if (buffer[i] != (byte)'\n') continue;
+                    if (i > start) line.Write(buffer, start, i - start);
+                    await output.WriteLineAsync(DecodeLine(line.GetBuffer(), (int)line.Length)).ConfigureAwait(false);
+                    line.SetLength(0);
+                    start = i + 1;
+                }
+                if (start < read) line.Write(buffer, start, read - start);
+            }
+            if (line.Length > 0)
+                await output.WriteLineAsync(DecodeLine(line.GetBuffer(), (int)line.Length)).ConfigureAwait(false);
         }
 
         async Task Capture(Process process, string directory, StreamWriter stdout, StreamWriter stderr)
         {
             using (process) using (stdout) using (stderr) {
                 try {
-                    await Task.WhenAll(Pump(process.StandardOutput, stdout), Pump(process.StandardError, stderr), exited).ConfigureAwait(false);
+                    await Task.WhenAll(Pump(process.StandardOutput.BaseStream, stdout), Pump(process.StandardError.BaseStream, stderr), exited).ConfigureAwait(false);
                     File.WriteAllText(Path.Combine(directory, "exit-code.txt"), ExitCode.ToString(), new UTF8Encoding(false));
                 } catch (Exception error) { Log.Write("启动日志采集失败：" + error.Message); }
             }

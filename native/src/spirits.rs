@@ -76,6 +76,17 @@ pub fn prepare_warp(world:&mut WorldChrMan,reason:&str) {
     let manager: *mut u8 = std::ptr::from_mut(&mut *world.summon_buddy_manager).cast();
     unsafe {dismissal::clear_local_now(manager,owner,REPLACE_ORIGINAL.load(Ordering::Acquire));}
 }
+/// F6 暂退请求时自动遣返场上本机骨灰，避免 `has_local_groups` 一直阻塞暂退。
+pub fn dismiss_local_for_suspend(world:&mut WorldChrMan)->bool {
+    if !has_local_groups(world) {return false;}
+    world.summon_buddy_manager.disappear_requested=true;
+    if REPLACE_READY.load(Ordering::Acquire)
+        &&let Some(owner)=world.main_player.as_ref().map(|p|unsafe {p.player_game_data.as_ref()}.character_event_id as i32) {
+        let manager:*mut u8=std::ptr::from_mut(&mut *world.summon_buddy_manager).cast();
+        unsafe {dismissal::clear_local_now(manager,owner,REPLACE_ORIGINAL.load(Ordering::Acquire));}
+    }
+    true
+}
 fn reset_twin() {
     TWIN_ARMED.store(false,Ordering::Release);
     CAP_NOTICED.store(false,Ordering::Release);
@@ -387,8 +398,79 @@ impl Spirits {
         Ok(())
     }
 }
+/// 自制山妖/山妖骑士骨灰 AI 修正：
+/// 1) 生成骨灰时 CustomSpiritAssets 曾用友军模板 121000000 覆盖了 spEffectID0 与 spEffectID29，
+///    导致山妖骑士(c5391, 153918037)与卡利亚骑士波尔斯(c4601, 146018069)丢失 5401（animIdOffset=1000000 持剑动作组）与 10144（山妖骑士 AI 状态标记）；
+/// 2) 三只山妖骨灰沿用了敌人专用 logicId=460000、disableLocalSteering=1 与窄视野(eye_angX=35/eye_angY=60)，
+///    易在召唤后呆站不寻路/不进战。此处在内存恢复 5401 + 10144，并将三只山妖骨灰统一到原版骨灰通用 logicId=10000、允许局部转向与全向视野。
+const TROLL_KNIGHT_NPCS:[u32;2]=[153918037,146018069];
+const TROLL_SPIRIT_THINKS:[u32;3]=[153918037,146018069,146008031];
+const TROLL_KNIGHT_ANIM_OFFSET:i32=5401;
+const TROLL_KNIGHT_AI_MARKER:i32=10144;
+const BUDDY_COMMON_LOGIC:i32=10000;
+fn repair_troll_knight_npc(row:&mut eldenring::param::NPC_PARAM_ST)->bool {
+    let mut changed=false;
+    if row.sp_effect_id0()==5400 {row.set_sp_effect_id0(TROLL_KNIGHT_ANIM_OFFSET);changed=true;}
+    if row.sp_effect_id15()<=0 {row.set_sp_effect_id15(TROLL_KNIGHT_AI_MARKER);changed=true;}
+    changed
+}
+fn repair_troll_think(row:&mut eldenring::param::NPC_THINK_PARAM_ST)->bool {
+    let mut changed=false;
+    if row.logic_id()!=BUDDY_COMMON_LOGIC {row.set_logic_id(BUDDY_COMMON_LOGIC);changed=true;}
+    if row.disable_local_steering()!=0 {row.set_disable_local_steering(0);changed=true;}
+    if row.eye_dist()<100 {row.set_eye_dist(100);changed=true;}
+    if row.eye_ang_x()<180 {row.set_eye_ang_x(180);changed=true;}
+    if row.eye_ang_y()<180 {row.set_eye_ang_y(180);changed=true;}
+    if row.disable_dark()==0 {row.set_disable_dark(1);changed=true;}
+    changed
+}
+pub fn repair_custom_spirit_ai() {
+    use eldenring::cs::{NpcParam,NpcThinkParam,SoloParamRepository};
+    static DONE:AtomicBool=AtomicBool::new(false);
+    if DONE.load(Ordering::Relaxed) {return;}
+    let Ok(params)=(unsafe {SoloParamRepository::instance_mut()}) else{return};
+    let (mut found_npc,mut fixed_npc,mut found_think,mut fixed_think)=(0usize,0usize,0usize,0usize);
+    for id in TROLL_KNIGHT_NPCS {
+        if let Some(row)=params.get_mut::<NpcParam>(id) {found_npc+=1;if repair_troll_knight_npc(row){fixed_npc+=1;}}
+    }
+    for id in TROLL_SPIRIT_THINKS {
+        if let Some(row)=params.get_mut::<NpcThinkParam>(id) {found_think+=1;if repair_troll_think(row){fixed_think+=1;}}
+    }
+    if found_npc==0&&found_think==0 {return;}
+    if found_npc==TROLL_KNIGHT_NPCS.len()&&found_think==TROLL_SPIRIT_THINKS.len() {DONE.store(true,Ordering::Relaxed);}
+    if fixed_npc>0||fixed_think>0 {
+        super::log(format!("Custom troll spirit AI repaired: npc={fixed_npc}/{found_npc} think={fixed_think}/{found_think}"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn troll_knight_spirit_repair_restores_anim_offset_marker_and_buddy_logic() {
+        let mut npc:eldenring::param::NPC_PARAM_ST=unsafe {std::mem::zeroed()};
+        npc.set_sp_effect_id0(5400);
+        npc.set_sp_effect_id15(-1);
+        assert!(super::repair_troll_knight_npc(&mut npc));
+        assert_eq!(npc.sp_effect_id0(),5401);
+        assert_eq!(npc.sp_effect_id15(),10144);
+        assert!(!super::repair_troll_knight_npc(&mut npc),"idempotent on second pass");
+
+        let mut think:eldenring::param::NPC_THINK_PARAM_ST=unsafe {std::mem::zeroed()};
+        think.set_logic_id(460000);
+        think.set_battle_goal_id(460100);
+        think.set_disable_local_steering(1);
+        think.set_eye_dist(26);
+        think.set_eye_ang_x(35);
+        think.set_eye_ang_y(60);
+        think.set_disable_dark(0);
+        assert!(super::repair_troll_think(&mut think));
+        assert_eq!(think.logic_id(),10000);
+        assert_eq!(think.battle_goal_id(),460100,"battle goal preserved");
+        assert_eq!(think.disable_local_steering(),0);
+        assert_eq!(think.eye_dist(),100);
+        assert_eq!((think.eye_ang_x(),think.eye_ang_y(),think.disable_dark()),(180,180,1));
+        assert!(!super::repair_troll_think(&mut think),"idempotent on second pass");
+    }
     #[test]
     fn resummon_permission_keeps_native_lifetime_cooldown_and_arena_guards() {
         use super::resummon_use_allowed as allowed;

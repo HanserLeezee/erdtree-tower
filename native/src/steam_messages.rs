@@ -3,6 +3,10 @@ use erdtree_tower::party_roster::Roster;
 
 const CHANNEL:i32=0x4554;
 const MAX_PACKET:usize=256*1024;
+/// SteamNetworkingSend flags: Reliable (8) | NoNagle (1) | AutoRestartBrokenSession (32).
+const SEND_FLAGS:i32=8|1|32;
+const RECEIVE_BATCH:usize=32;
+const MAX_RECEIVE_BATCHES:usize=8;
 #[repr(C)]
 struct Identity {bytes:[u8;136]}
 #[repr(C)]
@@ -91,11 +95,16 @@ impl Pending {
         let handshake=erdtree_tower::party_handshake::Handshake::new(roster.clone(),nonce,seed)?.with_dlc(dlc).with_compatibility(profile)?;
         Ok(Self{transport:Transport::load(roster.clone())?,roster,handshake,hello:std::time::Instant::now()-std::time::Duration::from_secs(1),started:std::time::Instant::now(),packets:vec![],failure:None})
     }
-    pub fn poll(&mut self,fresh_lobby:bool)->Result<Option<(u64,u64)>,String> {
+    pub fn poll(&mut self,fresh_lobby:bool,resume_lobby_seed:Option<u64>)->Result<Option<(u64,u64)>,String> {
         use erdtree_tower::party_handshake::Payload;
         if self.failure.is_none()&&self.hello.elapsed()>=std::time::Duration::from_secs(1) {
             self.hello=std::time::Instant::now();
-            if let Some((peer,message))=self.handshake.hello(){self.transport.send(peer,&Payload::Handshake(message).encode()?)?;}
+            if let Some((peer,message))=self.handshake.hello(){
+                if let Err(error)=self.transport.send(peer,&Payload::Handshake(message).encode()?) {
+                    self.transport.reopen_peer(peer);
+                    super::log_repeating(format!("PARTY_HANDSHAKE transient send failure to peer={peer}, reopened channel: {error}"));
+                }
+            }
         }
         for (peer,bytes) in self.transport.receive()? {
             let packet=match Payload::decode(&bytes) {
@@ -104,18 +113,19 @@ impl Pending {
             };
             match packet {
                   Payload::Reconnect{session,message:erdtree_tower::party_reconnect::Message::Request{nonce,profile,..}}
-                      if fresh_lobby && self.failure.is_none() && self.roster.local==self.roster.host && nonce!=0 => {
+                      if (fresh_lobby || resume_lobby_seed.is_some()) && self.failure.is_none() && self.roster.local==self.roster.host && nonce!=0 => {
                       let local=super::party_compat::profile().ok_or("等待本机兼容检查")?.as_ref().map_err(Clone::clone)?;
                       let message=match local.check(&profile) {
+                          Ok(()) if resume_lobby_seed.is_some()=>erdtree_tower::party_reconnect::Message::ResumeLobby{nonce},
                           Ok(())=>erdtree_tower::party_reconnect::Message::FreshLobby{nonce},
                           Err(reason)=>erdtree_tower::party_reconnect::Message::Reject{nonce,reason},
                       };
-                      self.transport.send(peer,&Payload::Reconnect{session,message}.encode()?)?;
+                      let _=self.transport.send(peer,&Payload::Reconnect{session,message}.encode()?);
                   },
                 Payload::Handshake(message)=>{
                     let responses=handshake_responses(&mut self.handshake,&mut self.failure,peer,message);
                     for (target,response) in responses {
-                        self.transport.send(target,&Payload::Handshake(response).encode()?)?;
+                        let _=self.transport.send(target,&Payload::Handshake(response).encode()?);
                     }
                 },
                 packet=>{
@@ -176,6 +186,7 @@ impl Transport {
     }
     /// 队员退出后换成缩小后的名单（之后不再给他发消息，也不收他的）
     pub fn set_roster(&mut self,roster:Roster) {self.roster=roster;}
+    pub fn reopen_peer(&self,peer:u64) {self.reopen_channels(&[peer]);}
     fn reopen_channels(&self,peers:&[u64]) {
         for &peer in peers {
             if !allowed(&self.roster,peer,1){continue;}
@@ -188,7 +199,7 @@ impl Transport {
         let mut identity=Identity{bytes:[0;136]};
         let result=unsafe {
             (self.set)(&mut identity,peer);
-            (self.send)(self.interface.as_ptr(),&identity,data.as_ptr(),data.len() as u32,8|1,CHANNEL)
+            (self.send)(self.interface.as_ptr(),&identity,data.as_ptr(),data.len() as u32,SEND_FLAGS,CHANNEL)
         };
         if result==1 {return Ok(());}
         super::log_repeating(format!("PARTY_NET send failed result={result} {}",self.diagnose(peer)));
@@ -233,18 +244,21 @@ impl Transport {
             let mut identity=Identity{bytes:[0;136]};
             unsafe {(self.set)(&mut identity,peer);(self.accept)(self.interface.as_ptr(),&identity);}
         }
-        let mut messages=[std::ptr::null_mut();32];
-        let count=unsafe {(self.receive)(self.interface.as_ptr(),CHANNEL,messages.as_mut_ptr(),messages.len() as i32)};
-        if !(0..=messages.len() as i32).contains(&count){return Err("Steam 接收数量无效".into());}
         let mut packets=Vec::new();
-        for &message in &messages[..count as usize] {
-            if message.is_null(){continue;}
-            let owned=OwnedMessage{message,release:self.release};
-            let msg=unsafe {&*owned.message};
-            let peer=unsafe {(self.get)(&msg.peer)};
-            if msg.size>0&&!msg.data.is_null()&&allowed(&self.roster,peer,msg.size as usize) {
-                packets.push((peer,unsafe {std::slice::from_raw_parts(msg.data,msg.size as usize)}.to_vec()));
+        for _ in 0..MAX_RECEIVE_BATCHES {
+            let mut messages=[std::ptr::null_mut();RECEIVE_BATCH];
+            let count=unsafe {(self.receive)(self.interface.as_ptr(),CHANNEL,messages.as_mut_ptr(),messages.len() as i32)};
+            if !(0..=messages.len() as i32).contains(&count){return Err("Steam 接收数量无效".into());}
+            for &message in &messages[..count as usize] {
+                if message.is_null(){continue;}
+                let owned=OwnedMessage{message,release:self.release};
+                let msg=unsafe {&*owned.message};
+                let peer=unsafe {(self.get)(&msg.peer)};
+                if msg.size>0&&!msg.data.is_null()&&allowed(&self.roster,peer,msg.size as usize) {
+                    packets.push((peer,unsafe {std::slice::from_raw_parts(msg.data,msg.size as usize)}.to_vec()));
+                }
             }
+            if (count as usize)<RECEIVE_BATCH {break;}
         }
         Ok(packets)
     }

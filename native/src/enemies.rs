@@ -134,6 +134,37 @@ fn event_roster_in(seed:u64,ordinal:usize,layer:usize,act:u8,altar:bool,party:bo
     let count=if altar {stage+1}else{[2,3,3,4][stage]};
     (0..count).map(|i|choose_in(NodeKind::Monster,seed,ordinal*count+i,act,party)).collect()
 }
+/// 「坚持 30 秒」大混战名单：2 名精英 + 6 名普通怪（共 8 名），确保联机 map_entities 全部可映射且槽位充足。
+pub fn survival_roster(seed:u64,ordinal:usize,layer:usize,act:u8)->Vec<Enemy> {
+    survival_roster_in(seed,ordinal,layer,act,party())
+}
+fn survival_roster_in(seed:u64,ordinal:usize,_layer:usize,act:u8,party:bool)->Vec<Enemy> {
+    let act=pool_act(seed,act,NodeKind::Event,ordinal);
+    let mut group=Vec::with_capacity(erdtree_tower::new_events::SURVIVAL_COUNT);
+    for i in 0..2 {
+        let mut candidate=choose_in(NodeKind::Elite,seed^0x5017_e117,ordinal*8+i,act,party);
+        if party&&map_entities(&[candidate]).is_err() {
+            candidate=choose_in(NodeKind::Monster,seed^0x5017_e117,ordinal*8+i,act,party);
+        }
+        group.push(candidate);
+    }
+    for i in 0..6 {
+        group.push(choose_in(NodeKind::Monster,seed^0x5017_0006,ordinal*8+2+i,act,party));
+    }
+    if party&&map_entities(&group).is_err() {
+        // 极端情况下（同一模板超过预置槽位数）逐只筛选可用模板，保证联机永不失败
+        group.clear();
+        let mut attempt=0usize;
+        while group.len()<erdtree_tower::new_events::SURVIVAL_COUNT&&attempt<64 {
+            let candidate=choose_in(NodeKind::Monster,seed^0x5017_fa11_u64.wrapping_add(attempt as u64*131),ordinal*16+attempt,act,true);
+            attempt+=1;
+            let mut trial=group.clone();
+            trial.push(candidate);
+            if map_entities(&trial).is_ok() {group=trial;}
+        }
+    }
+    group
+}
 #[test]
 fn event_guards_only_use_regular_enemies() {
     for party in [false,true] {for act in 1..=3 {for altar in [false,true] {for layer in 0..12 {for seed in 0..100 {
@@ -498,6 +529,76 @@ fn select(mut pool:Vec<Enemy>,seed:u64,ordinal:usize,party:bool)->Enemy {
     pool[ordinal % pool.len()]
 }
 
+/// 发狂南瓜头士兵（c4340 / c4341）甩旗/插旗时通过 Bullet.assetNo_Hit 在地面生成 300 秒且无敌（hp=-1）的旗帜摆件
+/// （AssetEnvironmentGeometryParam 300001 / 300010..300013）；塔内竞技场跨层复用不重载地图，会导致旗子长期留在场地上。
+/// 仅在本机内存清空这 6 条弹体的 assetNo_Hit（保留原有攻击判定与伤害），并将对应摆件寿命压短兜底，不改 regulation.bin。
+const PUMPKIN_BANNER_BULLETS:[u32;6]=[4340192,4340602,4340612,4340622,4340632,4341192];
+const PUMPKIN_BANNER_ASSETS:[u32;5]=[300001,300010,300011,300012,300013];
+const PUMPKIN_BANNER_MAX_LIFE:f32=5.0;
+fn strip_banner_bullet(row:&mut eldenring::param::BULLET_PARAM_ST)->bool {
+    if row.asset_no_hit()>=0 {row.set_asset_no_hit(-1);true}else{false}
+}
+fn cap_banner_asset(row:&mut eldenring::param::ASSET_GEOMETORY_PARAM_ST)->bool {
+    if row.life_time_for_runtime_create()>PUMPKIN_BANNER_MAX_LIFE {
+        row.set_life_time_for_runtime_create(PUMPKIN_BANNER_MAX_LIFE);true
+    }else{false}
+}
+pub fn disable_lingering_props() {
+    use eldenring::cs::{AssetEnvironmentGeometryParam,Bullet,SoloParamRepository};
+    use fromsoftware_shared::FromStatic;
+    static DONE:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+    if DONE.load(std::sync::atomic::Ordering::Relaxed) {return;}
+    let Ok(params)=(unsafe {SoloParamRepository::instance_mut()}) else{return};
+    let (mut found,mut bullets,mut assets)=(0usize,0usize,0usize);
+    for id in PUMPKIN_BANNER_BULLETS {
+        if let Some(row)=params.get_mut::<Bullet>(id) {found+=1;if strip_banner_bullet(row){bullets+=1;}}
+    }
+    if found==0 {return;}
+    for id in PUMPKIN_BANNER_ASSETS {
+        if let Some(row)=params.get_mut::<AssetEnvironmentGeometryParam>(id)&&cap_banner_asset(row) {assets+=1;}
+    }
+    if found==PUMPKIN_BANNER_BULLETS.len() {DONE.store(true,std::sync::atomic::Ordering::Relaxed);}
+    if bullets>0||assets>0 {
+        super::log(format!("Pumpkin Head lingering banner props disabled: bullets={bullets}/{found} assets={assets}/{}",PUMPKIN_BANNER_ASSETS.len()));
+    }
+}
+
+/// 龙王圆形平台（m13_00_00_00 / 0x0d000000）的 MSB 里保留了原版龙王普拉顿桑克斯（c4520_9000，仅靠 EMEVD Event 0 一次性关闭）。
+/// 联机无缝同步、死亡复活、客机后进或流式加载竞态时，原版龙王可能被引擎重新启用并在平台正中刷出。
+/// 爬塔怪池、Boss 池与骨灰均不包含 c4520；在龙王平台每帧兜底禁用并强制卸载任意游离的 c4520（不写死/不扣血，避免触发原版击杀奖励）。
+const DRAGONLORD_BLOCK:i32=0x0d000000;
+const DRAGONLORD_MODEL:i32=4520;
+fn is_stray_dragonlord(block:i32,npc_id:i32,is_party_slot:bool)->bool {
+    block==DRAGONLORD_BLOCK&&npc_id==DRAGONLORD_MODEL&&!is_party_slot
+}
+fn suppress_dragonlord_flags(flags:&mut eldenring::cs::ChrDebugFlags)->bool {
+    let active=!flags.character_disabled()||!flags.force_unloaded()||!flags.disabled_updates()||!flags.disabled_hit()||flags.force_loaded();
+    if active {
+        flags.set_force_loaded(false);
+        flags.set_disabled_hit(true);
+        flags.set_disabled_updates(true);
+        flags.set_character_disabled(true);
+        flags.set_force_unloaded(true);
+    }
+    active
+}
+pub fn suppress_stray_dragonlord(world:&mut eldenring::cs::WorldChrMan) {
+    let Some(block)=world.main_player.as_ref().map(|p|i32::from(p.current_block_id)) else{return};
+    if block!=DRAGONLORD_BLOCK {return;}
+    for chr in world.chr_sets.iter_mut().flatten().flat_map(|set|set.characters()) {
+        let is_party_slot=(48000000..48100000).contains(&chr.event_entity_id)||(51000000..51100000).contains(&chr.event_entity_id);
+        if !is_stray_dragonlord(block,chr.npc_id,is_party_slot) {continue;}
+        let was_disabled=chr.debug_flags.character_disabled();
+        if suppress_dragonlord_flags(&mut chr.debug_flags) {
+            let status=unsafe {chr.chr_set_entry.as_ref()}.chr_load_status;
+            super::log_repeating(format!(
+                "DRAGONLORD_GUARD suppressed stray vanilla c4520 entity={} npc_param={} hp={}/{} was_disabled={was_disabled} load={status:?}",
+                chr.event_entity_id,chr.npc_param_id,chr.modules.data.hp,chr.modules.data.max_hp
+            ));
+        }
+    }
+}
+
 fn mix(mut value:u64)->u64 {
     value=(value^(value>>30)).wrapping_mul(0xbf58476d1ce4e5b9);
     value=(value^(value>>27)).wrapping_mul(0x94d049bb133111eb);
@@ -506,6 +607,38 @@ fn mix(mut value:u64)->u64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stray_dragonlord_guard_only_suppresses_vanilla_c4520_on_dragonlord_platform() {
+        assert!(super::is_stray_dragonlord(0x0d000000,4520,false));
+        assert!(!super::is_stray_dragonlord(0x2d020000,4520,false),"only active on m13_00_00_00");
+        assert!(!super::is_stray_dragonlord(0x0d000000,4511,false),"other dragons unaffected");
+        assert!(!super::is_stray_dragonlord(0x0d000000,4520,true),"never touches tower party slots");
+        assert!(super::POOLS.iter().all(|e|e.model!=4520));
+        assert!(super::BOSSES.iter().all(|(_,e)|e.model!=4520));
+        let mut flags=eldenring::cs::ChrDebugFlags(0);
+        flags.set_force_loaded(true);
+        assert!(super::suppress_dragonlord_flags(&mut flags));
+        assert!(flags.character_disabled()&&flags.force_unloaded()&&flags.disabled_updates()&&flags.disabled_hit()&&!flags.force_loaded());
+        assert!(!super::suppress_dragonlord_flags(&mut flags),"idempotent once suppressed");
+    }
+    #[test]
+    fn pumpkin_banner_props_are_stripped_without_affecting_attack_data() {
+        let mut bullet:eldenring::param::BULLET_PARAM_ST=unsafe {std::mem::zeroed()};
+        bullet.set_asset_no_hit(300001);
+        bullet.set_atk_id_bullet(4340190);
+        bullet.set_life(10.0);
+        assert!(super::strip_banner_bullet(&mut bullet));
+        assert_eq!(bullet.asset_no_hit(),-1);
+        assert_eq!(bullet.atk_id_bullet(),4340190);
+        assert_eq!(bullet.life(),10.0);
+        assert!(!super::strip_banner_bullet(&mut bullet),"idempotent on second pass");
+
+        let mut asset:eldenring::param::ASSET_GEOMETORY_PARAM_ST=unsafe {std::mem::zeroed()};
+        asset.set_life_time_for_runtime_create(300.0);
+        assert!(super::cap_banner_asset(&mut asset));
+        assert_eq!(asset.life_time_for_runtime_create(),super::PUMPKIN_BANNER_MAX_LIFE);
+        assert!(!super::cap_banner_asset(&mut asset));
+    }
     #[test]
     fn reassigned_field_enemies_are_drawn_only_in_their_new_slots() {
         for party in [false,true] {

@@ -29,9 +29,13 @@ pub fn shop_price(law:Law,price:i32)->i32 {
     if price<=0||law.price_percent()==100 {return price;}
     (i64::from(price)*i64::from(law.price_percent())/100).min(i64::from(i32::MAX)) as i32
 }
-/// 玩家身上的律法效果：只在进行中的旅程里保留，超时失血只在限时战斗超时后施加
+/// 玩家身上的律法效果：只在进行中的旅程里保留，超时失血只在限时战斗超时后施加；癫火祭坛「癫火烙印」在下场战斗附加易伤
 pub fn sync(chr:&mut ChrIns,run:Option<&Run>,overtime:bool) {
-    let want=run.filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won)).map_or_else(Vec::new,|r|player_effects(r.law,overtime));
+    let mut want=run.filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won)).map_or_else(Vec::new,|r|player_effects(r.law,overtime));
+    if let Some(r)=run.filter(|r|r.frenzy_curse&&matches!(r.phase,Phase::Combat{..})) {
+        let curse=if r.law.fragile()==3 {FIRST+12}else{FIRST+13};
+        if !want.contains(&curse){want.push(curse);}
+    }
     let present:Vec<_>=chr.special_effect.entries().map(|e|e.param_id).collect();
     for id in PLAYER {if present.contains(&id)&&!want.contains(&id){chr.remove_speffect(id);}}
     if want.is_empty()||!ready(&want) {return;}

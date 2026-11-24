@@ -22,10 +22,12 @@ impl Ticket {
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub enum Message {
     Request{nonce:u64,seed:u64,generation:u64,profile:Compatibility,dlc:bool},
+    Queued{nonce:u64},
     Offer{nonce:u64,checkpoint:Checkpoint,dlc:bool,members:Vec<u64>,block:i32},
     Ack{nonce:u64,epoch:u64},
     Ready{nonce:u64,epoch:u64},
     FreshLobby{nonce:u64},
+    ResumeLobby{nonce:u64},
     Reject{nonce:u64,reason:String},
 }
 

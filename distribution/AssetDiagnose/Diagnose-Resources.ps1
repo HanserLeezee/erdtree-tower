@@ -1,6 +1,6 @@
 param([string]$InstallDir=$PSScriptRoot,[string]$GameDir)
 $ErrorActionPreference='Stop'
-foreach($module in @('Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility')){Import-Module ([IO.Path]::Combine($PSHOME,'Modules',$module,($module+'.psd1'))) -ErrorAction Stop}
+foreach($module in @('Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility')){$psd1=[IO.Path]::Combine($PSHOME,'Modules',$module,($module+'.psd1'));if([IO.File]::Exists($psd1)){Import-Module $psd1 -ErrorAction Stop}}
 $root=[IO.Path]::GetFullPath($InstallDir)
 if(!(Test-Path -LiteralPath (Join-Path $root 'asset-patches/manifest.json'))){throw 'Extract this diagnostic package into the launcher folder first.'}
 if(Get-Process eldenring,Tower.AssetRestore -ErrorAction SilentlyContinue){throw 'Save and exit the game and wait for resource generation to finish before diagnosing.'}
@@ -22,7 +22,8 @@ $utf8=[Text.UTF8Encoding]::new($false)
 function Record([string]$line){[IO.File]::AppendAllText($report,$line+"`r`n",$utf8);Write-Output $line}
 Record ('PowerShell: '+$PSVersionTable.PSVersion+'; OS: '+[Environment]::OSVersion+'; x64: '+[Environment]::Is64BitProcess)
 try {
-    Import-Module ([IO.Path]::Combine($PSHOME,'Modules/CimCmdlets/CimCmdlets.psd1'))
+    $cim=[IO.Path]::Combine($PSHOME,'Modules','CimCmdlets','CimCmdlets.psd1')
+    if([IO.File]::Exists($cim)){Import-Module $cim}
     foreach($cpu in Get-CimInstance Win32_Processor){Record ('CPU: '+$cpu.Name)}
     foreach($page in Get-CimInstance Win32_PageFileUsage){Record ('Pagefile: allocated_MB='+$page.AllocatedBaseSize+' used_MB='+$page.CurrentUsage+' peak_MB='+$page.PeakUsage)}
 }catch{Record ('System details unavailable: '+$_.Exception.Message)}

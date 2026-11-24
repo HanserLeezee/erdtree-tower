@@ -15,8 +15,25 @@ fn law_start_allowed()->bool {
 }
 #[derive(Debug,PartialEq,Eq)]
 enum WarpStep {Request,Wait,Ready,Failed}
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum PartyChoiceGuard {
+    Solo,
+    FreshParty,
+    ResumeParty { can_restart: bool },
+}
 fn choice_allowed(npc:usize,choice:i32,party_ready:bool)->bool {
     party_ready||npc!=0||!matches!(choice,1|2|3)
+}
+fn choice_guard_block(npc:usize,choice:i32,guard:PartyChoiceGuard)->Option<&'static str> {
+    if npc!=0 {return None;}
+    match guard {
+        PartyChoiceGuard::Solo=>None,
+        PartyChoiceGuard::FreshParty if choice==2=>Some("联机模式下不能直接继续未暂停的本地残留进度。\n请选择「开始新旅程」以重置角色并与队友同步开局。"),
+        PartyChoiceGuard::FreshParty=>None,
+        PartyChoiceGuard::ResumeParty{can_restart:true} if matches!(choice,1|3)=>Some("全队当前有一致的暂停旅程，已锁定为「继续旅程」，避免队友进度与种子错乱。\n如需放弃暂停进度并重开新局，请点击下方「全队放弃暂停旅程并重开」。"),
+        PartyChoiceGuard::ResumeParty{can_restart:false} if matches!(choice,1|3)=>Some("全队当前有一致的暂停旅程，请点击「继续旅程」恢复原对局。\n如需放弃暂停进度并重开新局，请等全员留在大赐福时由房主确认全队重开（或按 Home 结束本局）。"),
+        PartyChoiceGuard::ResumeParty{..}=>None,
+    }
 }
 fn follows_host(remote:bool,paused:bool,settled:bool)->bool {remote&&!paused&&!settled}
 fn return_before_reset(active:bool,reset:bool,settled:bool,block:i32,grounded:bool)->bool {
@@ -102,6 +119,18 @@ mod tests {
         assert!(choice_allowed(0,2,true));
         for choice in 1..=10 {assert!(choice_allowed(1,choice,false));}
         assert!(choice_allowed(0,0,false));
+        // 联机模式互斥锁定：新开态禁继续，一致暂停恢复态禁新开与固定种子
+        for choice in 1..=3 {assert!(choice_guard_block(0,choice,PartyChoiceGuard::Solo).is_none());}
+        assert!(choice_guard_block(0,1,PartyChoiceGuard::FreshParty).is_none());
+        assert!(choice_guard_block(0,2,PartyChoiceGuard::FreshParty).is_some());
+        assert!(choice_guard_block(0,3,PartyChoiceGuard::FreshParty).is_none());
+        assert!(choice_guard_block(1,2,PartyChoiceGuard::FreshParty).is_none());
+        assert!(choice_guard_block(0,1,PartyChoiceGuard::ResumeParty{can_restart:true}).is_some_and(|m|m.contains("全队放弃暂停旅程并重开")));
+        assert!(choice_guard_block(0,2,PartyChoiceGuard::ResumeParty{can_restart:true}).is_none());
+        assert!(choice_guard_block(0,3,PartyChoiceGuard::ResumeParty{can_restart:true}).is_some());
+        assert!(choice_guard_block(0,1,PartyChoiceGuard::ResumeParty{can_restart:false}).is_some_and(|m|!m.contains("请点击下方")));
+        assert!(choice_guard_block(0,2,PartyChoiceGuard::ResumeParty{can_restart:false}).is_none());
+        assert!(choice_guard_block(1,1,PartyChoiceGuard::ResumeParty{can_restart:true}).is_none());
     }
     #[test]
     fn guest_waits_for_host_destination_without_issuing_a_warp() {
@@ -176,7 +205,9 @@ impl Hub {
     pub fn dialog_active(&self)->bool {self.active && self.room.as_ref().is_some_and(|r|r.dialog_active())}
     pub fn new(owner:(u32,i32), archetype:u8)->Result<Self,String> {
         let save=path(owner,"json");
-        let resume=if let Some(saved)=super::suspension::load(owner)? {Some(saved)}else if save.exists() {
+        let explicit_pause=super::suspension::load(owner)?;
+        let auto_pause=if explicit_pause.is_none(){super::suspension::load_auto(owner)?}else{None};
+        let json_run=if save.exists() {
             let text=std::fs::read_to_string(&save).map_err(|e|e.to_string())?;
             // 职业重做前的旧存档（旧职业或旧职业规则）不再继续：改名备份，按没有存档处理
             if Run::retired_save(&text) {
@@ -186,9 +217,20 @@ impl Hub {
                 None
             } else {Some(Run::decode(&text)?)}
         } else {None};
+        let auto_valid=auto_pause.filter(|auto| !path(owner,"reset").exists()
+            && !json_run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Dead|Phase::Won)
+                || r.initial_seed.unwrap_or(r.seed)!=auto.initial_seed.unwrap_or(auto.seed)));
+        if auto_valid.is_none()&&path(owner,"autosave").exists() {
+            let _=super::suspension::clear_auto(owner);
+        }
+        let used_auto=explicit_pause.is_none()&&auto_valid.is_some();
+        if used_auto {
+            super::log(format!("PARTY_AUTOSAVE loaded crash-recovery checkpoint owner={owner:?}"));
+        }
+        let resume=explicit_pause.or(auto_valid).or(json_run);
         let chosen=std::fs::read_to_string(path(owner,"reset")).or_else(|_|std::fs::read_to_string(path(owner,"class"))).ok().and_then(|s|s.parse().ok()).filter(|a|super::class_from_archetype(*a).is_some()).unwrap_or(if super::class_from_archetype(archetype).is_some(){archetype}else{0});
         let reset=resume.as_ref().is_none_or(|r| matches!(r.phase,Phase::Dead|Phase::Won)) || path(owner,"reset").exists();
-        let paused=!reset&&path(owner,"paused").exists();
+        let paused=!reset&&(path(owner,"paused").exists()||used_auto);
         let settled=resume.as_ref().is_some_and(|r|matches!(r.phase,Phase::Dead|Phase::Won));
         Ok(Self {active:true,paused,owner,room:None,clock:Instant::now(),warp:WarpGate::default(),reset,start:false,chosen,resume,seed:None,fixed_seed:None,law:Default::default(),endless:false,settled,recovery_return:false})
     }
@@ -220,7 +262,7 @@ impl Hub {
     pub fn view(&self)->super::rooms::RoomView {
         self.room.as_ref().map(|r|r.view.clone()).unwrap_or(super::rooms::RoomView{message:"正在返回大赐福并准备角色……".into(),loading:true,completed:false})
     }
-    pub fn poll(&mut self,world:&mut WorldChrMan,game:&mut GameMan,blocked:Option<&str>)->Result<Option<Run>,String> {
+    pub fn poll(&mut self,world:&mut WorldChrMan,game:&mut GameMan,blocked:Option<&str>,guard:PartyChoiceGuard)->Result<Option<Run>,String> {
         let party_ready=blocked.is_none();
         let player=world.main_player.as_ref().ok_or("等待角色加载")?;
         let guest=follows_host(game.event_world_type==eldenring::cs::EventWorldType::Remote&&super::seamless::active(),self.paused,self.settled);
@@ -337,6 +379,12 @@ impl Hub {
                 room.view.message=reason.into();
                 super::run_screen::party_notice(reason.into());
                 super::log(format!("Hub start/resume blocked: {reason}"));
+                return Ok(None);
+            }
+            if let Some(reason)=choice_guard_block(npc,choice,guard) {
+                room.view.message=reason.into();
+                super::run_screen::party_notice(reason.into());
+                super::log(format!("Hub choice locked by party mode ({guard:?}, choice={choice}): {reason}"));
                 return Ok(None);
             }
             match (npc,choice) {

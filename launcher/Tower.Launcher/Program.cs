@@ -32,6 +32,9 @@ namespace Tower.Launcher
             AppDomain.CurrentDomain.UnhandledException += (s, e) => Crash(e.ExceptionObject as Exception);
             // .NET Framework 默认每个主机只开 2 个连接，分段下载是 4 路并发
             ServicePointManager.DefaultConnectionLimit = 16;
+            // Win10/11 正常保留 SystemDefault（自动协商 TLS 1.2/1.3）；若旧系统/注册表将其改为旧协议则强制补上 TLS 1.2
+            if (ServicePointManager.SecurityProtocol != SecurityProtocolType.SystemDefault)
+                ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
             try { Updater.Recover(paths.InstallDir); }
             catch (Exception e) { Log.Write("还原上次中断的更新失败：" + e); }
             Application.Run(new MainForm(paths));

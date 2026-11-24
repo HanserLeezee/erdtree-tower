@@ -11,6 +11,7 @@ $actualHash = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLowe
     ExecutableVersion = $version
     ExecutableSHA256 = $actualHash
     MatchesReferenced2720Executable = ($version -eq '2.7.2.0' -and $actualHash -eq $knownHash)
+    MatchesSupported272Series = ($version -match '^2\.7\.2\.\d+$')
     ModEngine2LauncherPresent = (Test-Path -LiteralPath (Join-Path $GameDir 'modengine2_launcher.exe'))
     ModEngine2RuntimePresent = (Test-Path -LiteralPath (Join-Path $GameDir 'modengine2') -PathType Container)
     GameRunning = (@(Get-Process -Name eldenring -ErrorAction SilentlyContinue).Count -gt 0)

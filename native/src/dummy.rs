@@ -2,7 +2,7 @@
 // 按它每帧掉的生命统计伤害（出血、中毒等状态伤害也算）：从第一击开始一轮，停手 4 秒后结算；万一一击打空血条，按满血计并在 1 秒后重新生成。
 // 出血、中毒、腐败、冻伤按最大生命的百分比扣血，所以假人的生命取本幕 Boss 的典型生命（health），每帧补满，DPS 与实战一致。
 // 联机时也生成：调试生成的角色只存在于本机，队友看不到、打不到，所以每人各有一个、各算各的。
-use eldenring::cs::{ChrDebugSpawnRequest,ChrIns,ChrLoadStatus,FieldInsHandle,NpcParam,NpcThinkParam,SoloParamRepository,WorldChrMan};
+use eldenring::cs::{ChrDebugSpawnRequest,ChrIns,ChrInsExt,ChrLoadStatus,FieldInsHandle,NpcParam,NpcThinkParam,SoloParamRepository,SpEffectParam,WorldChrMan};
 use fromsoftware_shared::{F32Vector4,FromStatic};
 use std::time::{Duration,Instant};
 
@@ -20,9 +20,29 @@ fn damage_since_refill(previous:i32,hp:i32,max:i32)->u32 {
     previous.min(max.max(0)).saturating_sub(hp.max(0)).max(0) as u32
 }
 
+/// 篝火营地（王城竞技场）安全半径上限（米），避免玩家贴边或转视角时把假人刷到墙外/柱子里
+const CAMP_BLOCK:i32=0x2d000000;
+const CAMP_SAFE_RADIUS:f32=13.5;
+/// 进营地站稳多久后再生成假人，避免无缝联机刚落地首帧调试刷怪撞到加载期
+const SPAWN_SETTLE:Duration=Duration::from_secs(1);
+const MAX_SPAWN_RETRIES:u8=3;
+
 fn placement(me:[f32;3],yaw:f32)->[f32;3] {
     let (sin,cos)=yaw.sin_cos();
     [me[0]-sin*2.0+cos*8.0,me[1]+0.1,me[2]-cos*2.0-sin*8.0]
+}
+fn clamp_camp_spot(block:i32,me:[f32;3],mut at:[f32;3])->[f32;3] {
+    if block==CAMP_BLOCK&&me[0].hypot(me[2])<=24.0 {
+        let r=at[0].hypot(at[2]);
+        if r>CAMP_SAFE_RADIUS {
+            let k=CAMP_SAFE_RADIUS/r;
+            at[0]*=k;at[2]*=k;
+        }
+    }
+    at
+}
+fn spawn_world_pos(origin:[f32;3],spot:[f32;3])->[f32;3] {
+    [origin[0]+spot[0],origin[1]+spot[1],origin[2]+spot[2]]
 }
 fn refill(chr:&mut ChrIns,health:i32) {
     let data=&mut chr.modules.data;
@@ -64,9 +84,14 @@ pub struct View {pub active:Option<Round>,pub last_hit:u32,pub overflow:bool,pub
 #[derive(Default)]
 pub struct Dummy {
     bound:Option<(FieldInsHandle,usize)>,
+    bound_at:Option<Instant>,
     requested:Option<Instant>,
     respawn_at:Option<Instant>,
+    grounded_since:Option<Instant>,
+    retries:u8,
     failed:bool,
+    saved_get_soul:Option<u32>,
+    no_dead_effect:Option<Option<i32>>,
     last_hp:i32,
     overflow:bool,
     /// 当前所在幕（决定假人的生命）
@@ -76,7 +101,49 @@ pub struct Dummy {
     anchor:Option<[f32;3]>,
     display:Option<(f64,f64,View)>,
 }
+impl Drop for Dummy {
+    fn drop(&mut self) {self.restore_npc_soul();}
+}
 impl Dummy {
+    fn suppress_npc_soul(&mut self) {
+        if self.saved_get_soul.is_some(){return;}
+        if let Ok(params)=unsafe {SoloParamRepository::instance_mut()}
+            &&let Some(row)=params.get_mut::<NpcParam>(NPC as u32)
+        {
+            self.saved_get_soul=Some(row.get_soul());
+            row.set_get_soul(0);
+        }
+    }
+    fn restore_npc_soul(&mut self) {
+        if let Some(prev)=self.saved_get_soul.take()
+            &&let Ok(params)=unsafe {SoloParamRepository::instance_mut()}
+            &&let Some(row)=params.get_mut::<NpcParam>(NPC as u32)
+        {
+            row.set_get_soul(prev);
+        }
+    }
+    fn no_dead_speffect(&mut self)->Option<i32> {
+        *self.no_dead_effect.get_or_insert_with(|| {
+            let params=unsafe {SoloParamRepository::instance()}.ok()?;
+            let found=params.rows::<SpEffectParam>().find_map(|(id,row)| {
+                let clean=row.no_dead()
+                    &&row.effect_endurance()<0.0
+                    &&row.state_info()==0
+                    &&row.vfx_id()<0
+                    &&row.max_hp_rate()==1.0
+                    &&row.change_hp_rate()==0.0
+                    &&row.change_hp_point()==0
+                    &&row.physics_diffence_rate()==1.0
+                    &&row.magic_diffence_rate()==1.0
+                    &&row.fire_diffence_rate()==1.0
+                    &&row.thunder_diffence_rate()==1.0
+                    &&row.dark_diffence_rate()==1.0;
+                clean.then_some(id as i32)
+            });
+            super::log(format!("Damage dummy pure no_dead SpEffect: {found:?}"));
+            found
+        })
+    }
     pub fn target(&self,world:&WorldChrMan)->Option<FieldInsHandle> {
         let (handle,address)=self.bound?;
         world.chr_ins_by_handle(&handle).filter(|c|std::ptr::from_ref(*c) as usize==address).map(|_|handle)
@@ -91,10 +158,24 @@ impl Dummy {
         self.display=Some((first,now,view));view
     }
     fn hold(&mut self,chr:&mut ChrIns,origin:[f32;3]) {
+        if let Some(effect)=self.no_dead_speffect()
+            &&!chr.special_effect.entries().any(|e|e.param_id==effect)
+        {
+            chr.apply_speffect(effect,false);
+        }
+        chr.team_type=6;
+        chr.chr_flags1c6.set_had_dropped_item(true);
+        chr.chr_flags1c6.set_has_dropped_runes(true);
         chr.debug_flags.set_disabled_secondary_actions(true);
         chr.debug_flags.set_disabled_movement(true);
+        chr.modules.behavior.animation_speed=0.0;
+        chr.modules.action_flag.action_modifiers_flags.set_super_armor(true);
+        chr.modules.action_flag.action_modifiers_flags.set_poise_forced_break(false);
+        chr.modules.super_armor.sa_durability=chr.modules.super_armor.sa_durability_max;
+        chr.modules.super_armor.poise_broken_state=false;
         let physics=&mut chr.modules.physics;
-        if self.anchor.is_none()&&physics.standing_on_solid_ground&&!physics.is_falling {
+        let anchor_fallback=self.bound_at.is_some_and(|at|at.elapsed()>=Duration::from_millis(1500));
+        if self.anchor.is_none()&&((physics.standing_on_solid_ground&&!physics.is_falling)||anchor_fallback) {
             self.anchor=Some([physics.position.0-origin[0],physics.position.1-origin[1],physics.position.2-origin[2]]);
         }
         let Some(at)=self.anchor else{return;};
@@ -106,11 +187,6 @@ impl Dummy {
             physics.orientation=eldenring::rotation::Quaternion(0.0,sin,0.0,cos);
             physics.interpolated_orientation=physics.orientation;
         }
-        chr.modules.behavior.animation_speed=0.0;
-        chr.modules.action_flag.action_modifiers_flags.set_super_armor(true);
-        chr.modules.action_flag.action_modifiers_flags.set_poise_forced_break(false);
-        chr.modules.super_armor.sa_durability=chr.modules.super_armor.sa_durability_max;
-        chr.modules.super_armor.poise_broken_state=false;
     }
     pub fn tick(&mut self,world:&mut WorldChrMan,now:f64,act:u8)->Result<(),String> {
         self.meter.tick(now);self.act=act;let health=health(act);
@@ -119,19 +195,27 @@ impl Dummy {
         let origin=[p.0-player.block_position.x,p.1-player.block_position.y,p.2-player.block_position.z];
         if let Some((handle,address))=self.bound {
             let Some(chr)=world.chr_ins_by_handle_mut(&handle).filter(|c|std::ptr::from_ref(*c) as usize==address) else {
-                self.bound=None;self.anchor=None;return Ok(());
+                self.bound=None;self.bound_at=None;self.anchor=None;return Ok(());
             };
             let hp=chr.modules.data.hp;
             let damage=damage_since_refill(self.last_hp,hp,chr.modules.data.max_hp);
             if damage>0 {
                 if self.meter.first.is_none(){self.overflow=false;}
-                self.meter.hit(damage,now);
+                // no_dead 特效开启时单次超高伤会把血锁在 1：按满血计并标记溢出，但不死亡、不断连段、不清异常条
+                if self.no_dead_effect.flatten().is_some()&&hp<=1&&self.last_hp>1 {
+                    self.overflow=true;
+                    self.meter.hit(self.last_hp.max(0) as u32,now);
+                } else {
+                    self.meter.hit(damage,now);
+                }
             }
             if hp<=0||chr.chr_flags1c5.death_flag() {
-                // 一击打空血条：按满血计，撤下后重新生成
+                // 兜底（若无纯 no_dead 特效或即死效果绕过）：不掉卢恩，撤下后在原固定位置重新生成
                 self.overflow=true;
+                chr.chr_flags1c6.set_had_dropped_item(true);
+                chr.chr_flags1c6.set_has_dropped_runes(true);
                 chr.debug_flags.set_character_disabled(true);chr.debug_flags.set_force_unloaded(true);
-                self.bound=None;self.anchor=None;self.respawn_at=Some(Instant::now()+Duration::from_secs(1));
+                self.bound=None;self.bound_at=None;self.anchor=None;self.respawn_at=Some(Instant::now()+Duration::from_secs(1));
                 return Ok(());
             }
             refill(chr,health);self.last_hp=health;
@@ -145,14 +229,24 @@ impl Dummy {
                 if chr.npc_param_id==NPC&&chr.modules.data.hp>0
                     &&matches!(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status,ChrLoadStatus::Active|ChrLoadStatus::ReadyForActivation)
                     &&let Some(chr)=world.chr_ins_by_handle_mut(&handle).filter(|c|std::ptr::from_ref(*c) as usize==address) {
+                    self.bound_at=Some(Instant::now());
                     refill(chr,health);self.last_hp=health;
                     self.hold(chr,origin);
-                    self.bound=Some((handle,address));self.requested=None;world.debug_chr_creator.last_created_chr=None;
+                    self.bound=Some((handle,address));self.requested=None;self.retries=0;world.debug_chr_creator.last_created_chr=None;
                     super::log(format!("Damage dummy bound: handle={handle}"));
                     return Ok(());
                 }
             }
-            if at.elapsed()>Duration::from_secs(15) {self.requested=None;self.failed=true;return Err("测伤假人生成超时".into());}
+            if at.elapsed()>Duration::from_secs(15) {
+                if world.debug_chr_creator.init_data.npc_param_id==NPC {world.debug_chr_creator.spawn=false;}
+                self.requested=None;self.retries=self.retries.saturating_add(1);
+                if self.retries>=MAX_SPAWN_RETRIES {
+                    self.failed=true;self.restore_npc_soul();
+                    return Err("测伤假人生成超时".into());
+                }
+                self.respawn_at=Some(Instant::now()+Duration::from_secs(2));
+                super::log(format!("Damage dummy spawn timed out; scheduling retry {}/{MAX_SPAWN_RETRIES}",self.retries));
+            }
             return Ok(());
         }
         if self.failed||self.respawn_at.is_some_and(|at|Instant::now()<at)||world.debug_chr_creator.spawn {return Ok(());}
@@ -160,14 +254,19 @@ impl Dummy {
         if params.get::<NpcParam>(NPC as u32).is_none()||params.get::<NpcThinkParam>(THINK as u32).is_none() {self.failed=true;return Err("缺少测伤假人的敌人参数".into());}
         let player=world.main_player.as_ref().ok_or("等待角色加载")?;
         let physics=&player.chr_ins.modules.physics;
-        if !physics.standing_on_solid_ground||physics.is_falling {return Ok(());}
-        // 前方 2 米、右侧 8 米，避开营地中央；重生沿用原位置。
-        let me=[physics.position.0-player.block_position.x,physics.position.1-player.block_position.y,physics.position.2-player.block_position.z];
+        if !physics.standing_on_solid_ground||physics.is_falling {self.grounded_since=None;return Ok(());}
+        let grounded_since=*self.grounded_since.get_or_insert_with(Instant::now);
+        if self.spot.is_none()&&grounded_since.elapsed()<SPAWN_SETTLE {return Ok(());}
+        // 使用区块局部坐标（block_position）记录固定落点，重生始终回到原处，不再随玩家移动漂移；营地内约束在安全半径内防止刷进墙里
+        let me=[player.block_position.x,player.block_position.y,player.block_position.z];
+        let origin=[physics.position.0-me[0],physics.position.1-me[1],physics.position.2-me[2]];
+        let block=i32::from(player.current_block_id);
         let (at,yaw)=*self.spot.get_or_insert_with(|| {
-            let at=placement(me,physics.orientation.to_euler_angles().1);
+            let at=clamp_camp_spot(block,me,placement(me,physics.orientation.to_euler_angles().1));
             (at,super::enemies::facing(at,me))
         });
-        let origin=[physics.position.0-me[0],physics.position.1-me[1],physics.position.2-me[2]];
+        let world_pos=spawn_world_pos(origin,at);
+        self.suppress_npc_soul();
         let init=&mut world.debug_chr_creator.init_data;
         unsafe {
             let bytes=std::ptr::from_mut(init).cast::<u8>();
@@ -176,11 +275,12 @@ impl Dummy {
         }
         world.debug_chr_creator.last_created_chr=None;
         super::spawn_guard::spawn(world,&ChrDebugSpawnRequest{chr_id:MODEL,npc_param_id:NPC,npc_think_param_id:THINK,chara_init_param_id:0,event_entity_id:0,talk_id:-1,
-            pos_x:origin[0]+at[0],pos_y:origin[1]+at[1],pos_z:origin[2]+at[2]});
+            pos_x:world_pos[0],pos_y:world_pos[1],pos_z:world_pos[2]});
         self.requested=Some(Instant::now());self.respawn_at=None;
         Ok(())
     }
-    pub fn retire(&self,world:&mut WorldChrMan) {
+    pub fn retire(&mut self,world:&mut WorldChrMan) {
+        self.restore_npc_soul();
         if self.requested.is_some()&&world.debug_chr_creator.init_data.npc_param_id==NPC {world.debug_chr_creator.spawn=false;}
         if let Some((handle,address))=self.bound
             &&let Some(chr)=world.chr_ins_by_handle_mut(&handle).filter(|c|std::ptr::from_ref(*c) as usize==address) {
@@ -276,6 +376,11 @@ mod tests {
         assert_eq!(placement(me,0.0),[18.0,2.1,18.0]);
         let p=placement(me,std::f32::consts::FRAC_PI_2);
         assert!((p[0]-8.0).abs()<0.001&&(p[2]-12.0).abs()<0.001);
+        // 营地安全半径约束与固定原点重生：玩家走开后 origin 不变，重生仍落回原处
+        let clamped=clamp_camp_spot(CAMP_BLOCK,[10.0,0.15,10.0],[18.0,0.25,10.0]);
+        assert!((clamped[0].hypot(clamped[2])-CAMP_SAFE_RADIUS).abs()<0.01);
+        let origin=[100.0,10.0,-50.0];
+        assert_eq!(spawn_world_pos(origin,clamped),[origin[0]+clamped[0],origin[1]+clamped[1],origin[2]+clamped[2]]);
     }
     #[test]
     fn rounds_start_on_the_first_hit_and_settle_after_four_idle_seconds() {

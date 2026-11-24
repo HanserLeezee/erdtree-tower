@@ -1,4 +1,4 @@
-$ErrorActionPreference='Stop'
+﻿$ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
 $testRoot=Join-Path ([IO.Path]::GetTempPath()) ('tower-profile-'+[guid]::NewGuid())
 New-Item -ItemType Directory -Path $testRoot | Out-Null

@@ -16,6 +16,16 @@ pub fn archive_closed(path:&Path)->Result<Option<PathBuf>,String> {
         let run=Run::decode(&std::fs::read_to_string(&session).map_err(|e|e.to_string())?)?;
         if !matches!(run.phase,Phase::Dead|Phase::Won){return Ok(None);}
     }
+    archive_file(path)
+}
+
+/// 重连恢复时无条件归档上次闪退遗留的领奖事务文件（保留证据、不重复补发物品），解除自动重连阻塞。
+pub fn archive_for_reconnect(path:&Path)->Result<Option<PathBuf>,String> {
+    if !path.exists(){return Ok(None);}
+    archive_file(path)
+}
+
+fn archive_file(path:&Path)->Result<Option<PathBuf>,String> {
     use std::io::Write;
     let bytes=std::fs::read(path).map_err(|e|e.to_string())?;
     for i in 0..10000 {
@@ -63,6 +73,21 @@ mod tests {
         let second=archive_closed(&path).unwrap().unwrap();assert_ne!(backup,second);
         assert_eq!(std::fs::read_to_string(&backup).unwrap(),evidence);
         for file in [backup,second,session]{std::fs::remove_file(file).unwrap();}
+        std::fs::remove_dir(dir).unwrap();
+    }
+    #[test]
+    fn reconnect_archive_preserves_evidence_even_while_run_is_active() {
+        let dir=std::env::temp_dir().join(format!("tower-material-reconn-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&dir).unwrap();
+        let path=dir.join("character.party-award");let session=path.with_extension("json");
+        let run=Run::new(42,erdtree_tower::Class::Samurai);
+        let evidence=run.encode().unwrap();
+        std::fs::write(&path,&evidence).unwrap();std::fs::write(&session,&evidence).unwrap();
+        let backup=archive_for_reconnect(&path).unwrap().unwrap();
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(),evidence);
+        assert!(!path.exists());
+        assert_eq!(archive_for_reconnect(&path).unwrap(),None);
+        for file in [backup,session]{std::fs::remove_file(file).unwrap();}
         std::fs::remove_dir(dir).unwrap();
     }
 }

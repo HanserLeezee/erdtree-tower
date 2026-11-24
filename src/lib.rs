@@ -54,6 +54,7 @@ pub mod stat_summary;
 pub mod dance;
 pub mod dance_party;
 pub mod dance_stage;
+pub mod new_events;
 
 pub type RuleResult<T> = Result<T, String>;
 
@@ -276,6 +277,15 @@ pub struct Run {
     /// 余烬「帐篷」：最近一次免费补瓶用在哪个篝火（幕, 节点）。每个篝火一次，不占营地服务
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub tent_refill: Option<(u8,usize)>,
+    /// 营地免费强化石：最近一次已发放强化石的篝火（幕, 节点），防止单人营地暂退读档重复领取
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub camp_stone_granted: Option<(u8,usize)>,
+    /// 癫火祭坛「癫火烙印」：下一场战斗我方受到的伤害 +35%，打赢该场战斗后自动解除
+    #[serde(default,skip_serializing_if="std::ops::Not::not")]
+    pub frenzy_curse: bool,
+    /// 癫火祭坛「燃尽圣杯」：本局永久扣除的红圣杯瓶上限数量
+    #[serde(default,skip_serializing_if="no_frenzy_cut")]
+    pub frenzy_flask_cut: u8,
     /// 余烬规则：1 起按品质抽（embers::offer_by_quality）；2 起宝箱房改为给一枚随机余烬（embers::chest_ember）；3 起职业专属余烬只有对应职业抽得到（Ember::classes）；旧存档为 0，等概率
     #[serde(default)]
     pub ember_rules: u8,
@@ -386,6 +396,7 @@ pub fn endless_unlocked(records: &[journal::Record]) -> bool {
 fn first_act()->u8 {1}
 fn no_law(law:&law::Law)->bool {law.is_empty()}
 fn no_start_talisman(id:&u32)->bool {*id==0}
+fn no_frenzy_cut(value:&u8)->bool {*value==0}
 fn mix(mut value: u64) -> u64 {
     value = value.wrapping_add(0x9e3779b97f4a7c15);
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
@@ -747,12 +758,15 @@ impl Run {
             embers: vec![],
             battlemage: vec![],
             tent_refill: None,
+            camp_stone_granted: None,
+            frenzy_curse: false,
+            frenzy_flask_cut: 0,
             ember_stacks: Default::default(),
             debug: false,
             boss_test: None,
             mausoleum_test: None,
             event_test: None,
-            event_rules: 6,
+            event_rules: 7,
             act:1,
             seed,
             initial_seed: Some(seed),
@@ -843,7 +857,8 @@ impl Run {
         matches!(class,Some(Err(_)))||value.get("class_rules").and_then(|v|v.as_u64()).unwrap_or(0)==0
     }
     pub fn summoner(&self)->bool {self.class==Class::Confessor}
-    pub fn full_flask_limit(&self)->u8 {let cut=self.law.flask_cut();10+self.flask_bonus*2-cut[0]-cut[1]}
+    pub fn total_flask_cut(&self)->[u8;2] {let mut cut=self.law.flask_cut();cut[0]=cut[0].saturating_add(self.frenzy_flask_cut);cut}
+    pub fn full_flask_limit(&self)->u8 {let cut=self.total_flask_cut();(10+self.flask_bonus*2).saturating_sub(cut[0]+cut[1]).max(1)}
 
     pub fn reward_seed(&self)->u64 {
         self.personal_reward_seed.map_or(self.seed,|seed|mix(seed ^ (u64::from(self.act)<<48) ^ 0x726577617264))
@@ -974,6 +989,13 @@ impl Run {
     pub fn tent_available(&self)->bool {
         self.embers.contains(&embers::Ember::Tent)&&self.current_camp().is_some_and(|id|self.tent_refill!=Some((self.act,id)))
     }
+    /// 营地免费强化石：这个篝火还没发放过免费强化石（读档回到同一营地不再重复发）
+    pub fn camp_stone_available(&self, node: usize)->bool {
+        self.camp_stone_granted!=Some((self.act,node))
+    }
+    pub fn mark_camp_stone_granted(&mut self, node: usize) {
+        self.camp_stone_granted=Some((self.act,node));
+    }
     /// 余烬「帐篷」的免费补瓶：与营地补给同样的补法，但不结束营地节点、不占服务次数
     pub fn tent_refill(&mut self, choice: CampChoice) -> RuleResult<()> {
         if !matches!(choice,CampChoice::Refill|CampChoice::RefillBlue|CampChoice::RefillRedOnly|CampChoice::RefillBlueOnly) {return Err("帐篷只提供圣杯瓶补给".into());}
@@ -1090,6 +1112,7 @@ impl Run {
             return Err("战斗状态无效".into());
         }
         self.checkpoint = None;
+        self.frenzy_curse = false;
         if matches!(kind,NodeKind::Elite|NodeKind::Boss) {self.ember_stacks.gain(&self.embers,embers::Gain::Slain);}
         // 最后一幕的 Boss：普通模式直接登顶不再三选一；无尽模式每幕 Boss 战后都领奖并进入下一幕
         if kind==NodeKind::Boss && (self.act>=3 && !self.endless || self.act>=MAX_ENDLESS_ACT) {self.finish(id);return Ok(());}
@@ -1356,7 +1379,8 @@ impl Run {
             || !self.valid_start_talisman()
             || self.weapon_preference.is_some_and(|p|!p.valid())
             || !weapon_training::valid_preferences(&self.weapon_preferences)
-            || self.event_rules>6
+            || self.event_rules>7
+            || self.frenzy_flask_cut>8
             || (!self.ember_rewards&&!self.embers.is_empty())
             || self.embers.iter().enumerate().any(|(i,e)|self.embers[..i].contains(e))
             || self.flask_limit != self.full_flask_limit()

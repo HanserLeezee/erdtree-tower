@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $root = Join-Path ([IO.Path]::GetTempPath()) ('tower direct test ' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../distribution/Start-Tower.ps1') -Destination $root

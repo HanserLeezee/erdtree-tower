@@ -1084,19 +1084,14 @@ namespace Tower.Launcher
 
         void ValidateNetwork(string gameDir)
         {
-            var network = NetworkProfile.Detect(gameDir);
-            var script = Path.Combine(paths.InstallDir, "Check-TowerNetwork.ps1");
-            if (!File.Exists(script)) throw new InvalidOperationException("缺少联机环境检查脚本，请更新完整启动器");
-            var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
-            using var process = Process.Start(new ProcessStartInfo(powershell,
-                $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File {Quote(script)} -GameDir {Quote(gameDir)} -Network {network}") {
-                UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true,
-                StandardErrorEncoding = Encoding.UTF8, WorkingDirectory = paths.InstallDir,
-            }) ?? throw new InvalidOperationException("无法检查联机环境");
-            var error = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-            if (process.ExitCode != 0) throw new InvalidOperationException("联机环境检查失败：" + error.Trim());
-            settings.Network = network;
+            try
+            {
+                settings.Network = NetworkProfile.Validate(gameDir);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                throw new InvalidOperationException("联机环境检查失败：" + e.Message, e);
+            }
         }
 
         /// <summary>GamePath.txt 里记住的 Game 目录（和 Start-Tower.ps1 共用），失效了返回 null</summary>

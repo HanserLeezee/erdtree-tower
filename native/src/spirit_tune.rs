@@ -30,19 +30,31 @@ fn choices(owned:&[u32],peak:u8)->Vec<Offer> {
     offers.sort_by_key(|o|std::cmp::Reverse(o.target-o.source));
     offers
 }
-/// 可调灵的骨灰：背包里没到 +39、且还没有持有目标等级的骨灰；升得多的排前面
-pub fn offers(data:&PlayerGameData)->Vec<Offer> {
-    let owned:Vec<u32>=data.equipment.equip_inventory_data.items_data.items()
+fn owned_spirits(data:&PlayerGameData)->Vec<u32> {
+    let mut owned:Vec<u32>=data.equipment.equip_inventory_data.items_data.items()
         .filter(|e|e.quantity>0&&e.item_id.category()==ItemCategory::Goods).map(|e|e.item_id.param_id())
         .filter(|id|spirit_level(0x40000000|id).is_some()).collect();
+    owned.sort_unstable();
+    owned.dedup();
+    owned
+}
+/// 可调灵的骨灰：背包里没到 +39、且还没有持有目标等级的骨灰；升得多的排前面
+pub fn offers(data:&PlayerGameData)->Vec<Offer> {
+    let owned=owned_spirits(data);
     choices(&owned,peak(data))
 }
 const MATERIAL:u32=700000;
 pub const OPEN_EVENT:i32=136;
 pub const MENU_KIND:i32=23;
 static ACTIVE:AtomicBool=AtomicBool::new(false);
-fn native_fields(id:u32,offers:&[Offer])->[i32;3] {
-    [offers.iter().find(|o|o.source==id).map_or(-1,|o|o.target as i32),MATERIAL as i32,0]
+/// 为全部骨灰等级写入连续调灵链（追赶目标 + 后续逐级 +1），仅对 +39 或已持有的目标等级置 -1，
+/// 避免连续用多块强化石调灵时，刚升完一级的骨灰因目标行是 -1 而从原生调灵界面消失。
+fn chain_fields(id:u32,owned:&[u32],peak:u8)->[i32;3] {
+    let next=spirit_tune_target(0x40000000|id,peak)
+        .map(|t|t&0x0fffffff)
+        .filter(|target|!owned.contains(target))
+        .map_or(-1,|target|target as i32);
+    [next,MATERIAL as i32,0]
 }
 fn fields(row:&eldenring::param::EQUIP_PARAM_GOODS_ST)->[i32;3] {[row.reinforce_goods_id(),row.reinforce_material_id(),row.reinforce_price()]}
 fn set_fields(row:&mut eldenring::param::EQUIP_PARAM_GOODS_ST,value:[i32;3]) {
@@ -52,7 +64,26 @@ struct Patch {id:u32,address:usize,before:[i32;3],after:[i32;3]}
 impl Patch {
     fn can_restore(&self,address:usize,current:[i32;3])->bool {address==self.address&&current==self.after}
 }
-pub struct Session {rows:Vec<Patch>}
+pub struct Session {rows:Vec<Patch>,last_state:(Vec<u32>,u8)}
+impl Session {
+    /// 调灵界面保持打开期间，每次升级后同步更新其余骨灰的追赶目标与防重检查。
+    pub fn refresh(&mut self,data:&PlayerGameData) {
+        let owned=owned_spirits(data);
+        let current_peak=peak(data);
+        if self.last_state.0==owned&&self.last_state.1==current_peak {return;}
+        let Ok(params)=(unsafe {SoloParamRepository::instance_mut()}) else{return;};
+        for patch in &mut self.rows {
+            let next=chain_fields(patch.id,&owned,current_peak);
+            if next==patch.after {continue;}
+            if let Some(row)=params.get_mut::<EquipParamGoods>(patch.id)
+                &&patch.can_restore(row as *mut _ as usize,fields(row)) {
+                set_fields(row,next);
+                patch.after=next;
+            }
+        }
+        self.last_state=(owned,current_peak);
+    }
+}
 impl Drop for Session {
     fn drop(&mut self) {
         if let Ok(params)=unsafe {SoloParamRepository::instance_mut()} {
@@ -68,7 +99,9 @@ impl Drop for Session {
 /// Only while the native menu is open: the engine previews and commits the same target/material pair.
 pub fn prepare(data:&PlayerGameData)->Result<Session,String> {
     if super::smith::remaining(data)==0 {return Err("强化石不足".into());}
-    let offers=offers(data);
+    let owned=owned_spirits(data);
+    let current_peak=peak(data);
+    let offers=choices(&owned,current_peak);
     if offers.is_empty(){return Err("没有可调灵的骨灰".into());}
     let params=unsafe {SoloParamRepository::instance_mut()}.map_err(|_|"骨灰参数未就绪")?;
     let material=params.get::<EquipMtrlSetParam>(MATERIAL).ok_or("营地强化材料参数缺失")?;
@@ -87,12 +120,12 @@ pub fn prepare(data:&PlayerGameData)->Result<Session,String> {
     let mut rows=Vec::new();
     for id in ids {
         let row=params.get::<EquipParamGoods>(id).ok_or("骨灰等级参数缺失，未打开菜单")?;
-        rows.push(Patch{id,address:row as *const _ as usize,before:fields(row),after:native_fields(id,&offers)});
+        rows.push(Patch{id,address:row as *const _ as usize,before:fields(row),after:chain_fields(id,&owned,current_peak)});
     }
     if ACTIVE.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err(){return Err("调灵菜单已打开".into());}
-    let session=Session{rows};
+    let session=Session{rows,last_state:(owned,current_peak)};
     for patch in &session.rows {set_fields(params.get_mut::<EquipParamGoods>(patch.id).expect("validated spirit row"),patch.after);}
-    super::log(format!("Native spirit tuning: {offers:?}, material={MATERIAL}, runes=0"));
+    super::log(format!("Native spirit tuning: {offers:?}, peak={current_peak}, material={MATERIAL}, runes=0"));
     Ok(session)
 }
 
@@ -104,11 +137,14 @@ mod tests {
         assert_eq!(super::MENU_KIND,eldenring::cs::MenuType::UnkEvent136 as i32);
     }
     #[test]
-    fn native_preview_uses_catchup_target_one_voucher_and_no_runes() {
-        let offer=super::Offer{source:200000,target:200007};
-        assert_eq!(super::native_fields(200000,&[offer]),[200007,700000,0]);
-        assert_eq!(super::native_fields(200007,&[offer]),[-1,700000,0]);
-        assert_eq!(super::native_fields(201000,&[offer]),[-1,700000,0]);
+    fn native_preview_keeps_consecutive_upgrade_chain_and_blocks_duplicates_or_cap() {
+        let ash=erdtree_tower::rewards::CATALOG.iter().find(|i|i.kind==erdtree_tower::rewards::ItemKind::Spirit).unwrap().id&0x0fffffff;
+        let owned=[ash];
+        assert_eq!(super::chain_fields(ash,&owned,5),[(ash+6) as i32,700000,0],"low ash catches up to peak+1");
+        assert_eq!(super::chain_fields(ash+6,&owned,5),[(ash+7) as i32,700000,0],"upgraded ash stays in menu for next level");
+        assert_eq!(super::chain_fields(ash+38,&owned,5),[(ash+39) as i32,700000,0]);
+        assert_eq!(super::chain_fields(ash+39,&owned,5),[-1,700000,0],"+39 remains capped");
+        assert_eq!(super::chain_fields(ash,&[ash,ash+6],5),[-1,700000,0],"already-owned target is still blocked");
     }
     #[test]
     fn native_cleanup_only_restores_the_same_unchanged_parameter_row() {

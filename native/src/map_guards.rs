@@ -20,19 +20,37 @@ fn positions(id:u32,slot:usize)->Result<[(u32,bool);4],String> {
 fn engaged(started:bool,elapsed:Duration)->bool {started&&elapsed>=super::travel::PREPARATION}
 pub struct Guards {
     specs:Vec<Enemy>,ids:Vec<u32>,bound:Vec<(FieldInsHandle,usize)>,reset:bool,requested:bool,
-    clock:Option<Instant>,active:bool,
+    clock:Option<Instant>,engaged_at:Option<Instant>,active:bool,
     combat:u32,scaled:bool,
 }
 impl Guards {
     pub fn new(specs:Vec<Enemy>)->Result<Self,String> {
         if specs.is_empty()||specs.len()>12{return Err("事件守卫数量无效".into());}
         let ids=enemies::map_entities(&specs)?.into_iter().map(entity).collect::<Result<Vec<_>,_>>()?;
-        Ok(Self{specs,ids,bound:vec![],reset:false,requested:false,clock:None,active:false,combat:COMBAT,scaled:false})
+        Ok(Self{specs,ids,bound:vec![],reset:false,requested:false,clock:None,engaged_at:None,active:false,combat:COMBAT,scaled:false})
     }
     pub fn merchant()->Result<Self,String> {
         let spec=enemies::debug_encounters().into_iter().flatten().find(|e|e.name=="铃珠猎人").ok_or("缺少铃珠猎人参数")?;
         let ids=enemies::map_entities(&[spec])?;
-        Ok(Self{specs:vec![spec],ids,bound:vec![],reset:false,requested:false,clock:None,active:false,combat:enemies::MAP_COMBAT_FLAG,scaled:false})
+        Ok(Self{specs:vec![spec],ids,bound:vec![],reset:false,requested:false,clock:None,engaged_at:None,active:false,combat:enemies::MAP_COMBAT_FLAG,scaled:false})
+    }
+    pub fn engaged_elapsed(&self)->Option<Duration> {self.engaged_at.map(|t|t.elapsed())}
+    pub fn total_count(&self)->u8 {self.specs.len().min(255) as u8}
+    pub fn dead_count(&self,world:&WorldChrMan)->u8 {
+        self.bound.iter().zip(self.ids.iter().zip(&self.specs)).filter(|((handle,address),(id,spec))| {
+            world.chr_ins_by_handle(handle)
+                .filter(|c|std::ptr::from_ref(*c) as usize==*address&&c.event_entity_id==**id&&c.npc_id==spec.model&&c.npc_param_id==spec.npc)
+                .is_none_or(|chr|chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag())
+        }).count().min(255) as u8
+    }
+    pub fn force_retire(&mut self,world:&mut WorldChrMan) {
+        for &(handle,address) in &self.bound {
+            if let Some(chr)=world.chr_ins_by_handle_mut(&handle).filter(|c|std::ptr::from_ref(&**c) as usize==address) {
+                chr.debug_flags.set_character_disabled(true);
+                chr.debug_flags.set_force_unloaded(true);
+            }
+        }
+        self.retire();
     }
     pub fn scale_merchant(&mut self,world:&mut WorldChrMan,run:&erdtree_tower::Run,node:usize)->Result<(),String> {
         if self.scaled||!self.ready(){return Ok(());}
@@ -77,7 +95,7 @@ impl Guards {
         if !self.ready(){return Ok(false);}
         if started {self.clock.get_or_insert_with(Instant::now);}
         if !engaged(started,self.clock.map_or(Duration::ZERO,|t|t.elapsed())){return Ok(false);}
-        if !self.active {set_flag(self.combat,true)?;self.active=true;super::log("Map challenge engaged after ready barrier");}
+        if !self.active {set_flag(self.combat,true)?;self.active=true;self.engaged_at=Some(Instant::now());super::log("Map challenge engaged after ready barrier");}
         if !host{return Ok(false);}
         let mut dead=0;
         for (&(handle,address),(&id,spec)) in self.bound.iter().zip(self.ids.iter().zip(&self.specs)) {

@@ -121,7 +121,7 @@ copy_file(project / 'native/vendor/hudhook/vendor/minhook/LICENSE.txt', 'license
 copy_file(project / 'SeamlessCoop/README.md', 'SeamlessCoop/README.md')
 for name in ['LICENSE-MIT', 'LICENSE-APACHE']:
     copy_file(source / 'loader' / name, 'loader/' + name)
-for name in ['Start-Tower.ps1', 'Launch-Logged.ps1', 'Tower-Loader.ps1', 'Tower-Network.ps1', 'Tower-SessionGate.ps1', 'Check-TowerNetwork.ps1']:
+for name in ['Start-Tower.ps1', 'Launch-Logged.ps1', 'Tower-Loader.ps1', 'Tower-Network.ps1', 'Tower-SessionGate.ps1', 'Check-TowerNetwork.ps1', 'Diagnose-Startup.ps1', '启动崩溃诊断.cmd']:
     copy_file(Path(__file__).parent / name, name)
 copy_file(Path(__file__).parent / '安装教程.md', 'docs/安装教程.md')
 for name in ['ErdtreeTowerLauncher.exe', 'ErdtreeTowerLauncher.exe.config']:
@@ -163,7 +163,7 @@ gate_manifest(stage / 'SeamlessCoop')
 files = sorted(p for p in stage.rglob('*') if p.is_file())
 for file in files:
     name = file.relative_to(stage).as_posix()
-    if name.startswith('network-patches/') or file.name in ['OnlineFix64.dll', 'OnlineFix.ini', 'Switch-TowerNetwork.ps1', 'Network-Manual.ps1', 'Network-Files.ps1', 'Install-B.cmd', 'Restore-A.cmd']:
+    if name.startswith('network-patches/') or file.name in ['OnlineFix64.dll', 'OnlineFix.ini', 'Switch-TowerNetwork.ps1', 'Network-Manual.ps1', 'Network-Files.ps1', 'Install-B.cmd', 'Restore-A.cmd', '联机环境切换(A-B).cmd']:
         raise RuntimeError(f'External patch must not be shipped in the main package: {name}')
     if (file.suffix in ['.log', '.sl2', '.co2', '.ertowercoop', '.ertowerparty', '.party-award', '.appearance'] or
             file.suffix.lower() in ['.pdb', '.bak'] or

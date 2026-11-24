@@ -218,8 +218,10 @@ impl Run {
 mod tests {
     use super::*;
     fn trial_run()->(Run,usize) {
-        let mut run=Run::new(42,crate::Class::Samurai);
-        let id=(0..run.nodes.len()).find(|&id|run.nodes[id].kind==NodeKind::Event&&run.event_draw(id)==crate::events::Draw::Trial).unwrap();
+        let (mut run,id)=(42..200).find_map(|seed|{
+            let run=Run::new(seed,crate::Class::Samurai);
+            (0..run.nodes.len()).find(|&id|run.nodes[id].kind==NodeKind::Event&&run.event_draw(id)==crate::events::Draw::Trial).map(|id|(run,id))
+        }).unwrap();
         run.debug_jump(id).unwrap();run.enter(id).unwrap();run.retries=2;
         (run,id)
     }

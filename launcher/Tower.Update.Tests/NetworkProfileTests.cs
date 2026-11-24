@@ -73,4 +73,25 @@ public sealed class NetworkProfileTests
         Assert.Equal("Spacewar（外部补丁）", NetworkProfile.Label("OnlineFix"));
         Assert.Equal("Steam", NetworkProfile.Normalize("invalid"));
     }
+
+    [Fact]
+    public void InProcessValidationChecksSteamCleanlinessPendingSwitchAndBrokenOnlineFix()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "tower-validate-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try {
+            Assert.Equal(NetworkProfile.Steam, NetworkProfile.Validate(folder));
+            var pendingDir = Path.Combine(folder, ".tower-network");
+            Directory.CreateDirectory(pendingDir);
+            File.WriteAllText(Path.Combine(pendingDir, "pending.json"), "{}");
+            Assert.Contains("Interrupted manual patch operation", Assert.Throws<InvalidOperationException>(() => NetworkProfile.Validate(folder)).Message);
+            Directory.Delete(pendingDir, true);
+
+            File.WriteAllText(Path.Combine(folder, "OnlineFix.ini"), "RealAppId=1245620\nFakeAppId=480\n");
+            Assert.Contains("OnlineFix64.dll", Assert.Throws<InvalidOperationException>(() => NetworkProfile.Validate(folder)).Message);
+
+            File.WriteAllText(Path.Combine(folder, "OnlineFix64.dll"), "bad-content");
+            Assert.Contains("Unsupported OnlineFix component", Assert.Throws<InvalidOperationException>(() => NetworkProfile.Validate(folder)).Message);
+        } finally { Directory.Delete(folder, true); }
+    }
 }

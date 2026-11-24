@@ -53,9 +53,45 @@ const BULWARK:i32=FIRST+24;
 /// 红狮子的不退：生命低于 LAST_STAND_HP_PERCENT% 时挂上（受到的削韧 ×1/3），回到以上就摘掉
 const LAST_STAND:i32=FIRST+25;
 pub(crate) fn last_stand(hp:i32,max:i32)->bool {hp>0&&max>0&&i64::from(hp)*100<i64::from(max)*i64::from(embers::LAST_STAND_HP_PERCENT)}
-/// 鲜血骑士的破势：一次性发作在敌人身上的特效编号段（出血、睡眠、冻伤、发狂；毒、腐败、致死这些持续类不算）
+/// 鲜血骑士的破势：未加载参数表时的兜底发作编号段（出血、睡眠、冻伤、发狂）
 const BURSTS:[(i32,i32,&str);4]=[(6400,6449,"出血"),(6450,6499,"睡眠"),(6700,6749,"冻伤"),(6750,6799,"发狂")];
-fn burst_kind(id:i32)->Option<&'static str> {BURSTS.iter().find(|(low,high,_)|(*low..=*high).contains(&id)).map(|(_,_,name)|*name)}
+fn burst_kind_fallback(id:i32)->Option<&'static str> {BURSTS.iter().find(|(low,high,_)|(*low..=*high).contains(&id)).map(|(_,_,name)|*name)}
+/// 按 SpEffectParam 的 stateInfo 与正数异常积累值识别一次性发作特效（出血 6、冻伤 260、睡眠 436、发狂 437）。
+/// 原版血质变(105000..)、冷质变(107500..)、战技/法术/油脂/DLC 睡眠以及塔内余烬(9670010/9670011)发作时
+/// 挂在敌人身上的都是触发的那一行本身；要求对应 attackPower > 0 以排除负值的解异常苔药/净化效果，同时排除毒/腐败/致死。
+pub(crate) fn burst_kind_from_row(row:&SP_EFFECT_PARAM_ST)->Option<&'static str> {
+    match row.state_info() {
+        6 if row.blood_attack_power()>0=>Some("出血"),
+        260 if row.freeze_attack_power()>0=>Some("冻伤"),
+        436 if row.sleep_attack_power()>0=>Some("睡眠"),
+        437 if row.madness_attack_power()>0=>Some("发狂"),
+        _=>None,
+    }
+}
+pub(crate) fn burst_kind_for(repo:Option<&SoloParamRepository>,id:i32)->Option<&'static str> {
+    if id>0 && let Some(row)=repo.and_then(|p|p.get::<SpEffectParam>(id as u32)) {
+        return burst_kind_from_row(row);
+    }
+    burst_kind_fallback(id)
+}
+pub(crate) fn is_frost_burst(repo:Option<&SoloParamRepository>,id:i32)->bool {
+    burst_kind_for(repo,id)==Some("冻伤")
+}
+/// 同一发作特效在 effectEndurance 期间再次触发时（例如 1 秒内连续两次出血），removal_timer 会回跳或新增节点
+pub(crate) const BURST_REFRESH_EPSILON:f32=0.05;
+pub(crate) fn fresh_burst(prev:&[(i32,f32)],current:&[(i32,f32)])->Option<i32> {
+    current.iter().copied().find_map(|(id,timer)|{
+        let (mut prev_count,mut max_prev)=(0usize,f32::NEG_INFINITY);
+        for &(pid,pt) in prev {
+            if pid==id {prev_count+=1;if pt.is_finite()&&pt>max_prev {max_prev=pt;}}
+        }
+        let curr_count=current.iter().filter(|&&(cid,_)|cid==id).count();
+        if prev_count==0 || curr_count>prev_count
+            || (timer.is_finite()&&max_prev.is_finite()&&timer>max_prev+BURST_REFRESH_EPSILON) {
+            Some(id)
+        } else {None}
+    })
+}
 /// 发作时把敌人的韧性压到这么低：下一下韧性伤害就失衡（直接写 0 不一定会触发失衡动作，留一点让引擎按正常流程判定）
 pub const BREAK_TOUGHNESS:f32=0.001;
 fn break_value(current:f32,max:f32,broken:bool)->Option<f32> {
@@ -69,9 +105,9 @@ pub fn prime_stance_break(chr:&mut ChrIns)->Option<(f32,f32)> {
     Some((before,armor.sa_durability_max))
 }
 fn breaker_boss(rank:u8)->bool {rank<=1}
-/// 鲜血骑士的破势：每只敌人上一帧身上的发作特效、全部特效、生命，以及上次失衡的时间（Boss 冷却用）
+/// 鲜血骑士的破势：每只敌人上一帧身上的发作特效（含剩余计时）、全部特效、生命
 #[derive(Default)]
-struct Break {key:u64,bursts:Vec<i32>,effects:Vec<i32>,hp:i32}
+struct Break {key:u64,bursts:Vec<(i32,f32)>,effects:Vec<i32>,hp:i32}
 const FLASH:i32=FIRST+40;
 /// 捕灵壶：捕捉成功时挂在敌人身上的一次性扣血（一下扣满最大生命，走游戏自己的死亡流程；scene-builder capture-patch）
 pub const CAPTURE:i32=FIRST+29;
@@ -583,26 +619,35 @@ impl Fight {
     /// Boss 与普通敌人均无冷却。在 tick 之后调用（tick 换场时会清掉状态）。
     /// 校准：敌人一帧掉了 10% 以上的生命时，把这一帧新出现的特效记进日志（每场最多 12 条），用来核对发作特效的编号段
     pub fn break_on_bursts(&mut self,world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)]) {
+        let repo=unsafe {SoloParamRepository::instance()}.ok();
         for &(handle,bar,slot) in foes {
             let Some(chr)=world.chr_ins_by_handle_mut(&handle) else{continue};
             let (hp,max)=(chr.modules.data.hp,chr.modules.data.max_hp);
             if hp<=0||chr.chr_flags1c5.death_flag(){continue;}
             let key=(u64::from(handle.block_id.0 as u32)<<32)|u64::from(handle.selector.0);
-            let effects:Vec<i32>=chr.special_effect.entries().map(|e|e.param_id).collect();
-            let bursts:Vec<i32>=effects.iter().copied().filter(|id|burst_kind(*id).is_some()).collect();
-            let index=match self.breaks.iter().position(|b|b.key==key) {Some(i)=>i,None=>{self.breaks.push(Break{key,bursts:bursts.clone(),effects:effects.clone(),hp});continue;}};
+            let mut effects=Vec::new();
+            let mut bursts=Vec::new();
+            for entry in chr.special_effect.entries() {
+                effects.push(entry.param_id);
+                if burst_kind_for(repo,entry.param_id).is_some() {bursts.push((entry.param_id,entry.removal_timer));}
+            }
+            let index=match self.breaks.iter().position(|b|b.key==key) {Some(i)=>i,None=>{self.breaks.push(Break{key,bursts,effects,hp});continue;}};
             let state=&mut self.breaks[index];
             if self.probes<12&&max>0&&state.hp-hp>max/10 {
                 let fresh:Vec<i32>=effects.iter().copied().filter(|id|!state.effects.contains(id)).collect();
                 self.probes+=1;super::log(format!("TOWER_EMBER breaker probe slot={slot} hp {}->{hp}/{max} new_effects={fresh:?}",state.hp));
             }
-            let fresh=bursts.iter().copied().find(|id|!state.bursts.contains(id));
+            let fresh=fresh_burst(&state.bursts,&bursts);
             state.bursts=bursts;state.effects=effects;state.hp=hp;
             let Some(id)=fresh else{continue};
+            let kind=burst_kind_for(repo,id).unwrap_or("?");
             let boss=breaker_boss(bar);
             if let Some((before,max))=prime_stance_break(chr) {
-                super::log(format!("TOWER_EMBER breaker slot={slot} {} effect={id} boss={boss} stance {before}->{BREAK_TOUGHNESS} max={max}; next hit within 5s",burst_kind(id).unwrap_or("?")));
-            } else {super::log(format!("TOWER_EMBER breaker slot={slot} effect={id}: no active breakable stance"));}
+                super::log(format!("TOWER_EMBER breaker slot={slot} {kind} effect={id} boss={boss} stance {before}->{BREAK_TOUGHNESS} max={max}; next hit within 5s"));
+            } else {
+                let armor=&chr.modules.super_armor;
+                super::log(format!("TOWER_EMBER breaker slot={slot} {kind} effect={id}: no active breakable stance (sa={}/{} broken={})",armor.sa_durability,armor.sa_durability_max,armor.poise_broken_state));
+            }
         }
     }
     pub fn revenge_active(&self)->bool {self.revenge_until.is_some_and(|until|Instant::now()<until)}
@@ -1291,8 +1336,40 @@ mod tests {
     }
     #[test]
     fn breaker_counts_only_burst_ailments() {
-        for (id,kind) in [(6400,Some("出血")),(6416,Some("出血")),(6450,Some("睡眠")),(6701,Some("冻伤")),(6754,Some("发狂"))] {assert_eq!(burst_kind(id),kind,"{id}");}
-        for id in [6399,6501,6601,6801,6850,9670010,9670011] {assert_eq!(burst_kind(id),None,"poison, rot, blight, death and our own buildup are not bursts: {id}");}
+        for (id,kind) in [(6400,Some("出血")),(6416,Some("出血")),(6450,Some("睡眠")),(6701,Some("冻伤")),(6754,Some("发狂"))] {
+            assert_eq!(burst_kind_fallback(id),kind,"{id}");
+        }
+        for id in [6399,6501,6601,6801,6850] {
+            assert_eq!(burst_kind_fallback(id),None,"poison, rot, blight and death are not bursts: {id}");
+        }
+        // Param-based classification covers infused weapons (105000/107500), DLC sleep (20001029),
+        // greases/spells, and our own Bloodlord/Frost ember procs (9670010/9670011) while rejecting cures & DoTs.
+        let make=|si:u16,bp:i32,fp:i32,sp:i32,mp:i32| {
+            let mut row:SP_EFFECT_PARAM_ST=unsafe{std::mem::zeroed()};
+            row.set_state_info(si);
+            row.set_blood_attack_power(bp);row.set_freeze_attack_power(fp);
+            row.set_sleep_attack_power(sp);row.set_madness_attack_power(mp);
+            row
+        };
+        assert_eq!(burst_kind_from_row(&make(6,40,0,0,0)),Some("出血"),"Bloodlord 9670010 / Blood infusion 105000 / Blood Grease 3191");
+        assert_eq!(burst_kind_from_row(&make(260,0,40,0,0)),Some("冻伤"),"Frost 9670011 / Cold infusion 107500 / Freezing Grease 3141");
+        assert_eq!(burst_kind_from_row(&make(436,0,0,42,0)),Some("睡眠"),"Sleep / DLC Eternal Sleep 20001029");
+        assert_eq!(burst_kind_from_row(&make(437,0,0,0,70)),Some("发狂"),"Madness / Frenzied Flame 1780");
+        assert_eq!(burst_kind_from_row(&make(6,-99999,0,0,0)),None,"Bleed bolus cure");
+        assert_eq!(burst_kind_from_row(&make(260,0,-99999,0,0)),None,"Frost bolus cure");
+        assert_eq!(burst_kind_from_row(&make(436,0,0,-99999,0)),None,"Sleep bolus cure");
+        assert_eq!(burst_kind_from_row(&make(437,0,0,0,-99999)),None,"Madness bolus cure");
+        assert_eq!(burst_kind_from_row(&make(2,0,0,0,0)),None,"Poison");
+        assert_eq!(burst_kind_from_row(&make(5,0,0,0,0)),None,"Scarlet Rot");
+        // Fresh burst detection catches new IDs, timer refreshes within 1s, and stacked entries, without double-firing on decay.
+        assert_eq!(fresh_burst(&[],&[(105000,1.0)]),Some(105000));
+        assert_eq!(fresh_burst(&[(105000,1.0)],&[(105000,0.98)]),None,"normal timer decay does not re-trigger");
+        assert_eq!(fresh_burst(&[(105000,0.60)],&[(105000,1.00)]),Some(105000),"rapid repeat bleed refreshes removal_timer");
+        assert_eq!(fresh_burst(&[(6400,0.62)],&[(6400,0.99),(6400,0.60)]),Some(6400),"second stacked instance triggers");
+        assert_eq!(fresh_burst(&[(6400,0.99),(6400,0.60)],&[(6400,0.97),(6400,0.58)]),None,"stacked decay does not re-trigger");
+        assert_eq!(fresh_burst(&[(6400,0.97),(6400,0.01)],&[(6400,0.95)]),None,"older stacked node expiring does not re-trigger");
+        assert_eq!(fresh_burst(&[(9670010,0.10)],&[]),None);
+        assert_eq!(fresh_burst(&[],&[(9670010,0.10)]),Some(9670010));
     }
     #[test]
     fn effect_ids_do_not_overlap() {

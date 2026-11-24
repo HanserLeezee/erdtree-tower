@@ -26,9 +26,9 @@ impl Drop for NativeTalk {
     }
 }
 #[derive(Clone,Copy,Default)]
-pub struct EventMenu {pub dance:bool,pub mausoleum_offer:bool,pub gamble:Option<u8>,pub trial:bool,pub chariot:bool,pub stormveil:bool,pub descent:bool,pub recovery:bool,pub scarabs:bool,pub locked:bool,pub altar:bool,pub used:bool,pub busy:bool,pub ready:bool,pub attempts:u8}
+pub struct EventMenu {pub dance:bool,pub custom_panel:bool,pub mausoleum_offer:bool,pub gamble:Option<u8>,pub trial:bool,pub chariot:bool,pub stormveil:bool,pub descent:bool,pub recovery:bool,pub scarabs:bool,pub locked:bool,pub altar:bool,pub used:bool,pub busy:bool,pub ready:bool,pub attempts:u8}
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub enum EventRequest {Dance(usize),Gamble(usize),Trial(erdtree_tower::regional_events::Trial),Altar(usize),Scarabs,Recovery(usize),Descent,Stormveil(bool)}
+pub enum EventRequest {Dance(usize),CustomPanel,Gamble(usize),Trial(erdtree_tower::regional_events::Trial),Altar(usize),Scarabs,Recovery(usize),Descent,Stormveil(bool)}
 /// 问号房赌运事件的对话文字（scene-builder RecoveryText.GambleEntries）：
 /// 选项 = GAMBLE_OPTIONS + 事件×2 + 选项，确认说明 = GAMBLE_CONFIRM + 事件×2 + 选项（事件：0 骰子、1 盲盒、2 重铸）
 pub const GAMBLE_OPTIONS:i32=9500130;
@@ -105,11 +105,11 @@ impl EventMenu {
     }
 }
 #[derive(Default)]
-struct CampInteraction { used: bool, pending: Option<i32> }
+struct CampInteraction { used: bool, pending: Option<i32>, waiting_since: Option<std::time::Instant> }
 impl CampInteraction {
     fn request(&mut self, choice:i32)->bool {
         if self.used || self.pending.is_some() || !matches!(choice,1..=4) {return false;}
-        self.pending=Some(choice);true
+        self.pending=Some(choice);self.waiting_since=Some(std::time::Instant::now());true
     }
 }
 // Owned and invoked only by the serialized game-task callback.
@@ -126,6 +126,9 @@ impl NativeTalk {
         } else {super::log(format!("SHOP_TEAR {stage} player unavailable"));}
     }
     pub fn new(block: i32, handle: FieldInsHandle, service: u32) -> Self {
+        if service == 1 {
+            tighten_smith_talk_range();
+        }
         Self { script: TalkScript::new(BlockId::from(block), 950000000 + service as i32, handle), service, state: 0, menu_kind: 0, choice: None, flask_upgrade: None, camp: CampInteraction::default(),event_menu:Default::default(),event_request:None,event_confirmation:None,enemies:Vec::new(),talismans:Vec::new(),talisman:None,spirit_session:None }
     }
     fn event(&mut self, id: i32, args: &[i32]) -> Result<(), String> {
@@ -138,6 +141,7 @@ impl NativeTalk {
         self.script.env((id, args)).map(i32::from).map_err(|e| e.to_string())
     }
     pub fn dialog(&mut self, text: i32) -> Result<(), String> {
+        self.camp.waiting_since = None;
         self.event(17, &[7, text, 1, 0, 1])?;
         self.state = 4;
         Ok(())
@@ -215,6 +219,12 @@ impl NativeTalk {
                     self.event(110,&[])?;self.event(20,&[])?;
                     self.event(19,&[1,9500080,-1])?;self.event(19,&[2,9500081,-1])?;self.event(19,&[99,9500003,-1])?;
                     self.event(10,&[1])?;self.state=1;return Ok(());
+                }
+                if self.service==6&&self.event_menu.custom_panel {
+                    if self.event_menu.busy||self.event_menu.used {return Ok(());}
+                    self.event(110,&[])?;
+                    self.event_request=Some(EventRequest::CustomPanel);
+                    return Ok(());
                 }
                 if self.service==6&&self.event_menu.dance {
                     if self.event_menu.used{return self.dialog(9500223);}
@@ -403,7 +413,14 @@ impl NativeTalk {
                 if self.service==7 {self.choice=choice.filter(|_|answer==1);self.state=0;return Ok(());}
                 self.event_request=self.event_menu.confirmed(choice,answer);self.state=0;
             },
-            2 => {},
+            2 => {
+                // 看门狗：若上游异常跳过 notice()，2 秒后自动退出等待态，防止营地全部 NPC 永久锁死。
+                if self.camp.pending.is_none() && self.camp.waiting_since.is_some_and(|at| at.elapsed() >= std::time::Duration::from_secs(2)) {
+                    super::log("Camp refill talk watchdog reset state=2 -> 0");
+                    self.camp.waiting_since = None;
+                    self.state = 0;
+                }
+            },
             3 => if self.query(59, &[5, 0])? == 0 { if self.service==2 {self.log_shop_tear("close");} self.state = 0; },
             4 => if self.query(58, &[0])? == 0 { self.state = 0; },
             15 => if self.query(59,&[1,0])?==0 {self.state=0;},
@@ -431,7 +448,14 @@ impl NativeTalk {
             5 => self.state=6,
             6 => if self.query(25,&[23])? == 0 {self.state=0;},
             7 => self.state=8,
-            8 => if self.query(59,&[self.menu_kind,0])?==0 && self.query(58,&[0])?==0 {self.spirit_session=None;self.state=0;},
+            8 => {
+                if self.query(59,&[self.menu_kind,0])?==0 && self.query(58,&[0])?==0 {
+                    self.spirit_session=None;self.state=0;
+                } else if let Some(session)=self.spirit_session.as_mut()
+                    && let Ok(player)=(unsafe {eldenring::cs::PlayerIns::local_player()}) {
+                    session.refresh(unsafe {player.player_game_data.as_ref()});
+                }
+            },
             9 => if self.query(58,&[0])?==0 {
                 if !dialog_confirmed(self.query(22,&[])?) {self.state=0;return Ok(());}
                 if self.query(47,&[3,super::rebirth::TEAR,2,0,0])?==0 {return self.dialog(22001002);}
@@ -467,6 +491,29 @@ impl NativeTalk {
             _ => unreachable!(),
         }
         Ok(())
+    }
+}
+/// 营地铁匠交互按钮（ActionButtonParam 9500001）：原表写了 6m 半径 + 180° 全向，
+/// 会盖过 5m 外的综合服务 NPC；运行时收紧到 2.2m 半径、面向 90°（与普通 NPC 6000 一致，无需重打 regulation.bin）。
+const SMITH_TALK_RADIUS: f32 = 2.2;
+const SMITH_TALK_ALLOW_ANGLE: i32 = 90;
+fn tighten_smith_talk_range() {
+    let Ok(params) = (unsafe { eldenring::cs::SoloParamRepository::instance_mut() }) else {
+        return;
+    };
+    if let Some(row) = params.get_mut::<eldenring::cs::ActionButtonParam>(9500001) {
+        if (row.radius() - SMITH_TALK_RADIUS).abs() > 0.01 || row.allow_angle() != SMITH_TALK_ALLOW_ANGLE {
+            super::log(format!(
+                "CAMP_SMITH action button 9500001 tightened: radius {:.2}->{:.2}, allow_angle {}->{}",
+                row.radius(),
+                SMITH_TALK_RADIUS,
+                row.allow_angle(),
+                SMITH_TALK_ALLOW_ANGLE
+            ));
+            row.set_radius(SMITH_TALK_RADIUS);
+            row.set_angle(180);
+            row.set_allow_angle(SMITH_TALK_ALLOW_ANGLE);
+        }
     }
 }
 fn smith_uses_allowance(choice:i32)->bool {matches!(choice,1|2)}

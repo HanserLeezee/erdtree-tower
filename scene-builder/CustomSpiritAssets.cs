@@ -120,15 +120,24 @@ static class CustomSpiritAssets {
                 audit.Add(new {s.Id,s.Model,s.Name,s.Tier,s.Hp,npcId,thinkId,levels=40,team=47,sourceMaps,liveTested=false});continue;
             }
             var npc=new PARAM.Row(Row("NpcParam",s.Npc)){ID=npcId,Name="Tower custom spirit "+s.Name};
+            int sourceSp0=I(npc,"spEffectID0");
+            bool hadTrollKnightMarker=Enumerable.Range(0,32).Any(slot=>I(npc,$"spEffectID{slot}")==10144);
             Set(npc,"teamType",I(ally,"teamType"));Set(npc,"hp",s.Hp);Set(npc,"getSoul",0);
             Set(npc,"itemLotId_enemy",-1);Set(npc,"itemLotId_map",-1);
-            // Use the native spirit's allegiance/scaling effects; retain model-specific move effects.
+            // Use the native spirit's allegiance/scaling effects; retain model-specific move effects and non-default animIdOffset (5401/5402/5404).
             foreach(int slot in Enumerable.Range(0,15).Concat(Enumerable.Range(25,7)))Set(npc,$"spEffectID{slot}",I(ally,$"spEffectID{slot}"));
+            if(sourceSp0 is >=5401 and <=5409)Set(npc,"spEffectID0",sourceSp0);
+            if(hadTrollKnightMarker&&I(npc,"spEffectID15")<=0)Set(npc,"spEffectID15",10144);
             for(int slot=15;slot<25;slot++)if(I(npc,$"spEffectID{slot}")==4301)Set(npc,$"spEffectID{slot}",4302);
             Add("NpcParam",npc);
             var think=new PARAM.Row(Row("NpcThinkParam",s.Think)){ID=thinkId,Name="Tower custom spirit AI "+s.Name};
             Set(think,"isBuddyAI",1);
             if(s.Id==309000)SilverSphereAssets.ConfigureThink(think);
+            if(s.Model is 5391 or 4601 or 4600) {
+                Set(think,"logicId",10000);Set(think,"disableLocalSteering",0);
+                if(I(think,"eye_dist")<100)Set(think,"eye_dist",100);
+                Set(think,"eye_angX",180);Set(think,"eye_angY",180);Set(think,"disableDark",1);
+            }
             foreach(var field in new[]{"maxBackhomeDist","backhomeDist","backhomeBattleDist"})Set(think,field,I(allyThink,field));
             Add("NpcThinkParam",think);
             for(int level=0;level<=SpiritLevelAssets.Max;level++) {

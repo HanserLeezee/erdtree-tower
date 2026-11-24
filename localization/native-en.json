@@ -5,6 +5,7 @@
   "正在准备暂存旅程。": "Preparing to save the journey.",
   "等待当前房间结束并完成领奖，随后保存暂退。": "Waiting for the room and rewards to finish. Press F6 again to cancel.",
   "已取消等待暂退。": "Suspension request cancelled.",
+  "正在遣返召唤物，随后自动暂退": "Dismissing spirit ashes before suspending...",
   "旅程已暂存，正在返回大赐福。请勿强制关闭游戏。": "Journey saved. Returning to Roundtable Hold. Do not force-close the game.",
   "已返回大赐福。请从游戏菜单正常退出；重进后与小红帽交互继续旅程。": "Back at Roundtable Hold. Quit normally from the game menu. Talk to Roderika to resume after returning.",
   "离队已确认。请使用“分离迷雾”断开无缝房间，随后自动返回大赐福。": "Departure confirmed. Use Separating Mist to disconnect; you will then return to Roundtable Hold.",
@@ -418,5 +419,19 @@
   "Boss 组合为空": "Boss group is empty",
   "该双 Boss 组合仅限联机": "This dual-boss encounter is co-op only",
   "正在发放营地送的强化石……": "Granting the camp's free smithing stone...",
-  "营地送的强化石没能确认到账，这次不再自动发放；补瓶、升级和其他服务照常可用。": "The camp's smithing stone couldn't be confirmed, so it won't be granted automatically this time. Refills, leveling and other services remain available."
+  "营地送的强化石没能确认到账，这次不再自动发放；补瓶、升级和其他服务照常可用。": "The camp's smithing stone couldn't be confirmed, so it won't be granted automatically this time. Refills, leveling and other services remain available.",
+  "联机通道波动，正在自动重建连接并恢复同步……": "Network hiccup detected. Rebuilding the Steam P2P channel and resuming sync...",
+  "{} 网络超时已暂时移出同步，其余队员继续；对方恢复后可重连加入。": "{0} timed out and was temporarily isolated from sync so the rest of the party can continue. They can reconnect once recovered.",
+  "{} 正在等待重连，完成当前房间回到路线图后自动合流。": "{0} is waiting to reconnect and will rejoin automatically once you return to the route map.",
+  "房主已确认重连，正在等待落地并同步位置……": "Host confirmed reconnect. Waiting to land and synchronize position...",
+  "已收到房主进度快照，正在确认合流……": "Received host progress checkpoint. Confirming rejoin...",
+  "已连上房主，等待房主完成当前房间回到路线图后自动合流……": "Connected to host. Waiting for the host to finish the current room and return to the route map...",
+  "正在联系房主恢复原联机旅程，请稍候……": "Contacting host to resume your co-op journey...",
+  "重连等待超过 3 分钟未收到房主响应，请退出房间后重新加入；本机进度已保留": "No response from host for 3 minutes. Please leave and rejoin the lobby; local progress is preserved.",
+  "与房主的联机通道持续中断超过 {} 秒，同步已暂停：{}": "Connection to the host remained interrupted for over {0}s. Sync paused: {1}",
+  "切换恢复旅程时角色已改变": "Character changed while switching to coordinated hub resume",
+  "补瓶完成。其他服务照常可用，准备好后从传送门离开。": "Flask refill complete. Other services remain available; use the portal when ready to leave.",
+  "强化后的圣杯瓶尚未进入背包，请稍候重试": "Upgraded flask has not arrived in inventory yet. Please try again in a moment.",
+  "已确认出发，等待角色站稳后自动传送……": "Departure confirmed. Waiting for your character to settle before warping...",
+  "队友路线与房主不同，未执行节点传送": "Teammate route differs from host; node warp aborted"
 }

@@ -6,10 +6,13 @@ pub static HOSTS:std::sync::LazyLock<Vec<Host>>=std::sync::LazyLock::new(||inclu
     let flag:u32=p[4].parse().unwrap();
     Host{draw,entity:p[1].parse().unwrap(),flag,npc:95016000+(flag-45011840) as i32,name_id:p[5].parse().unwrap()}
 }).collect());
-/// 重练炉借用重铸台守炉人；灵庙使用祭坛引导者，包括死亡重试清空事件进度后。
+/// 重练炉/余烬熔炉借用重铸台守炉人；灵庙/骨灰融合炉/癫火祭坛借用祭坛引导者；舞会借用泉水；生存大混战借用试炼引导者。
 pub fn index(draw:Draw)->usize {
     let draw=match draw {
-        Draw::Furnace=>Draw::Reforge,Draw::Mausoleum=>Draw::Altar,Draw::Dance=>Draw::Spring,
+        Draw::Furnace|Draw::EmberFurnace=>Draw::Reforge,
+        Draw::Mausoleum|Draw::SpiritFurnace|Draw::FrenzyAltar=>Draw::Altar,
+        Draw::Dance=>Draw::Spring,
+        Draw::Survival=>Draw::Trial,
         Draw::Trial|Draw::Chests|Draw::Altar|Draw::Locked|Draw::Scarabs|Draw::Spring|Draw::Dice|Draw::Mystery|Draw::Reforge=>draw,
     };
     HOSTS.iter().position(|h|h.draw==draw).expect("Event host catalog incomplete")
@@ -20,11 +23,15 @@ pub fn visibility_flag(entity:u32)->u32 {HOSTS.iter().find(|h|h.entity==entity).
 mod tests {
     use super::*;
     #[test]fn all_event_draws_resolve_even_after_regional_progress_is_cleared(){
-        for draw in [Draw::Trial,Draw::Chests,Draw::Altar,Draw::Locked,Draw::Scarabs,Draw::Spring,Draw::Dice,Draw::Mystery,Draw::Reforge,Draw::Mausoleum,Draw::Furnace] {
+        for draw in [Draw::Trial,Draw::Chests,Draw::Altar,Draw::Locked,Draw::Scarabs,Draw::Spring,Draw::Dice,Draw::Mystery,Draw::Reforge,Draw::Mausoleum,Draw::Furnace,Draw::Dance,Draw::EmberFurnace,Draw::SpiritFurnace,Draw::FrenzyAltar,Draw::Survival] {
             assert!(!service(index(draw)).is_empty());
         }
         assert_eq!(index(Draw::Mausoleum),index(Draw::Altar));
         assert_eq!(index(Draw::Furnace),index(Draw::Reforge));
+        assert_eq!(index(Draw::EmberFurnace),index(Draw::Reforge));
+        assert_eq!(index(Draw::SpiritFurnace),index(Draw::Altar));
+        assert_eq!(index(Draw::FrenzyAltar),index(Draw::Altar));
+        assert_eq!(index(Draw::Survival),index(Draw::Trial));
     }
     #[test]fn event_hosts_do_not_share_roderikas_name_parameter(){
         let parameters:std::collections::HashSet<_>=(0..HOSTS.len()).map(|i|service(i)[0].2).collect();

@@ -277,6 +277,9 @@ impl Ember {
         }
     }
     /// class：余烬规则 3 起按职业限制（None 不限职业，旧存档）
+    pub(crate) fn fits_build(self,spirits:bool,casting:bool,class:Option<crate::Class>)->bool {
+        self.fits(spirits,casting,class)
+    }
     fn fits(self,spirits:bool,casting:bool,class:Option<crate::Class>)->bool {
         (spirits||!self.needs_spirit())&&(casting||!self.needs_casting())&&class.is_none_or(|class|self.classes().is_none_or(|classes|classes.contains(&class)))
     }
@@ -368,6 +371,16 @@ pub struct Stacks {
     #[serde(default,skip_serializing_if="Option::is_none")] chain_room:Option<(u64,u8,usize,u8)>,
 }
 impl Stacks {
+    pub fn clear_ember(&mut self,ember:Ember) {
+        match ember {
+            Ember::SoulEater=>self.souls=0,
+            Ember::Chain=>{self.chain=0;self.chain_room=None;},
+            Ember::Godslayer=>self.slayer=0,
+            Ember::SpiritKeeper=>self.keeper=0,
+            Ember::Harvest=>{self.harvest=0;self.harvest_kills=[0;3];},
+            _=>{},
+        }
+    }
     pub fn rates(&self,ember:Ember)->Option<Rates> {
         let mut rates=stack_rates(ember,self.level(ember))?;
         if ember==Ember::Harvest {

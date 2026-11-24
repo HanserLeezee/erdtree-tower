@@ -29,7 +29,10 @@ pub fn load(owner:(u32,i32),roster:&Roster)->Result<Option<(Ticket,Run)>,String>
     let path=super::hub::path(owner,"json");if !path.exists(){return Ok(None);}
     let run=Run::decode(&std::fs::read_to_string(path).map_err(|e|e.to_string())?)?;
     if !ticket.matches(owner,roster.local,roster.host,&run){return Ok(None);}
-    if super::hub::path(owner,"party-award").exists(){return Err("上次闪退发生在领奖事务中，需先核对领奖记录；已停止自动重连，避免重复发奖".into());}
+    let award=super::hub::path(owner,"party-award");
+    if let Some(backup)=super::material_award::archive_for_reconnect(&award)? {
+        super::log(format!("RECONNECT archived interrupted party-award without replay: {}",backup.display()));
+    }
     Ok(Some((ticket,run)))
 }
 
@@ -37,37 +40,64 @@ pub struct Pending {
     pub roster:Roster,pub owner:(u32,i32),ticket:Ticket,run:Run,profile:Compatibility,
     transport:super::steam_messages::Transport,nonce:u64,sent:Instant,
     offer:Option<(u64,Run,bool)>,members:Vec<u64>,packets:Vec<(u64,Payload)>,started:Instant,ready:bool,
+    queued:bool,send_failed:Option<Instant>,last_reopen:Option<Instant>,
     block:Option<i32>,landed:Option<Instant>,
 }
-pub enum Status {Waiting,Ready,FreshLobby}
+pub enum Status {Waiting,Ready,FreshLobby,ResumeLobby}
 impl Pending {
     pub fn new(roster:Roster,ticket:Ticket,run:Run,profile:Compatibility)->Result<Self,String> {
         let transport=super::steam_messages::Transport::load(roster.clone())?;
-        Ok(Self{roster,owner:ticket.owner,ticket,run,profile,transport,nonce:super::party::random_entropy()?.max(1),sent:Instant::now()-Duration::from_secs(1),offer:None,members:vec![],packets:vec![],started:Instant::now(),ready:false,block:None,landed:None})
+        Ok(Self{roster,owner:ticket.owner,ticket,run,profile,transport,nonce:super::party::random_entropy()?.max(1),sent:Instant::now()-Duration::from_secs(1),offer:None,members:vec![],packets:vec![],started:Instant::now(),ready:false,queued:false,send_failed:None,last_reopen:None,block:None,landed:None})
+    }
+    pub fn waiting_status(&self)->&'static str {
+        if self.ready {"房主已确认重连，正在等待落地并同步位置……"}
+        else if self.offer.is_some() {"已收到房主进度快照，正在确认合流……"}
+        else if self.queued {"已连上房主，等待房主完成当前房间回到路线图后自动合流……"}
+        else {"正在联系房主恢复原联机旅程，请稍候……"}
     }
     pub fn poll(&mut self)->Result<Status,String> {
-        if self.started.elapsed()>Duration::from_secs(180){return Err("重连等待超过 3 分钟，请退出房间后重新加入；本机进度已保留".into());}
+        if self.started.elapsed()>Duration::from_secs(180){return Err("重连等待超过 3 分钟未收到房主响应，请退出房间后重新加入；本机进度已保留".into());}
         if self.sent.elapsed()>=Duration::from_secs(1) {
             self.sent=Instant::now();
             let message=if let Some((epoch,_,_))=&self.offer {Message::Ack{nonce:self.nonce,epoch:*epoch}}
                 else{Message::Request{nonce:self.nonce,seed:self.ticket.seed,generation:self.ticket.generation,profile:self.profile.clone(),dlc:super::options::local_dlc()}};
-            self.transport.send(self.roster.host,&Payload::Reconnect{session:self.ticket.session,message}.encode()?)?;
+            let bytes=Payload::Reconnect{session:self.ticket.session,message}.encode()?;
+            match self.transport.send(self.roster.host,&bytes) {
+                Ok(())=>{self.send_failed=None;},
+                Err(error)=>{
+                    let since=*self.send_failed.get_or_insert_with(Instant::now);
+                    if self.last_reopen.is_none_or(|at|at.elapsed()>=Duration::from_secs(2)) {
+                        self.last_reopen=Some(Instant::now());
+                        self.transport.reopen_peer(self.roster.host);
+                        super::log_repeating(format!("RECONNECT transient send failure ({:.1}s), reopened channel to host={}: {error}",since.elapsed().as_secs_f32(),self.roster.host));
+                    }
+                    if since.elapsed()>=Duration::from_secs(15) {return Err(error);}
+                }
+            }
         }
         for (peer,bytes) in self.transport.receive()? {
             if peer!=self.roster.host{continue;}
+            self.send_failed=None;
             match Payload::decode(&bytes)? {
                 Payload::Reconnect{message:Message::Reject{nonce,reason},..} if nonce==self.nonce=>return Err(reason),
                 Payload::Reconnect{session,message} if session==self.ticket.session=>match message {
                     Message::FreshLobby{nonce} if nonce==self.nonce&&self.offer.is_none()=>return Ok(Status::FreshLobby),
+                    Message::ResumeLobby{nonce} if nonce==self.nonce&&self.offer.is_none()=>return Ok(Status::ResumeLobby),
+                    Message::Queued{nonce} if nonce==self.nonce&&self.offer.is_none()=>{
+                        self.queued=true;self.started=Instant::now();
+                    },
                     Message::Offer{nonce,checkpoint,dlc,members,block} if nonce==self.nonce&&self.offer.is_none()=>{
                         if members.len()>erdtree_tower::party_roster::MAX_PLAYERS||members.contains(&0)||!members.contains(&self.roster.local)||!members.contains(&self.roster.host)
                             ||members.windows(2).any(|p|p[0]>=p[1]){return Err("原队伍名单无效".into());}
                         let run=checkpoint.restore(&self.run)?;
                         atomic_write(&super::hub::path(self.owner,"json"),&run.encode()?)?;
                         if block<0{return Err("房主重连场地尚未就绪".into());}
-                        self.block=Some(block);self.members=members;self.offer=Some((checkpoint.epoch,run,dlc));self.sent=Instant::now()-Duration::from_secs(1);
+                        self.block=Some(block);self.members=members;self.offer=Some((checkpoint.epoch,run,dlc));
+                        self.started=Instant::now();self.sent=Instant::now()-Duration::from_secs(1);
                     },
-                    Message::Ready{nonce,epoch} if nonce==self.nonce&&self.offer.as_ref().is_some_and(|o|o.0==epoch)=>self.ready=true,
+                    Message::Ready{nonce,epoch} if nonce==self.nonce&&self.offer.as_ref().is_some_and(|o|o.0==epoch)=>{
+                        self.ready=true;self.started=Instant::now();
+                    },
                     Message::Reject{nonce,reason} if nonce==self.nonce=>return Err(reason),
                     _=>{},
                 },

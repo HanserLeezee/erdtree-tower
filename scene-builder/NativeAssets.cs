@@ -137,7 +137,7 @@ static class NativeAssets {
         Set(portal,"textId",9500004);Set(portal,"angle",180);Set(portal,"allowAngle",180);portal["radius"].Value=3f;
         if(actions.Rows.Any(r=>r.ID==portal.ID))throw new Exception("Action button ID conflict");actions.Rows.Add(portal);
         var smithAction=new PARAM.Row(actions.Rows.Single(r=>r.ID==6000)){ID=9500001,Name="Tower large smith talk"};
-        smithAction["radius"].Value=6f;Set(smithAction,"angle",180);Set(smithAction,"allowAngle",180);actions.Rows.Add(smithAction);
+        smithAction["radius"].Value=2.2f;Set(smithAction,"angle",180);Set(smithAction,"allowAngle",90);actions.Rows.Add(smithAction);
         var chestAction=new PARAM.Row(actions.Rows.Single(r=>r.ID==8000)){ID=9500002,Name="Tower chest front interaction"};
         Set(chestAction,"textId",9500005);Set(chestAction,"invalidFlag",0);actions.Rows.Add(chestAction);
         var lockedAction=new PARAM.Row(chestAction){ID=9500003,Name="Tower locked chest"};

@@ -10,7 +10,7 @@ function Get-TowerStartupFailure([string]$Message, [string]$ErrorId = '') {
             $code='T002';$cause='选择的位置不是法环的 Game 目录，或保存的游戏路径已失效。';$fix='在 Steam 中浏览艾尔登法环的本地文件，再进入 Game 文件夹并复制路径。以后更换位置时，双击 Reset-GamePath.cmd 重新选择。';$detail='示例：D:\SteamLibrary\steamapps\common\ELDEN RING\Game';$retry=$true;break
         }
         '^Game version mismatch\.' {
-            $code='T003';$cause='游戏程序与当前爬塔包支持的版本不一致。';$fix='本包支持 eldenring.exe 文件版本 2.7.2.0，并校验文件内容。请使用与游戏版本对应的爬塔包；版本相同仍报错时，可通过 Steam 验证游戏文件后重试。';$detail=''
+            $code='T003';$cause='游戏程序与当前爬塔包支持的版本不一致。';$fix='本包支持 1.17.2 系列 eldenring.exe 文件版本（2.7.2.x，含 2.7.2.0 与 2.7.2.1）。请使用与游戏版本对应的爬塔包；版本相同仍报错时，可通过 Steam 验证游戏文件后重试。';$detail=''
             if($Message -match 'Current file version: ([0-9.]+)') {$detail='检测到的游戏文件版本：'+$Matches[1]};break
         }
         '^Unsupported quote in (game|test) path\.' {
@@ -93,7 +93,8 @@ while ($true) {
         $exe = Join-Path $GameDirectory 'eldenring.exe'
         if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Select the Game folder containing eldenring.exe.' }
         $GameDirectory = (Resolve-Path -LiteralPath $GameDirectory).Path
-        if ((Get-FileHash -LiteralPath $exe).Hash -ne 'F9118FEA2CFD8FA3901E8060BFADB1552CB2471771DED8A5B662C4E298FFB328') { throw "Game version mismatch. Select the inspected executable 2.7.2.0 build. Current file version: $((Get-Item -LiteralPath $exe).VersionInfo.FileVersion)" }
+        $exeVer = (Get-Item -LiteralPath $exe).VersionInfo.FileVersion
+        if ($exeVer -notmatch '^2\.7\.2\.\d+$') { throw "Game version mismatch. Select a 2.7.2.x build. Current file version: $exeVer" }
         break
     } catch {
         if ($CheckOnly) { throw }

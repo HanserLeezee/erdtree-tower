@@ -46,7 +46,7 @@ pub const STORIES: [Story; 4] = [
 ];
 /// 问号房抽到的事件。event_rules 2 起每个事件按权重表单独抽取（3 起用 EVENT_WEIGHTS）；更早的旅程沿用 8 格分配，没有赌运事件
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash,serde::Serialize,serde::Deserialize)]
-pub enum Draw {Trial,Chests,Altar,Locked,Scarabs,Spring,Dice,Mystery,Reforge,Mausoleum,Furnace,Dance}
+pub enum Draw {Trial,Chests,Altar,Locked,Scarabs,Spring,Dice,Mystery,Reforge,Mausoleum,Furnace,Dance,EmberFurnace,SpiritFurnace,FrenzyAltar,Survival}
 /// 问号房事件权重（event_rules 3 起）：九个事件相同，各 1/9
 pub const EVENT_WEIGHTS:[(Draw,u32);9]=[
     (Draw::Trial,1),(Draw::Chests,1),(Draw::Altar,1),(Draw::Locked,1),(Draw::Scarabs,1),(Draw::Spring,1),
@@ -72,6 +72,7 @@ impl Run {
         if self.event_rules>=4 {weights.push((Draw::Mausoleum,1));}
         if self.event_rules>=5 {weights.push((Draw::Furnace,1));}
         if self.event_rules>=6 {weights.push((Draw::Dance,1));}
+        if self.event_rules>=7 {weights.extend([(Draw::EmberFurnace,1),(Draw::SpiritFurnace,1),(Draw::FrenzyAltar,1),(Draw::Survival,1)]);}
         let total:u32=weights.iter().map(|(_,w)|w).sum();
         let mut roll=(crate::mix(self.seed^(id as u64).wrapping_mul(0x9e37)^0xe7e27)%total as u64) as u32;
         for (draw,weight) in weights {if roll<weight {return draw;} roll-=weight;}
@@ -235,9 +236,9 @@ mod gamble_tests {
             }
         }
         // 每个事件的实际出现率接近各自权重（误差在 ±15% 以内）；event_rules 2 的旧旅程仍按旧权重
-        // 新旅程（event_rules 5）另有灵庙与重练炉各 1 份
-        let current:Vec<_>=EVENT_WEIGHTS.iter().copied().chain([(Draw::Mausoleum,1),(Draw::Furnace,1),(Draw::Dance,1)]).collect();
-        for (weights,total,counts) in [(current,total+3,&counts),(EVENT_WEIGHTS_V2.to_vec(),total_v2,&counts_v2)] {for (draw,weight) in weights {
+        // 新旅程（event_rules 7）另有灵庙、重练炉、舞会及 4 个新增随机事件各 1 份
+        let current:Vec<_>=EVENT_WEIGHTS.iter().copied().chain([(Draw::Mausoleum,1),(Draw::Furnace,1),(Draw::Dance,1),(Draw::EmberFurnace,1),(Draw::SpiritFurnace,1),(Draw::FrenzyAltar,1),(Draw::Survival,1)]).collect();
+        for (weights,total,counts) in [(current,total+7,&counts),(EVENT_WEIGHTS_V2.to_vec(),total_v2,&counts_v2)] {for (draw,weight) in weights {
             let expected=nodes as f64*weight as f64/total as f64;let seen=*counts.get(&draw).unwrap_or(&0) as f64;
             assert!((seen-expected).abs()<expected*0.15,"{draw:?}: {seen} vs {expected}");
         }}

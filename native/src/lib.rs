@@ -12,11 +12,11 @@ use eldenring::{
     util::system::wait_for_system_init,
 };
 use erdtree_tower::{Class, Phase, Run, options::Hotkey};
-use fromsoftware_shared::{GameVersion, LANG_ID_EN, SharedTaskImpExt, program::Program};
+use fromsoftware_shared::{GameVersion, LANG_ID_EN, LANG_ID_JP, SharedTaskImpExt, program::Program};
 use hudhook::{
     Hudhook, ImguiRenderLoop, MessageFilter, RenderContext,
     hooks::dx12::ImguiDx12Hooks,
-    imgui::{Context, FontConfig, FontGlyphRanges, FontSource, Io, Key, Ui},
+    imgui::{Context, FontConfig, FontGlyphRanges, FontSource, Io, Ui},
     windows::Win32::Foundation::HINSTANCE,
 };
 
@@ -87,6 +87,7 @@ mod class_ui;
 mod legacy;
 mod law_ui;
 mod dance_ui;
+mod custom_event_ui;
 mod dance_camera;
 mod dance_motion;
 mod dance_stage;
@@ -176,14 +177,26 @@ fn log_repeating(message: impl std::fmt::Display) {
     log(message);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SupportedVersion {
     Ww2720,
+    Build272,
 }
 
 impl GameVersion for SupportedVersion {
     const NAME: &'static str = "elden ring";
     fn from_lang_version(lang: u16, version: &str) -> Option<Self> {
-        (lang == LANG_ID_EN && version == "2.7.2.0").then_some(Self::Ww2720)
+        if lang != LANG_ID_EN && lang != LANG_ID_JP {
+            return None;
+        }
+        if lang == LANG_ID_EN && version == "2.7.2.0" {
+            return Some(Self::Ww2720);
+        }
+        // 同 1.17.2 游戏版本的不同区域/小修订 exe（如日区 2.7.2.1）放行 2.7.2.*，由运行时函数字节校验兜底
+        version
+            .strip_prefix("2.7.2.")
+            .filter(|rev| !rev.is_empty() && rev.bytes().all(|b| b.is_ascii_digit()))
+            .map(|_| Self::Build272)
     }
 }
 
@@ -650,7 +663,7 @@ impl ImguiRenderLoop for TowerPreview {
         if !run_screen::active()&&options::pressed(ui,Hotkey::Archive)&&!fighting&&!ui.io().want_text_input&&runtime::PLAYER_READY.load(Ordering::Relaxed) {run_screen::archive_entry();}
         let rewards=&mut self.rewards;
         // 癫火舞会：跳舞时只画舞会画面（它自己接管输入）
-        let run_screen=dance_ui::draw(ui)||run_screen::draw(ui,&mut |icon|rewards.icon(icon));
+        let run_screen=dance_ui::draw(ui)||custom_event_ui::draw(ui)||run_screen::draw(ui,&mut |icon|rewards.icon(icon));
         if options::pressed(ui,Hotkey::Debug) {debug_menu::toggle();}
         self.debug.draw(ui,view.as_ref());
         // 战斗顶部 HUD（原指南针位置：Boss 词条、护盾预警、苦难律法限时）
@@ -666,6 +679,13 @@ impl ImguiRenderLoop for TowerPreview {
             if self.resource_alert.is_none_or(|(seen,_)|seen!=*id) {self.resource_alert=Some((*id,std::time::Instant::now()));}
             if self.resource_alert.is_some_and(|(_,at)|at.elapsed()<std::time::Duration::from_secs(20)) {draw_resource_alert(ui,files);}
         }
+        // F6 暂退提示：在路线图、战斗、营地、联机离队、返回大赐福等所有界面顶部都可见，避免无反馈或客机看不到分离迷雾提示
+        if let Some((text,alpha))=suspension::active_notice() {
+            let s=(ui.io().display_size[1]/1080.0).clamp(0.65,1.8);
+            draw_top_status_banner(ui,top_y,&text,alpha);
+            top_y+=52.0*s;
+        }
+        top_y=custom_event_ui::draw_hud(ui,top_y);
         if run_screen {return;}
         // 右上角双计时器（本局用时 + 本场/上场用时）：非全屏结算/开局页且 HUD 显示时常驻；打开路线图时自动避让右侧边栏
         let showing_map=self.map_preview&&view.as_ref().is_some_and(|v|map_preview_available(v)&&v.run.is_some())
@@ -716,16 +736,6 @@ impl ImguiRenderLoop for TowerPreview {
             .as_ref()
             .and_then(|view| view.run.as_ref())
             .or(self.run.as_ref());
-        if self.visible && ui.is_key_pressed(Key::F6) {
-            match active_run.map(|run| &run.phase) {
-                Some(Phase::Map) => {
-                    if let Some(id) = active_run.and_then(|run| run.available().first().copied()) {
-                        runtime::submit(runtime::Action::Enter(id));
-                    }
-                }
-                _ => {}
-            }
-        }
         let combat = active_run.is_some_and(|run| matches!(run.phase, Phase::Combat { .. }));
         if !combat {
             if let (Some(run), Some(view)) = (active_run, view.as_ref()) {
@@ -780,9 +790,12 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
             log("Initialization stopped: executable mapping unavailable");
             return;
         };
-        if let Err(error) = SupportedVersion::detect(&mapping) {
-            log(format!("Initialization stopped: {error}"));
-            return;
+        match SupportedVersion::detect(&mapping) {
+            Ok(version) => log(format!("Detected game version: {version:?}")),
+            Err(error) => {
+                log(format!("Initialization stopped: {error}"));
+                return;
+            }
         }
         if seamless_probe::enabled(std::env::var("ERDTREE_TOWER_SEAMLESS_PROBE").ok().as_deref()) {
             log("Read-only Seamless probe: tower runtime, hooks, resets and item writes are disabled");
@@ -898,8 +911,15 @@ mod tests {
     }
     #[test]
     fn unknown_versions_are_rejected() {
-        assert!(SupportedVersion::from_lang_version(LANG_ID_EN, "2.7.2.0").is_some());
+        assert_eq!(SupportedVersion::from_lang_version(LANG_ID_EN, "2.7.2.0"), Some(SupportedVersion::Ww2720));
+        assert_eq!(SupportedVersion::from_lang_version(LANG_ID_EN, "2.7.2.1"), Some(SupportedVersion::Build272));
+        assert_eq!(SupportedVersion::from_lang_version(LANG_ID_JP, "2.7.2.1"), Some(SupportedVersion::Build272));
+        assert_eq!(SupportedVersion::from_lang_version(LANG_ID_JP, "2.7.2.0"), Some(SupportedVersion::Build272));
         assert!(SupportedVersion::from_lang_version(LANG_ID_EN, "2.7.1.0").is_none());
-        assert!(SupportedVersion::from_lang_version(0x11, "2.7.1.0").is_none());
+        assert!(SupportedVersion::from_lang_version(LANG_ID_EN, "2.7.3.0").is_none());
+        assert!(SupportedVersion::from_lang_version(LANG_ID_EN, "2.7.2").is_none());
+        assert!(SupportedVersion::from_lang_version(LANG_ID_EN, "2.7.2.a").is_none());
+        assert!(SupportedVersion::from_lang_version(LANG_ID_JP, "2.7.1.0").is_none());
+        assert!(SupportedVersion::from_lang_version(0x12, "2.7.2.0").is_none());
     }
 }

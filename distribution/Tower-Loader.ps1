@@ -127,9 +127,90 @@ function ConvertTo-TowerYafsmlConfig([string]$Text,[string]$BaseDirectory) {
     $lines+=''
     return ($lines -join "`n")
 }
+function Get-TowerGameDirDiagnostics([string]$GameDir) {
+    $vanillaDlls = @(
+        'amd_ags_x64.dll','bink2w64.dll','eossdk-win64-shipping.dll','libxess.dll',
+        'nvngx_dlss.dll','oo2core_6_win64.dll','steam_api64.dll','tobii_gameintegration_x64.dll'
+    )
+    $highRiskProxies = @(
+        'dinput8.dll','dxgi.dll','winhttp.dll','version.dll','dsound.dll','xaudio2_9.dll',
+        'mmdevapi.dll','d3d11.dll','d3d12.dll','opengl32.dll','msacm32.dll','winmm.dll'
+    )
+    $unexpected = New-Object System.Collections.ArrayList
+    $proxies = New-Object System.Collections.ArrayList
+    $steamAppIdPresent = $false
+    if (Test-Path -LiteralPath $GameDir -PathType Container) {
+        $steamAppIdPresent = Test-Path -LiteralPath (Join-Path $GameDir 'steam_appid.txt') -PathType Leaf
+        foreach ($file in Get-ChildItem -LiteralPath $GameDir -File -ErrorAction SilentlyContinue) {
+            $lower = $file.Name.ToLowerInvariant()
+            $ext = $file.Extension.ToLowerInvariant()
+            if ($ext -in @('.dll','.asi') -or $lower -match '^(modengine|reshade|specialk|eldenmodloader)') {
+                if ($lower -notin $vanillaDlls) {
+                    $entry = "$($file.Name) ($($file.Length) B)"
+                    [void]$unexpected.Add($entry)
+                    if ($lower -in $highRiskProxies -or $lower -match '^(modengine|reshade|specialk)') {
+                        [void]$proxies.Add($entry)
+                    }
+                }
+            }
+        }
+    }
+    $sdDir = Join-Path $GameDir 'sd'
+    $sdCount = if (Test-Path -LiteralPath $sdDir -PathType Container) { @(Get-ChildItem -LiteralPath $sdDir -File -ErrorAction SilentlyContinue).Count } else { -1 }
+    return [pscustomobject]@{
+        UnexpectedFiles = @($unexpected)
+        HighRiskProxies = @($proxies)
+        SteamAppIdPresent = $steamAppIdPresent
+        SdFileCount = $sdCount
+    }
+}
+function Write-TowerLaunchDiagnostics([string]$GameExe,[string]$Loader) {
+    try {
+        $gameDir = Split-Path -Parent $GameExe
+        $diag = Get-TowerGameDirDiagnostics $gameDir
+        $exeVer = try { (Get-Item -LiteralPath $GameExe -ErrorAction Stop).VersionInfo.FileVersion } catch { 'unknown' }
+        $isAdmin = $false
+        try {
+            $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+            $isAdmin = ([Security.Principal.WindowsPrincipal]::new($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        } catch {}
+        Write-Host ("DIAG_ENV loader=$Loader exe_ver=$exeVer admin=$isAdmin compat_env=" + $(if ($env:__COMPAT_LAYER) {$env:__COMPAT_LAYER} else {'none'}) + " steam_appid_txt=$($diag.SteamAppIdPresent) sd_files=$($diag.SdFileCount)")
+        if ($diag.HighRiskProxies.Count -gt 0) {
+            Write-Host ("DIAG_WARN high_risk_proxy_dlls_in_game_dir=" + ($diag.HighRiskProxies -join ', '))
+        }
+        if ($diag.UnexpectedFiles.Count -gt 0) {
+            Write-Host ("DIAG_GAME_EXTRA_FILES=" + ($diag.UnexpectedFiles -join ', '))
+        } else {
+            Write-Host 'DIAG_GAME_EXTRA_FILES=none'
+        }
+        foreach ($hive in @('HKCU:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers','HKLM:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers')) {
+            if (Test-Path -LiteralPath $hive) {
+                $props = (Get-ItemProperty -LiteralPath $hive -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object {
+                    $_.Name -notlike 'PS*' -and $_.Name -match '(eldenring|start_protected_game|me3|yafsml)\.exe$'
+                }
+                foreach ($p in $props) { Write-Host ("DIAG_WARN appcompat [$hive] $($p.Name) = $($p.Value)") }
+            }
+        }
+        $ifeo = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\eldenring.exe'
+        if (Test-Path -LiteralPath $ifeo) {
+            $vals = (Get-ItemProperty -LiteralPath $ifeo -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { "$($_.Name)=$($_.Value)" }
+            if ($vals) { Write-Host ("DIAG_WARN ifeo_eldenring=" + ($vals -join '; ')) }
+        }
+        $watchPattern = '^(Nahimic|SS3Svc|SonicStudio|SteelSeries|Sonar|Razer|RzSynapse|THX|lghub|voicemeeter|RTSS|MSIAfterburner|GamePP|Discord|obs64|vgtray|SGuard|ACE|360|HipsDaemon)'
+        $activeHooks = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match $watchPattern } | Select-Object -ExpandProperty ProcessName -Unique | Sort-Object)
+        if ($activeHooks.Count -gt 0) {
+            Write-Host ("DIAG_WATCH_PROCESSES=" + ($activeHooks -join ', '))
+        } else {
+            Write-Host 'DIAG_WATCH_PROCESSES=none'
+        }
+    } catch {
+        Write-Host ("DIAG_SKIPPED=" + $_.Exception.Message)
+    }
+}
 function Invoke-TowerLoader([string]$Root,[string]$Loader,[string]$GameExe,[string]$Profile) {
     $exe=Get-TowerLoaderPath $Root $Loader
     Write-Host "Tower loader: $Loader"
+    Write-TowerLaunchDiagnostics $GameExe $Loader
     Write-Output "TOWER_PROGRESS|starting|0|0|正在启动游戏|$Loader 加载器正在准备游戏进程"
     if($Loader -eq 'ME3'){
         # 有的电脑上 me3 必须同时满足两点，否则游戏在 hooking system allocator 时 0xC0000005：
@@ -148,7 +229,8 @@ function Invoke-TowerLoader([string]$Root,[string]$Loader,[string]$GameExe,[stri
         $config=Join-Path (Split-Path -Parent $Profile) 'yafsml.launch.ini'
         [IO.File]::WriteAllText($config,$ini,[Text.UTF8Encoding]::new($false))
         $loaderArguments = @('--launch-target','eldenring','--game-path',('"'+$GameExe+'"'),'--config',('"'+$config+'"'),'--modloader-dll',('"'+(Join-Path $Root 'loader/yafsml/YAFSML.dll')+'"'))
-        $process = Start-Process -FilePath $exe -ArgumentList $loaderArguments -PassThru -WindowStyle Hidden
+        Write-Host ("YAFSML arguments: " + ($loaderArguments -join ' '))
+        $process = Start-Process -FilePath $exe -ArgumentList $loaderArguments -PassThru -WindowStyle Hidden -WorkingDirectory (Split-Path -Parent $GameExe)
         $handle = $process.Handle
         $process.WaitForExit()
         if ($process.ExitCode -ne 0) {throw "YAFSML loader exited with code $($process.ExitCode)"}

@@ -7,7 +7,7 @@ The settings page shows a read-only network environment; stale network settings 
 request a patch switch.
 
 Build the separate kit with `package_manual_network.py --patch-dir <supplied patch> --output <zip>`.
-Users explicitly run `Install-B.cmd` or `Restore-A.cmd` with the game and launcher closed.
+Users explicitly run `联机环境切换(A-B).cmd` (unified A/B menu with path paste, auto-detection, modern `OpenFileDialog`, and Chinese error diagnostics) with the game and launcher closed.
 The kit retains the original local files and recovery journal under `Game/.tower-network`.
 It also places `Restore-A.cmd` and its support scripts there, so recovery does not require
 the original ZIP. Existing backups from the previous switching build are supported.

@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 # Get-TowerPluginSections in both launch scripts: plugins/natives.toml (written by the launcher) -> ME3 [[natives]] sections
 $root = Split-Path $PSScriptRoot -Parent
 $package = Join-Path ([IO.Path]::GetTempPath()) ('tower-plugins-' + [guid]::NewGuid())

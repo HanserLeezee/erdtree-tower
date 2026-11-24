@@ -1,14 +1,15 @@
 use std::{sync::Mutex,time::{Duration,Instant}};
-use eldenring::cs::{ChrInsExt,FieldInsHandle,WorldChrMan};
+use eldenring::cs::{ChrInsExt,FieldInsHandle,SoloParamRepository,WorldChrMan};
+use fromsoftware_shared::FromStatic;
 
 pub const EFFECT:i32=9670028;
 const DURATION:Duration=Duration::from_secs(10);
 type Key=(u64,u8,usize);
 #[derive(Default)]
-struct Edge {previous:Option<Vec<i32>>}
+struct Edge {previous:Option<Vec<(i32,f32)>>}
 impl Edge {
-    fn observe(&mut self,effects:Vec<i32>)->bool {
-        let fresh=self.previous.as_ref().is_some_and(|old|effects.iter().any(|id|!old.contains(id)));
+    fn observe(&mut self,effects:Vec<(i32,f32)>)->bool {
+        let fresh=self.previous.as_ref().is_some_and(|old|super::embers::fresh_burst(old,&effects).is_some());
         self.previous=Some(effects);fresh
     }
 }
@@ -62,6 +63,7 @@ pub fn observe(world:&mut WorldChrMan,key:Key,foes:&[(FieldInsHandle,u8,u8)],ena
         restore(&mut chr.modules.behavior.animation_speed,&mut t.written);
         if t.until.is_some(){chr.remove_speffect(EFFECT);}false
     });
+    let repo=unsafe {SoloParamRepository::instance()}.ok();
     for &(handle,_,slot) in foes {
         let Some(chr)=world.chr_ins_by_handle_mut(&handle) else{continue};
         if chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag(){continue;}
@@ -69,7 +71,10 @@ pub fn observe(world:&mut WorldChrMan,key:Key,foes:&[(FieldInsHandle,u8,u8)],ena
         let i=state.targets.iter().position(|t|t.address==address&&t.slot==slot).unwrap_or_else(||{
             state.targets.push(Target{handle,address,slot,edge:Edge::default(),until:None,written:None});state.targets.len()-1
         });
-        let effects=chr.special_effect.entries().map(|e|e.param_id).filter(|id|(6700..=6749).contains(id)).collect();
+        let effects:Vec<(i32,f32)>=chr.special_effect.entries()
+            .filter(|e|super::embers::is_frost_burst(repo,e.param_id))
+            .map(|e|(e.param_id,e.removal_timer))
+            .collect();
         let target=&mut state.targets[i];
         if target.edge.observe(effects)&&enabled {
             refresh(&mut target.until,Instant::now());
@@ -99,9 +104,11 @@ mod tests {
     use super::*;
     #[test]
     fn only_new_frost_bursts_trigger() {
-        let mut e=Edge::default();assert!(!e.observe(vec![6700]));assert!(!e.observe(vec![6700]));
-        assert!(!e.observe(vec![]));assert!(e.observe(vec![6700]));assert!(!e.observe(vec![6700]));
-        assert!(e.observe(vec![6701]));
+        let mut e=Edge::default();assert!(!e.observe(vec![(6700,30.0)]));assert!(!e.observe(vec![(6700,29.5)]));
+        assert!(!e.observe(vec![]));assert!(e.observe(vec![(6700,30.0)]));assert!(!e.observe(vec![(6700,29.5)]));
+        assert!(e.observe(vec![(6700,30.0)]),"refreshed timer re-triggers");
+        assert!(e.observe(vec![(107500,30.0)]),"cold-infused frostbite triggers");
+        assert!(e.observe(vec![(9670011,30.0)]),"Frost ember 9670011 triggers");
     }
     #[test]
     fn slowdown_composes_without_compounding_and_restores() {

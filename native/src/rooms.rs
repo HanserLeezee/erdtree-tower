@@ -105,6 +105,7 @@ pub struct Room {
     saved_fp: i32,
     restored: bool,
     pub allowance_issued: bool,
+    pub allowance_failed: bool,
     /// 余烬「帐篷」：这个篝火还有一次免费补瓶（由运行时每帧按旅程更新），服务用完后补给 NPC 仍接受补瓶
     pub tent: bool,
     /// 营地发放强化石到账时身上的强化石数量：少于它就说明营地的一次服务用掉了
@@ -150,15 +151,17 @@ impl Room {
         self.event_host=super::event_hosts::index(if run.regional_event.mausoleum.is_some(){erdtree_tower::events::Draw::Altar}else{run.event_draw(self.node)});
         let progress=&run.regional_event;
         self.patches_angry|=progress.patches_angry;self.patches_dead|=progress.patches_dead;
+        let draw=run.event_draw(self.node);
+        let custom_panel=matches!(draw,erdtree_tower::events::Draw::EmberFurnace|erdtree_tower::events::Draw::SpiritFurnace|erdtree_tower::events::Draw::FrenzyAltar|erdtree_tower::events::Draw::Survival);
         self.event_hostless=progress.mausoleum.is_none()&&!progress.trial&&progress.stormveil.is_none()&&!progress.descent&&!progress.recovery
-            &&!progress.scarabs&&!progress.locked&&run.event_draw(self.node)!=erdtree_tower::events::Draw::Dance&&run.gamble(self.node).filter(|_|solo).is_none()&&!run.altar(self.node);
+            &&!progress.scarabs&&!progress.locked&&draw!=erdtree_tower::events::Draw::Dance&&!custom_panel&&run.gamble(self.node).filter(|_|solo).is_none()&&!run.altar(self.node);
         // 死亡重试回到已结束的事件：引导者不再提供任何选项
         if progress.settled {
             let menu=super::native_talk::EventMenu{trial:true,used:true,..Default::default()};
             for talk in &mut self.talks {talk.set_event_menu(menu);}
             return;
         }
-        let menu=super::native_talk::EventMenu{dance:run.event_draw(self.node)==erdtree_tower::events::Draw::Dance,mausoleum_offer:progress.mausoleum.is_some(),gamble:run.gamble(self.node).filter(|_|solo).map(|g|g as u8),trial:progress.trial,chariot:progress.chariot,stormveil:progress.stormveil.is_some(),descent:progress.descent,recovery:progress.recovery,scarabs:progress.scarabs,locked:progress.locked,
+        let menu=super::native_talk::EventMenu{dance:draw==erdtree_tower::events::Draw::Dance,custom_panel,mausoleum_offer:progress.mausoleum.is_some(),gamble:run.gamble(self.node).filter(|_|solo).map(|g|g as u8),trial:progress.trial,chariot:progress.chariot,stormveil:progress.stormveil.is_some(),descent:progress.descent,recovery:progress.recovery,scarabs:progress.scarabs,locked:progress.locked,
             altar:run.altar(self.node),used:progress.opened!=0||progress.stormveil.is_some_and(|s|s!=erdtree_tower::stormveil::Progress::Choosing),
             busy:progress.guards||self.scarabs.active()||party_busy||self.patches_angry||self.patches_dead,ready:self.scarabs.ready()||party_ready,attempts:progress.attempts};
         for talk in &mut self.talks {talk.set_event_menu(menu);}
@@ -246,6 +249,7 @@ impl Room {
             saved_fp: fp,
             restored: kind==NodeKind::Monster,
             allowance_issued: false,
+            allowance_failed: false,
             tent: false,
             allowance_target: 0,
             allowance:super::smith::Grant::default(),
@@ -496,7 +500,7 @@ impl Room {
         if self.view.loading {
             return Ok(());
         }
-        if !self.hub && self.kind==NodeKind::Camp && !self.allowance_issued {
+        if !self.hub && self.kind==NodeKind::Camp && !self.allowance_issued && !self.allowance_failed {
             let data=unsafe {world.main_player.as_mut().unwrap().player_game_data.as_mut()};
             let held=super::smith::remaining(data);
             match self.allowance.poll(self.started.elapsed(),held) {
@@ -512,7 +516,10 @@ impl Room {
                     super::log("Camp allowance confirmed; automatic issuance disabled for this room");
                 },
                 super::smith::GrantStep::Failed=>{
+                    self.allowance_failed=true;
+                    self.view.loading=false;
                     self.view.message="营地送的强化石没能确认到账，这次不再自动发放；补瓶、升级和其他服务照常可用。".into();
+                    super::log("Camp allowance timed out; proceeding without free stone");
                 },
             }
         }

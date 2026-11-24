@@ -19,7 +19,7 @@ def build(patch, output):
             raise ValueError(f'Unsupported supplied patch: {name}')
     files = {f'payload/{name}': (patch / name).read_bytes() for name in [*FILES, 'OnlineFix.ini']}
     files['payload/dlllist.txt'] = b'OnlineFix64.dll'
-    for name in ['Network-Manual.ps1', 'Network-Files.ps1', 'Install-B.cmd', 'Restore-A.cmd', '使用说明.txt']:
+    for name in ['Network-Manual.ps1', 'Network-Files.ps1', '联机环境切换(A-B).cmd', '使用说明.txt']:
         files[name] = (project / 'distribution/manual-network' / name).read_bytes()
     files['Tower-Network.ps1'] = (project / 'distribution/Tower-Network.ps1').read_bytes()
     files['SHA256SUMS.txt'] = ''.join(f'{hashlib.sha256(data).hexdigest()}  {name}\n' for name, data in sorted(files.items())).encode()

@@ -1,10 +1,18 @@
 use eldenring::cs::{EquipDataItem, GaitemHandle, GaitemCategory, ItemCategory, ItemId, PlayerGameData};
 use erdtree_tower::Class;
 
+const ASYNC_GRANT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+struct PendingGrant {
+    targets: [(ItemId, u32); 2],
+    started: std::time::Instant,
+}
+
 pub struct Flasks {
     pub remaining: [u8; 2],
     capacity: [u8; 2],
     synced: Option<([(ItemId, u32); 2], [u8; 2], std::time::Instant)>,
+    pending: Option<PendingGrant>,
 }
 
 fn capacity(_class:Class,bonus:u8,cut:[u8;2])->Result<[u8;2],String> {
@@ -45,10 +53,11 @@ impl Flasks {
         };
         find(1000).ok_or("等待角色取得红圣杯瓶后开始爬塔。")?;
         find(1050).ok_or("等待角色取得蓝圣杯瓶后开始爬塔。")?;
-        let ledger = Self {
+        let mut ledger = Self {
             remaining: capacity,
             capacity,
             synced: None,
+            pending: None,
         };
         ledger.write(data)?;
         Ok(ledger)
@@ -73,6 +82,24 @@ impl Flasks {
     pub fn observe(&mut self, data: &mut PlayerGameData, loading: bool) -> Result<(), String> {
         if loading {
             return Ok(());
+        }
+        // 空瓶补成满瓶时 ItemGive 可能慢一两帧才入包：到账前不要按旧库存倒扣或删除刚发出的满瓶。
+        if let Some(pending) = &self.pending {
+            let targets = pending.targets;
+            if targets_present(data, &targets) {
+                finalize_targets(data, targets)?;
+                data.max_hp_flask = self.capacity[0];
+                data.max_fp_flask = self.capacity[1];
+                self.pending = None;
+                self.synced = current_flasks(data).ok().map(|seen| (seen, self.remaining, std::time::Instant::now()));
+                super::log(format!("FLASK_ASYNC_GRANT confirmed remaining={:?}", self.remaining));
+                return Ok(());
+            }
+            if pending.started.elapsed() < ASYNC_GRANT_TIMEOUT {
+                return Ok(());
+            }
+            super::log(format!("FLASK_ASYNC_GRANT timed out after {}s; re-observing inventory", ASYNC_GRANT_TIMEOUT.as_secs()));
+            self.pending = None;
         }
         let [red, blue] = current_flasks(data)?;
         self.remaining = observed_remaining(self.remaining, [red.1, blue.1], loading);
@@ -114,20 +141,26 @@ impl Flasks {
         Ok(())
     }
 
-    fn write(&self, data: &mut PlayerGameData) -> Result<(), String> {
+    fn write(&mut self, data: &mut PlayerGameData) -> Result<(), String> {
         let selected = current_flasks(data)?;
         let targets=std::array::from_fn::<_,2,_>(|i|flask_target(selected[i].0,self.remaining[i] as u32));
-        write_targets(data,targets)?;
+        if write_targets(data,targets)? {
+            self.pending = None;
+        } else {
+            self.pending = Some(PendingGrant { targets, started: std::time::Instant::now() });
+            super::log(format!("FLASK_ASYNC_GRANT pending remaining={:?}", self.remaining));
+        }
         data.max_hp_flask = self.capacity[0];
         data.max_fp_flask = self.capacity[1];
         Ok(())
     }
 }
 
-fn write_targets(data:&mut PlayerGameData,targets:[(ItemId,u32);2])->Result<(),String> {
-    let stones_before=super::smith::remaining(data);
-    let quick_layout=data.equipment.equip_item_data.quick_slots.each_ref().map(flask_color);
-    let pouch_layout=data.equipment.equip_item_data.pouch_slots.each_ref().map(flask_color);
+fn targets_present(data:&PlayerGameData,targets:&[(ItemId,u32);2])->bool {
+    targets.iter().all(|(id,_)|data.equipment.equip_inventory_data.items_data.items().any(|e|e.item_id==*id&&e.quantity>0))
+}
+
+fn write_targets(data:&mut PlayerGameData,targets:[(ItemId,u32);2])->Result<bool,String> {
     let mut grants = Vec::new();
     for (id,quantity) in targets {
         if !data.equipment.equip_inventory_data.items_data.items().any(|e|e.item_id==id&&e.quantity>0) {
@@ -137,9 +170,17 @@ fn write_targets(data:&mut PlayerGameData,targets:[(ItemId,u32);2])->Result<(),S
     if !grants.is_empty() {
         super::items::give(&grants)?;
     }
-    if targets.iter().any(|(id,_)|!data.equipment.equip_inventory_data.items_data.items().any(|e|e.item_id==*id&&e.quantity>0)) {
-        return Err("补瓶尚未进入背包，未消耗节点，请重试".into());
+    if !targets_present(data,&targets) {
+        return Ok(false);
     }
+    finalize_targets(data,targets)?;
+    Ok(true)
+}
+
+fn finalize_targets(data:&mut PlayerGameData,targets:[(ItemId,u32);2])->Result<(),String> {
+    let stones_before=super::smith::remaining(data);
+    let quick_layout=data.equipment.equip_item_data.quick_slots.each_ref().map(flask_color);
+    let pouch_layout=data.equipment.equip_item_data.pouch_slots.each_ref().map(flask_color);
     let inventory=&mut data.equipment.equip_inventory_data;
     let items=&inventory.items_data;
     let obsolete:Vec<_>=items.normal_entries().iter().enumerate()
@@ -254,7 +295,7 @@ pub fn apply_restoration_upgrade(data:&mut PlayerGameData,plan:[(i32,i32,i32);2]
     let targets=plan.map(|(_,new,qty)|(ItemId::new(ItemCategory::Goods,new as u32).unwrap(),qty as u32));
     let result=write_targets(data,targets);
     data.max_hp_flask=capacity[0];data.max_fp_flask=capacity[1];
-    result?;
+    if !result? {return Err("强化后的圣杯瓶尚未进入背包，请稍候重试".into());}
     super::log(format!("Flask restoration upgraded: replacements={plan:?} capacity={capacity:?}"));
     Ok(())
 }

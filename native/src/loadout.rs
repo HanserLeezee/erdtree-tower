@@ -90,6 +90,33 @@ pub fn clear_spent_ashes(data:&mut PlayerGameData)->Result<(),String> {
     Ok(())
 }
 
+/// 从背包安全移除指定数量的普通道具（如骨灰融合炉的祭品骨灰），并同步清掉快捷栏/随身包包绑定。
+pub fn remove_goods(data:&mut PlayerGameData,goods_id:u32,count:i32)->Result<bool,String> {
+    if count<=0 {return Ok(false);}
+    let target=ItemId::new(ItemCategory::Goods,goods_id&0x0fffffff).map_err(|e|e.to_string())?;
+    let inventory=&data.equipment.equip_inventory_data.items_data;
+    let found=inventory.normal_entries().iter().enumerate().find_map(|(i,entry)| {
+        let e=entry.as_option()?;
+        (e.item_id==target&&e.quantity>0).then_some((inventory.key_items_capacity+i as u32,e.quantity))
+    });
+    let Some((index,qty))=found else {return Ok(false);};
+    let function=super::items::checked_function(0x24d1e0,&[0x48,0x89,0x5c,0x24,0x20,0x89,0x54,0x24,0x10,0x55,0x56,0x57,0x41,0x56,0x41,0x57])?;
+    let equipment=&mut data.equipment;
+    if i64::from(qty)<=i64::from(count) {
+        for (slots,ids) in [(&mut equipment.equip_item_data.quick_slots[..],&mut equipment.equipment_entries.quick_tems[..]),(&mut equipment.equip_item_data.pouch_slots[..],&mut equipment.equipment_entries.pouch[..])] {
+            for (slot,id) in slots.iter_mut().zip(ids) {
+                if slot.index==index as i32||id.as_valid()==Some(target) {
+                    slot.index=-1;slot.gaitem_handle=unsafe {std::mem::transmute::<u32,_>(u32::MAX)};
+                    *id=eldenring::cs::OptionalItemId::NONE;
+                }
+            }
+        }
+    }
+    let remove:unsafe extern "C" fn(*mut EquipInventoryData,u32,i32)->usize=unsafe {std::mem::transmute(function)};
+    unsafe {remove(&mut equipment.equip_inventory_data,index,count.min(qty as i32));}
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
