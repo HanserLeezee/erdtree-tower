@@ -518,9 +518,11 @@ pub fn fight(world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],multiplayer:b
     // 队友和所有骨灰（本机、远程）：它们的弹体、它们打的伤害都不算自己的
     // 召唤组里的角色指针在切图、骨灰消失时可能已经失效：不解引用，只和场上活着的角色比地址，比上了再取它的句柄
     // 召唤管理器本身在离开联机会话（离别黑雾）、切图重建世界时可能是空指针：先判空，空就当没有骨灰
-    let manager=world.summon_buddy_manager.as_ptr();
-    let summoned:Vec<usize>=if manager.is_null() {Vec::new()} else {
-        unsafe {&*manager}.groups.iter().flat_map(|pair|pair.second.iter()).map(|group|group.chr_ins.as_ptr() as usize).collect()
+    // 注意：OwnedPtr 里是 NonNull，`as_ptr().is_null()` 会被编译器直接当成 false 优化掉（r12 的判空就是这样失效的）。
+    // 所以按原始内存把这个指针字段读成整数再判空。
+    let manager=unsafe {std::ptr::read_volatile(std::ptr::addr_of!(world.summon_buddy_manager).cast::<usize>())};
+    let summoned:Vec<usize>=if manager==0 {Vec::new()} else {
+        unsafe {&*(manager as *const eldenring::cs::SummonBuddyManager)}.groups.iter().flat_map(|pair|pair.second.iter()).map(|group|group.chr_ins.as_ptr() as usize).collect()
     };
     let spirits:Vec<FieldInsHandle>=if summoned.is_empty() {Vec::new()} else {
         world.chr_sets.iter().flatten().flat_map(|set|set.characters())
